@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, message } from 'antd';
+import { Table, Button, Modal, Form, Input, message, Card } from 'antd';
 import { PostsClient, type Post, type CreatePost } from '@fe-admin/api';
 
 const PostsPage = () => {
@@ -70,11 +70,13 @@ const PostsPage = () => {
       title: 'ID',
       dataIndex: 'id',
       key: 'id',
+      width: 80,
     },
     {
       title: 'Title',
       dataIndex: 'title',
       key: 'title',
+      width: '30%',
     },
     {
       title: 'Body',
@@ -85,9 +87,12 @@ const PostsPage = () => {
     {
       title: 'Actions',
       key: 'actions',
+      width: 200,
       render: (text: string, record: Post) => (
         <div className="space-x-2">
           <Button
+            type="primary"
+            ghost
             onClick={() => {
               setEditingPost(record);
               form.setFieldsValue(record);
@@ -106,26 +111,33 @@ const PostsPage = () => {
 
   return (
     <div className="p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Posts</h1>
-        <Button
-          type="primary"
-          onClick={() => {
-            setEditingPost(null);
-            form.resetFields();
-            setIsModalVisible(true);
-          }}
-        >
-          Create Post
-        </Button>
-      </div>
+      <Card>
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl font-bold m-0">Posts</h1>
+          <Button
+            type="primary"
+            onClick={() => {
+              setEditingPost(null);
+              form.resetFields();
+              setIsModalVisible(true);
+            }}
+          >
+            Create Post
+          </Button>
+        </div>
 
-      <Table
-        columns={columns}
-        dataSource={posts}
-        rowKey="id"
-        loading={loading}
-      />
+        <Table
+          columns={columns}
+          dataSource={posts}
+          rowKey="id"
+          loading={loading}
+          pagination={{
+            defaultPageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `Total ${total} items`,
+          }}
+        />
+      </Card>
 
       <Modal
         title={editingPost ? 'Edit Post' : 'Create Post'}
@@ -136,6 +148,7 @@ const PostsPage = () => {
           form.resetFields();
         }}
         footer={null}
+        maskClosable={false}
       >
         <Form
           form={form}
@@ -159,7 +172,14 @@ const PostsPage = () => {
           <Form.Item name="userId" initialValue={1} hidden>
             <Input />
           </Form.Item>
-          <Form.Item className="text-right">
+          <Form.Item className="text-right mb-0">
+            <Button className="mr-2" onClick={() => {
+              setIsModalVisible(false);
+              setEditingPost(null);
+              form.resetFields();
+            }}>
+              Cancel
+            </Button>
             <Button type="primary" htmlType="submit">
               {editingPost ? 'Update' : 'Create'}
             </Button>

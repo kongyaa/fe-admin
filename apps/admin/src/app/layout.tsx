@@ -1,4 +1,7 @@
+'use client';
+
 import { Inter } from 'next/font/google';
+import { ConfigProvider, theme } from 'antd';
 import { AntdRegistry } from '@ant-design/nextjs-registry';
 import './globals.css';
 
@@ -9,11 +12,31 @@ export const metadata = {
   description: 'Admin dashboard built with Next.js and Ant Design',
 };
 
+const themeConfig = {
+  token: {
+    colorPrimary: '#1677ff',
+    borderRadius: 4,
+  },
+  algorithm: theme.defaultAlgorithm,
+  components: {
+    Button: {
+      controlHeight: 32,
+    },
+    Table: {
+      borderRadius: 8,
+    },
+  },
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className="light">
       <body className={inter.className}>
-        <AntdRegistry>{children}</AntdRegistry>
+        <AntdRegistry>
+          <ConfigProvider theme={themeConfig}>
+            {children}
+          </ConfigProvider>
+        </AntdRegistry>
       </body>
     </html>
   );

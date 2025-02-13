@@ -3,19 +3,39 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background-color: #f5f5f5;
+  --text-color: rgba(0, 0, 0, 0.85);
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  background-color: var(--background-color);
+  color: var(--text-color);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Ant Design 커스텀 스타일 */
+.ant-layout {
+  background-color: var(--background-color);
+}
+
+.ant-card,
+.ant-modal-content,
+.ant-table-container {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+}
+
+.ant-table {
+  background: white;
+}
+
+/* 테이블 헤더 스타일 */
+.ant-table-thead > tr > th {
+  background: #fafafa !important;
+  font-weight: 600;
+}
+
+/* 버튼 호버 효과 */
+.ant-btn:hover {
+  opacity: 0.85;
+  transition: opacity 0.2s;
 }
