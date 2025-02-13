@@ -7,11 +7,6 @@ import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
 
-export const metadata = {
-  title: 'Admin Dashboard',
-  description: 'Admin dashboard built with Next.js and Ant Design',
-};
-
 const themeConfig = {
   token: {
     colorPrimary: '#1677ff',
@@ -31,6 +26,10 @@ const themeConfig = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="light">
+      <head>
+        <title>Admin Dashboard</title>
+        <meta name="description" content="Admin dashboard built with Next.js and Ant Design" />
+      </head>
       <body className={inter.className}>
         <AntdRegistry>
           <ConfigProvider theme={themeConfig}>

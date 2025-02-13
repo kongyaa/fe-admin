@@ -1,3 +1,4 @@
+import type { ZodType } from 'zod';
 import { Post, CreatePost, UpdatePost, PostSchema } from './types';
 
 const BASE_URL = 'https://jsonplaceholder.typicode.com';
@@ -6,7 +7,7 @@ export class PostsClient {
   private async fetchWithValidation<T>(
     url: string,
     options?: RequestInit,
-    schema?: z.ZodType<T>
+    schema?: ZodType<T>
   ): Promise<T> {
     const response = await fetch(`${BASE_URL}${url}`, {
       ...options,
