@@ -17,8 +17,9 @@ const PostsPage = () => {
     try {
       const data = await client.getPosts();
       setPosts(data);
-    } catch (error) {
-      message.error('Failed to fetch posts');
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err.message : 'An error occurred';
+      message.error(`Failed to fetch posts: ${error}`);
     } finally {
       setLoading(false);
     }
@@ -35,8 +36,9 @@ const PostsPage = () => {
       setIsModalVisible(false);
       form.resetFields();
       fetchPosts();
-    } catch (error) {
-      message.error('Failed to create post');
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err.message : 'An error occurred';
+      message.error(`Failed to create post: ${error}`);
     }
   };
 
@@ -50,8 +52,9 @@ const PostsPage = () => {
       setEditingPost(null);
       form.resetFields();
       fetchPosts();
-    } catch (error) {
-      message.error('Failed to update post');
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err.message : 'An error occurred';
+      message.error(`Failed to update post: ${error}`);
     }
   };
 
@@ -60,8 +63,9 @@ const PostsPage = () => {
       await client.deletePost(id);
       message.success('Post deleted successfully');
       fetchPosts();
-    } catch (error) {
-      message.error('Failed to delete post');
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err.message : 'An error occurred';
+      message.error(`Failed to delete post: ${error}`);
     }
   };
 
