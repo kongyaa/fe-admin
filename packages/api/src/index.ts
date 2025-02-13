@@ -1,2 +1,1 @@
-export * from './posts/client';
-export * from './posts/types'; 
+export * from './pokemon/client'; 

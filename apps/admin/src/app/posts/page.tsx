@@ -14,10 +14,14 @@ const PostsPage = () => {
   const client = new PostsClient();
 
   const fetchPosts = async () => {
+    setLoading(true);
     try {
+      console.log('Fetching posts...');
       const data = await client.getPosts();
+      console.log('Posts fetched successfully:', data);
       setPosts(data);
     } catch (err: unknown) {
+      console.error('Error fetching posts:', err);
       const error = err instanceof Error ? err.message : 'An error occurred';
       message.error(`Failed to fetch posts: ${error}`);
     } finally {
@@ -26,6 +30,7 @@ const PostsPage = () => {
   };
 
   useEffect(() => {
+    console.log('PostsPage mounted');
     fetchPosts();
   }, []);
 

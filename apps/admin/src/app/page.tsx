@@ -1,6 +1,7 @@
 'use client';
 
 import { Button, Layout, Typography } from 'antd';
+import Link from 'next/link';
 
 const { Header, Content } = Layout;
 const { Title } = Typography;
@@ -15,7 +16,9 @@ export default function Home() {
         <div className="bg-white p-6 rounded-lg">
           <Title level={2}>Welcome to Admin Dashboard</Title>
           <p className="mb-4">This is a sample admin dashboard built with Next.js and Ant Design.</p>
-          <Button type="primary">Get Started</Button>
+          <Link href="/pokemon">
+            <Button type="primary">View Pokemon List</Button>
+          </Link>
         </div>
       </Content>
     </Layout>
