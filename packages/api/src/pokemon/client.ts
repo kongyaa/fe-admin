@@ -1,4 +1,6 @@
-const BASE_URL = 'https://pokeapi.co/api/v2';
+import { HttpClient } from '../core/http-client';
+import { Cache } from '../core/cache';
+import { API_CONFIG, CACHE_CONFIG } from '../config';
 
 export interface PokemonListResponse {
   count: number;
@@ -27,18 +29,48 @@ export interface Pokemon {
   }[];
 }
 
-export async function getPokemonList(offset = 0, limit = 20): Promise<PokemonListResponse> {
-  const response = await fetch(`${BASE_URL}/pokemon?offset=${offset}&limit=${limit}`);
-  if (!response.ok) {
-    throw new Error('Failed to fetch pokemon list');
-  }
-  return response.json();
-}
+export class PokemonClient {
+  private http: HttpClient;
+  private cache: Cache<Pokemon>;
+  private listCache: Cache<PokemonListResponse>;
 
-export async function getPokemon(nameOrId: string | number): Promise<Pokemon> {
-  const response = await fetch(`${BASE_URL}/pokemon/${nameOrId}`);
-  if (!response.ok) {
-    throw new Error('Failed to fetch pokemon');
+  constructor() {
+    this.http = new HttpClient(API_CONFIG.baseURL);
+    this.cache = new Cache<Pokemon>(CACHE_CONFIG);
+    this.listCache = new Cache<PokemonListResponse>(CACHE_CONFIG);
   }
-  return response.json();
+
+  async getPokemonList(offset = 0, limit = API_CONFIG.defaultParams.limit): Promise<PokemonListResponse> {
+    const cacheKey = `list-${offset}-${limit}`;
+    const cached = this.listCache.get(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    const response = await this.http.get<PokemonListResponse>('/pokemon', {
+      params: { offset, limit },
+    });
+
+    this.listCache.set(cacheKey, response);
+    return response;
+  }
+
+  async getPokemon(nameOrId: string | number): Promise<Pokemon> {
+    const cacheKey = `pokemon-${nameOrId}`;
+    const cached = this.cache.get(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    const response = await this.http.get<Pokemon>(`/pokemon/${nameOrId}`);
+    this.cache.set(cacheKey, response);
+    return response;
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+    this.listCache.clear();
+  }
 } 
