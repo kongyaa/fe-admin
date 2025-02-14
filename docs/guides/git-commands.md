@@ -189,6 +189,46 @@ git fetch origin
 git reset --hard origin/<브랜치명>
 ```
 
+### 3.4 커밋 변경사항 확인 (git show)
+```bash
+# 기본 사용법
+git show                  # 가장 최근 커밋의 변경사항 표시
+git show <커밋해시>        # 특정 커밋의 변경사항 표시
+git show HEAD            # 현재 브랜치의 마지막 커밋
+git show HEAD~1          # 현재 브랜치의 마지막에서 1번째 이전 커밋
+git show HEAD~2          # 현재 브랜치의 마지막에서 2번째 이전 커밋
+
+# 특정 파일의 변경사항 확인
+git show <커밋해시> -- <파일경로>
+git show HEAD:파일명      # 현재 브랜치 마지막 커밋의 특정 파일 내용
+
+# 상세 정보 표시 옵션
+git show <커밋해시> --stat   # 변경된 파일 통계 정보 표시
+git show <커밋해시> -p       # 전체 변경사항 상세 표시 (기본값)
+git show <커밋해시> --name-only  # 변경된 파일 이름만 표시
+git show <커밋해시> --name-status # 변경된 파일 이름과 상태 표시
+
+# 차이점 표시 옵션
+git show <커밋해시> --word-diff    # 단어 단위로 차이 표시
+git show <커밋해시> --color-words  # 색상으로 구분하여 단어 단위 차이 표시
+git show <커밋해시> --pretty=format:"%h %s" # 커스텀 포맷으로 표시
+
+# 실제 사용 예시
+git show abc1234                     # abc1234 커밋의 전체 변경사항
+git show abc1234 -- src/index.ts     # 특정 파일의 변경사항만 확인
+git show HEAD~3 --name-only          # 3개 전 커밋에서 변경된 파일 목록
+git show abc1234 --stat             # 통계 정보로 변경사항 확인
+git show HEAD@{yesterday}           # 어제의 마지막 커밋 확인
+
+# 태그 관련
+git show v1.0.0                    # 특정 태그의 정보와 변경사항 표시
+git show-ref --tags                # 모든 태그와 관련 커밋 해시 표시
+
+# 브랜치 관련
+git show-branch                    # 브랜치들의 히스토리 표시
+git show-branch --all              # 모든 브랜치 히스토리 표시
+```
+
 ## 4. 유용한 설정
 
 ### 4.1 별칭 설정
