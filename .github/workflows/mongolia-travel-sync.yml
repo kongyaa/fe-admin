@@ -1,12 +1,12 @@
-name: Daily Investment Report
+name: Mongolia Travel Info Sync
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # UTC 기준 매일 00:00 (한국 시간 09:00)
-  workflow_dispatch:  # 수동 실행 옵션
+    - cron: '0 23 * * *'  # UTC 23:00 (한국 시간 오전 8:00)
+  workflow_dispatch:      # 수동 실행 옵션
 
 jobs:
-  generate-report:
+  sync:
     runs-on: ubuntu-latest
     
     steps:
@@ -27,18 +27,18 @@ jobs:
           cd scripts
           pnpm install
           
-      - name: Generate investment report
+      - name: Run scraper
         run: |
           cd scripts
-          pnpm simulate
+          pnpm ts-node mongolia-travel-scraper.ts
         env:
           NOTION_KEY: ${{ secrets.NOTION_KEY }}
-          NOTION_INVESTMENT_DATABASE_ID: ${{ secrets.NOTION_INVESTMENT_DATABASE_ID }}
+          NOTION_TRAVEL_DATABASE_ID: ${{ secrets.NOTION_TRAVEL_DATABASE_ID }}
           
-      - name: Commit and push if changed
+      - name: Commit changes if any
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add docs/investment/analysis/simulation-results.md
-          git commit -m "docs: 일일 투자 분석 리포트 업데이트 ($(date '+%Y-%m-%d'))" || exit 0
+          git add docs/travel
+          git commit -m "docs: 몽골 여행 정보 업데이트 ($(date '+%Y-%m-%d'))" || exit 0
           git push 
