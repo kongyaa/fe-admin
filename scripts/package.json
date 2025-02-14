@@ -1,0 +1,22 @@
+{
+  "name": "investment-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "simulate": "ts-node investment-simulation.ts",
+    "analyze": "ts-node investment-analysis.ts",
+    "validate": "ts-node market-data-validator.ts"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "marked": "^15.0.7",
+    "openai": "^4.28.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "@types/ws": "^8.5.10"
+  }
+}
