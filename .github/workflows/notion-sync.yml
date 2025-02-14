@@ -1,0 +1,43 @@
+name: Sync to Notion
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'reports/**'
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+    paths:
+      - 'reports/**'
+
+jobs:
+  sync-to-notion:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Sync to Notion
+        run: node notion-sync.js
+        env:
+          NOTION_KEY: ${{ secrets.NOTION_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }} 
