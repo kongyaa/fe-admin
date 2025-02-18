@@ -5,6 +5,9 @@ on:
     - cron: '0 0 * * *'  # UTC 기준 매일 00:00 (한국 시간 09:00)
   workflow_dispatch:  # 수동 실행 옵션
 
+permissions:
+  contents: write
+
 jobs:
   generate-report:
     runs-on: ubuntu-latest
@@ -24,6 +27,7 @@ jobs:
           
       - name: Install dependencies
         run: |
+          pnpm install
           cd scripts
           pnpm install
           

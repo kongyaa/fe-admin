@@ -13,6 +13,9 @@ on:
     paths:
       - 'reports/**'
 
+permissions:
+  contents: write
+
 jobs:
   sync-to-notion:
     runs-on: ubuntu-latest
@@ -34,10 +37,15 @@ jobs:
           run_install: false
 
       - name: Install dependencies
-        run: pnpm install
+        run: |
+          pnpm install
+          cd scripts
+          pnpm install
 
       - name: Sync to Notion
-        run: node notion-sync.js
+        run: |
+          cd scripts
+          node notion-sync.js
         env:
           NOTION_KEY: ${{ secrets.NOTION_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }} 
