@@ -11,7 +11,7 @@ env:
   TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
   TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
   TURBO_API: 'https://api.vercel.com'
-  TURBO_REMOTE_ONLY: true
+  TURBO_CACHE: 'remote:rw'
 
 jobs:
   build:
@@ -70,7 +70,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Build
-        run: pnpm exec turbo build --remote-only
+        run: pnpm exec turbo build --cache-dir=".turbo" --cache=remote:rw
         env:
           TURBO_API: 'https://api.vercel.com'
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
@@ -82,4 +82,4 @@ jobs:
         run: |
           echo "Cache Performance Summary:"
           echo "======================="
-          pnpm exec turbo build --dry-run --summarize --json 
+          pnpm exec turbo build --dry-run --summarize 
