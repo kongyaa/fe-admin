@@ -68,16 +68,20 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Check Remote Cache Status
+        run: |
+          echo "Checking remote cache status before build..."
+          pnpm exec turbo build --dry --summarize
+
       - name: Build
-        run: pnpm exec turbo build
+        run: pnpm exec turbo build --summarize
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
           TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
 
-      - name: Cache Performance Report
+      - name: Verify Cache Status
         if: always()
         run: |
-          echo "Cache Performance Summary:"
-          echo "======================="
-          pnpm exec turbo build --dry 
+          echo "Verifying cache status after build..."
+          pnpm exec turbo build --dry --summarize 
