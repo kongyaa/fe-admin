@@ -1,17 +1,19 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "ui": "tui",
-  "tasks": {
+  "globalEnv": [
+    "TURBO_TOKEN",
+    "TURBO_TEAM"
+  ],
+  "remoteCache": {
+    "enabled": true
+  },
+  "pipeline": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".next/**", "!.next/cache/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "lint": {
       "dependsOn": ["^lint"]
-    },
-    "check-types": {
-      "dependsOn": ["^check-types"]
     },
     "dev": {
       "cache": false,
