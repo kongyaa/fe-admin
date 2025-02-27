@@ -1,18 +1,41 @@
+FROM node:18-alpine as builder
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build TypeScript
+RUN npm run build
+
+# Production image
 FROM node:18-alpine
 
 WORKDIR /app
 
-# Turborepo CLI 설치
-RUN npm install -g turbo
+# Copy package files and install production dependencies
+COPY package*.json ./
+RUN npm ci --only=production
 
-# 캐시 저장소 디렉토리 생성
-RUN mkdir -p /app/cache
+# Copy built files from builder
+COPY --from=builder /app/dist ./dist
 
-# 환경 변수 설정
-ENV TURBO_TOKEN=your-secret-token
-ENV STORAGE_PROVIDER=fs
-ENV STORAGE_PATH=/app/cache
+# Create cache directory with proper permissions
+RUN mkdir -p cache && chown -R node:node cache
 
-# 서버 실행
+# Use non-root user
+USER node
+
+# Expose port
 EXPOSE 3000
-CMD ["turbo", "daemon", "--port", "3000"] 
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+
+# Start server
+CMD ["npm", "start"] 
