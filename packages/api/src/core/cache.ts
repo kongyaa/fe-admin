@@ -17,7 +17,9 @@ export class Cache<T> {
     // 캐시가 최대 크기에 도달하면 가장 오래된 항목 제거
     if (this.cache.size >= this.config.maxSize) {
       const oldestKey = this.cache.keys().next().value;
-      this.cache.delete(oldestKey);
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
     }
 
     this.cache.set(key, {

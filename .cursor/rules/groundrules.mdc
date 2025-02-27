@@ -27,11 +27,6 @@ globs: ["**/*"]
 - 투자 관련 용어는 명확한 설명과 함께 제시
 - 리스크 요소 발견 시 즉시 경고
 
-# Your rule content
-
-- You can @ files here
-- You can use markdown but dont have to
-
 # Cursor Ground Rules
 
 ## 1. 일일 투자 분석 트리거
