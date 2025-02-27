@@ -9,7 +9,7 @@
     "enabled": true,
     "signature": true
   },
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": [
