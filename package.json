@@ -9,19 +9,19 @@
     "test": "turbo test",
     "clean": "turbo clean && rm -rf node_modules"
   },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "marked": "^15.0.7",
+    "openai": "^4.85.0",
+    "turbo": "^2.4.4"
+  },
   "devDependencies": {
-    "@types/node": "^22.13.4",
+    "@types/node": "^18.19.0",
     "prettier": "^3.5.0",
-    "turbo": "^2.4.4",
-    "typescript": "5.7.3"
+    "typescript": "^5.3.3"
   },
   "packageManager": "pnpm@9.0.0",
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "@notionhq/client": "^2.2.15",
-    "marked": "^15.0.7",
-    "openai": "^4.85.0"
   }
 }
