@@ -6,6 +6,7 @@
 - [GitHub Actions 설정](#github-actions-설정)
 - [캐시 동작 방식](#캐시-동작-방식)
 - [문제 해결](#문제-해결)
+- [자체 Remote Cache Server 구축](#자체-remote-cache-server-구축)
 
 ## 개요
 
@@ -332,3 +333,163 @@ jobs:
    - 캐시 히트율
    - 빌드 시간 절감
    - 원격 캐시 사용량 
+
+## 자체 Remote Cache Server 구축
+
+### 1. Turborepo Remote Cache Server 설정
+
+#### 1.1 Docker를 사용한 설정
+
+```dockerfile
+# turbo-cache-server/Dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Turborepo CLI 설치
+RUN npm install -g turbo
+
+# 캐시 저장소 디렉토리 생성
+RUN mkdir -p /app/cache
+
+# 환경 변수 설정
+ENV TURBO_TOKEN=your-secret-token
+ENV STORAGE_PROVIDER=fs
+ENV STORAGE_PATH=/app/cache
+
+# 서버 실행
+EXPOSE 3000
+CMD ["turbo", "daemon", "--port", "3000"]
+```
+
+```yaml
+# turbo-cache-server/docker-compose.yml
+version: '3'
+services:
+  turbo-cache:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - turbo-cache-data:/app/cache
+    environment:
+      - TURBO_TOKEN=your-secret-token
+      - STORAGE_PROVIDER=fs
+      - STORAGE_PATH=/app/cache
+
+volumes:
+  turbo-cache-data:
+```
+
+#### 1.2 직접 실행 방법
+
+```bash
+# Turborepo CLI 전역 설치
+npm install -g turbo
+
+# 캐시 서버 실행
+TURBO_TOKEN=your-secret-token STORAGE_PROVIDER=fs STORAGE_PATH=/path/to/cache turbo daemon --port 3000
+```
+
+### 2. 프로젝트 설정
+
+#### 2.1 turbo.json 업데이트
+```json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "remoteCache": {
+    "enabled": true,
+    "signature": true,
+    "apiUrl": "http://localhost:3000"
+  }
+}
+```
+
+#### 2.2 환경 변수 설정
+```env
+TURBO_API=http://localhost:3000
+TURBO_TOKEN=your-secret-token
+TURBO_TEAM=your-team-name
+```
+
+### 3. GitHub Actions 워크플로우 업데이트
+
+```yaml
+name: Build with Custom Remote Cache
+
+env:
+  TURBO_API: ${{ secrets.TURBO_CACHE_SERVER_URL }}
+  TURBO_TOKEN: ${{ secrets.TURBO_CACHE_TOKEN }}
+  TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # ... 기존 steps ...
+      
+      - name: Build with Custom Cache
+        run: pnpm turbo build
+        env:
+          TURBO_API: ${{ secrets.TURBO_CACHE_SERVER_URL }}
+          TURBO_TOKEN: ${{ secrets.TURBO_CACHE_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+```
+
+### 4. 캐시 서버 보안 설정
+
+#### 4.1 인증 설정
+- `TURBO_TOKEN`을 사용한 기본 인증
+- JWT 기반 인증 구현 가능
+- IP 화이트리스트 설정
+
+#### 4.2 SSL/TLS 설정
+```nginx
+# /etc/nginx/conf.d/turbo-cache.conf
+server {
+    listen 443 ssl;
+    server_name cache.your-domain.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+### 5. 모니터링 및 관리
+
+#### 5.1 캐시 상태 모니터링
+```bash
+# 캐시 사용량 확인
+du -sh /path/to/cache
+
+# 캐시 히트율 확인
+pnpm turbo build --dry --summarize
+```
+
+#### 5.2 캐시 관리
+```bash
+# 오래된 캐시 정리 (30일 이상)
+find /path/to/cache -type f -mtime +30 -delete
+
+# 캐시 전체 삭제
+rm -rf /path/to/cache/*
+```
+
+### 6. 장점
+1. 완전한 제어권 확보
+2. 사용자 정의 캐시 정책 구현 가능
+3. 내부망 사용으로 보안 강화
+4. 비용 절감
+5. 커스텀 모니터링 구현 가능
+
+### 7. 주의사항
+1. 서버 유지보수 필요
+2. 백업 전략 수립 필요
+3. 스케일링 고려 필요
+4. 보안 설정 철저히 필요 

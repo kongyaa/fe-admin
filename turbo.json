@@ -8,7 +8,7 @@
   "remoteCache": {
     "enabled": true,
     "signature": true,
-    "apiUrl": "https://api.vercel.com"
+    "apiUrl": "http://localhost:3000"
   },
   "tasks": {
     "build": {
