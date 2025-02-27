@@ -1,4 +1,4 @@
-name: Build with Custom Remote Cache
+name: Build with Vercel Remote Cache
 
 on:
   push:
@@ -9,29 +9,11 @@ on:
 env:
   TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
   TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
-  TURBO_API: ${{ secrets.TURBO_CACHE_SERVER_URL }}
+  TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+  TURBO_API: 'https://api.vercel.com'
 
 jobs:
-  setup-cache-server:
-    runs-on: ubuntu-latest
-    services:
-      turbo-cache:
-        image: node:18-alpine
-        ports:
-          - 3000:3000
-        env:
-          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-          STORAGE_PROVIDER: fs
-          STORAGE_PATH: /app/cache
-        options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 3
-          --health-start-period 10s
-
   build:
-    needs: setup-cache-server
     runs-on: ubuntu-latest
     
     steps:
@@ -96,7 +78,7 @@ jobs:
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
-          TURBO_API: http://localhost:3000
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
 
       - name: Verify Cache Status
         if: always()
