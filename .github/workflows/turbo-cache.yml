@@ -11,6 +11,7 @@ env:
   TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
   TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
   TURBO_API: 'https://api.vercel.com'
+  TURBO_REMOTE_ONLY: true
 
 jobs:
   build:
@@ -25,6 +26,7 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '18'
+          cache: 'pnpm'
           
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
@@ -40,28 +42,32 @@ jobs:
       - name: Setup pnpm cache
         uses: actions/cache@v3
         with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          path: |
+            ${{ env.STORE_PATH }}
+            node_modules
+            */*/node_modules
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+            ${{ runner.os }}-pnpm-
 
       - name: Setup Turbo cache
         uses: actions/cache@v3
         with:
-          path: .turbo
-          key: turbo-${{ github.job }}-${{ github.ref_name }}-${{ github.sha }}
+          path: |
+            .turbo
+            **/.turbo
+          key: turbo-${{ github.job }}-${{ github.sha }}
           restore-keys: |
-            turbo-${{ github.job }}-${{ github.ref_name }}-
             turbo-${{ github.job }}-
           
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Turbo globally
-        run: pnpm add -g turbo
+      - name: Install Turbo
+        run: pnpm install turbo --global
         
       - name: Build
-        run: pnpm turbo build --cache-dir=.turbo
+        run: pnpm turbo build --remote-only
         env:
           TURBO_API: 'https://api.vercel.com'
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
@@ -73,4 +79,4 @@ jobs:
         run: |
           echo "Cache Performance Summary:"
           echo "======================="
-          pnpm dlx turbo build --dry-run --summarize 
+          pnpm dlx turbo build --dry-run --summarize --json 
