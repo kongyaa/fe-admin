@@ -10,7 +10,7 @@
     "signature": true,
     "apiUrl": "https://api.vercel.com"
   },
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": [
