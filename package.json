@@ -7,7 +7,9 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "test": "turbo test",
-    "clean": "turbo clean && rm -rf node_modules"
+    "clean": "turbo clean && rm -rf node_modules",
+    "build:remote": "env-cmd turbo build --cache-dir='.turbo' --cache=remote:rw",
+    "dev:remote": "env-cmd turbo dev --cache-dir='.turbo' --cache=remote:rw"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",
@@ -17,6 +19,8 @@
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
+    "dotenv-cli": "^7.4.4",
+    "env-cmd": "^10.1.0",
     "prettier": "^3.5.0",
     "typescript": "^5.3.3"
   },

@@ -3,12 +3,14 @@
   "globalEnv": [
     "TURBO_TOKEN",
     "TURBO_TEAM",
+    "TURBO_API",
     "TURBO_REMOTE_CACHE_SIGNATURE_KEY"
   ],
   "remoteCache": {
     "enabled": true,
-    "signature": false,
-    "apiUrl": "http://localhost:3000"
+    "signature": true,
+    "apiUrl": "http://localhost:3000",
+    "timeout": 10000
   },
   "tasks": {
     "build": {
