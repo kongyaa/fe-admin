@@ -7,12 +7,20 @@
   ],
   "remoteCache": {
     "enabled": true,
-    "signature": true,
+    "signature": false,
     "apiUrl": "http://localhost:3000"
   },
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "inputs": [
+        "src/**/*.tsx",
+        "src/**/*.ts",
+        "package.json",
+        "tsconfig.json",
+        "next.config.js",
+        ".env*"
+      ],
       "outputs": [
         "dist/**",
         ".next/**",
