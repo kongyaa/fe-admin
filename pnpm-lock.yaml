@@ -258,7 +258,7 @@ importers:
         version: 1.0.0
       dotenv:
         specifier: ^16.4.7
-        version: 16.4.7
+        version: 16.5.0
       marked:
         specifier: ^15.0.7
         version: 15.0.7
@@ -3632,8 +3632,8 @@ packages:
     engines: {node: '>=12'}
     dev: true
 
-  /dotenv@16.4.7:
-    resolution: {integrity: sha512-47qPchRCykZC03FhkYAhrvwU4xDBFIj1QPqaarj6mdM/hgUzfPHcpkHJOn3mJAufFeeAxAzeGsr5X0M4k6fLZQ==}
+  /dotenv@16.5.0:
+    resolution: {integrity: sha512-m/C+AwOAr9/W1UOIZUo232ejMNnJAJtYQjUbHoNTBNTJSvqzzDh7vnrei3o3r3m9blf6ZoDkvcw0VmozNRFJxg==}
     engines: {node: '>=12'}
     dev: false
 
