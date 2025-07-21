@@ -255,7 +255,7 @@ importers:
         version: 1.10.0
       cheerio:
         specifier: ^1.0.0
-        version: 1.1.0
+        version: 1.1.1
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
@@ -3158,9 +3158,9 @@ packages:
       domutils: 3.2.2
     dev: false
 
-  /cheerio@1.1.0:
-    resolution: {integrity: sha512-+0hMx9eYhJvWbgpKV9hN7jg0JcwydpopZE4hgi+KvQtByZXPp04NiCWU0LzcAbP63abZckIHkTQaXVF52mX3xQ==}
-    engines: {node: '>=18.17'}
+  /cheerio@1.1.1:
+    resolution: {integrity: sha512-bTXxVZeOfc3I97S4CSYVjcYvaTp92YOlwEUrVRtYrkuVn7S8/QKnnozVlztPcXlU039S2UxtsjAMyFRbX3V9gQ==}
+    engines: {node: '>=20.18.1'}
     dependencies:
       cheerio-select: 2.1.0
       dom-serializer: 2.0.0
