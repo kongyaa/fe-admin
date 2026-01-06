@@ -264,10 +264,10 @@ importers:
         version: 15.0.7
       openai:
         specifier: ^4.28.0
-        version: 4.85.1(ws@8.18.3)
+        version: 4.85.1(ws@8.19.0)
       ws:
         specifier: ^8.16.0
-        version: 8.18.3
+        version: 8.19.0
     devDependencies:
       '@types/node':
         specifier: ^20.17.19
@@ -3171,7 +3171,7 @@ packages:
       parse5: 7.3.0
       parse5-htmlparser2-tree-adapter: 7.1.0
       parse5-parser-stream: 7.1.2
-      undici: 7.16.0
+      undici: 7.18.0
       whatwg-mimetype: 4.0.0
     dev: false
 
@@ -6391,7 +6391,7 @@ packages:
       - encoding
     dev: false
 
-  /openai@4.85.1(ws@8.18.3):
+  /openai@4.85.1(ws@8.19.0):
     resolution: {integrity: sha512-jkX2fntHljUvSH3MkWh4jShl10oNkb+SsCj4auKlbu2oF4KWAnmHLNR5EpnUHK1ZNW05Rp0fjbJzYwQzMsH8ZA==}
     hasBin: true
     peerDependencies:
@@ -6410,7 +6410,7 @@ packages:
       form-data-encoder: 1.7.2
       formdata-node: 4.4.1
       node-fetch: 2.7.0
-      ws: 8.18.3
+      ws: 8.19.0
     transitivePeerDependencies:
       - encoding
     dev: false
@@ -8614,8 +8614,8 @@ packages:
     resolution: {integrity: sha512-Ny6QZ2Nju20vw1SRHe3d9jVu6gJ+4e3+MMpqu7pqE5HT6WsTSlce++GQmK5UXS8mzV8DSYHrQH+Xrf2jVcuKNg==}
     dev: true
 
-  /undici@7.16.0:
-    resolution: {integrity: sha512-QEg3HPMll0o3t2ourKwOeUAZ159Kn9mx5pnzHRQO8+Wixmh88YdZRiIwat0iNzNNXn0yoEtXJqFpyW7eM8BV7g==}
+  /undici@7.18.0:
+    resolution: {integrity: sha512-CfPufgPFHCYu0W4h1NiKW9+tNJ39o3kWm7Cm29ET1enSJx+AERfz7A2wAr26aY0SZbYzZlTBQtcHy15o60VZfQ==}
     engines: {node: '>=20.18.1'}
     dev: false
 
@@ -8841,8 +8841,8 @@ packages:
       signal-exit: 3.0.7
     dev: true
 
-  /ws@8.18.3:
-    resolution: {integrity: sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==}
+  /ws@8.19.0:
+    resolution: {integrity: sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
