@@ -252,7 +252,7 @@ importers:
         version: 0.22.35
       axios:
         specifier: ^1.7.9
-        version: 1.15.2
+        version: 1.16.0
       cheerio:
         specifier: ^1.0.0
         version: 1.2.0
@@ -2845,8 +2845,8 @@ packages:
     engines: {node: '>=4'}
     dev: true
 
-  /axios@1.15.2:
-    resolution: {integrity: sha512-wLrXxPtcrPTsNlJmKjkPnNPK2Ihe0hn0wGSaTEiHRPxwjvJwT3hKmXF4dpqxmPO9SoNb2FsYXj/xEo0gHN+D5A==}
+  /axios@1.16.0:
+    resolution: {integrity: sha512-6hp5CwvTPlN2A31g5dxnwAX0orzM7pmCRDLnZSX772mv8WDqICwFjowHuPs04Mc8deIld1+ejhtaMn5vp6b+1w==}
     dependencies:
       follow-redirects: 1.16.0
       form-data: 4.0.5
