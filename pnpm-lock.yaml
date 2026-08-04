@@ -264,10 +264,10 @@ importers:
         version: 15.0.7
       openai:
         specifier: ^4.28.0
-        version: 4.85.1(ws@8.21.1)
+        version: 4.85.1(ws@8.21.2)
       ws:
         specifier: ^8.16.0
-        version: 8.21.1
+        version: 8.21.2
     devDependencies:
       '@types/node':
         specifier: ^20.17.19
@@ -6423,7 +6423,7 @@ packages:
       - encoding
     dev: false
 
-  /openai@4.85.1(ws@8.21.1):
+  /openai@4.85.1(ws@8.21.2):
     resolution: {integrity: sha512-jkX2fntHljUvSH3MkWh4jShl10oNkb+SsCj4auKlbu2oF4KWAnmHLNR5EpnUHK1ZNW05Rp0fjbJzYwQzMsH8ZA==}
     hasBin: true
     peerDependencies:
@@ -6442,7 +6442,7 @@ packages:
       form-data-encoder: 1.7.2
       formdata-node: 4.4.1
       node-fetch: 2.7.0
-      ws: 8.21.1
+      ws: 8.21.2
     transitivePeerDependencies:
       - encoding
     dev: false
@@ -8879,8 +8879,8 @@ packages:
       signal-exit: 3.0.7
     dev: true
 
-  /ws@8.21.1:
-    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
+  /ws@8.21.2:
+    resolution: {integrity: sha512-54dMVAo4WIe6SKy3vBgN+9bJZqqQ8IMRevAkOLQALhi49qkkQDQfWdAZ8KQlXiEabw88ARXXdUrlvtbKQX+aKw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
