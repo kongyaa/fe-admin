@@ -1,0 +1,18 @@
+{
+  "name": "chungyak-alert",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "청약 공고 수집 및 알림 배치",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "dry-run": "node src/main.js --dry-run",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "nodemailer": "^7.0.0"
+  }
+}

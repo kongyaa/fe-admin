@@ -1,0 +1,81 @@
+name: chungyak-alert
+
+on:
+  schedule:
+    - cron: '30 22 * * *'
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 실행 모드
+        type: choice
+        default: normal
+        options:
+          - normal
+          - dry-run
+          - force-weekly
+          - test-send
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chungyak-alert
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: scripts/chungyak-alert
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Refresh Kakao token
+        continue-on-error: true
+        run: node src/kakao-refresh.js
+        env:
+          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+
+      - name: Save rotated Kakao token
+        id: save_refresh
+        continue-on-error: true
+        run: |
+          if [ -f "$RUNNER_TEMP/kakao_refresh" ]; then
+            gh secret set KAKAO_REFRESH_TOKEN -R "$GITHUB_REPOSITORY" < "$RUNNER_TEMP/kakao_refresh"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.KAKAO_SECRET_WRITER_PAT }}
+
+      - name: Run batch
+        run: node src/main.js
+        env:
+          CHUNGYAK_MODE: ${{ inputs.mode }}
+          KAKAO_ACCESS_FILE: ${{ runner.temp }}/kakao_access
+          KAKAO_SECRET_WRITE_OUTCOME: ${{ steps.save_refresh.outcome }}
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+          NOTION_KEY: ${{ secrets.CHUNGYAK_NOTION_KEY }}
+          CHUNGYAK_NOTION_PAGE_ID: ${{ secrets.CHUNGYAK_NOTION_PAGE_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+
+      - name: Remove token files
+        if: always()
+        working-directory: .
+        run: rm -f "$RUNNER_TEMP/kakao_access" "$RUNNER_TEMP/kakao_refresh"
