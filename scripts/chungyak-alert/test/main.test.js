@@ -345,7 +345,7 @@ function apiFetch({ rows = [remainderRow(THU)], fail = false } = {}) {
 }
 
 function fakeStore(existing = new Map(), weekly = null) {
-  const state = { upserts: [], stamps: [], weekly };
+  const state = { upserts: [], stamps: [], weekly, archived: [] };
   return {
     state,
     init: async () => {},
@@ -357,6 +357,7 @@ function fakeStore(existing = new Map(), weekly = null) {
     stampUrgent: async (id, date) => state.stamps.push({ id, date }),
     getWeeklyState: async () => state.weekly,
     setWeeklyState: async (monday) => { state.weekly = monday; },
+    archivePage: async (id) => { state.archived.push(id); },
   };
 }
 
@@ -961,6 +962,206 @@ test('the workflow gates cleanup to manual runs and gives it only Notion secrets
   assert.deepEqual([...step.matchAll(/secrets\.(\w+)/g)].map((m) => m[1]), ['CHUNGYAK_NOTION_KEY', 'CHUNGYAK_NOTION_PAGE_ID']);
   const batch = workflow.slice(workflow.indexOf('- name: Run batch'));
   assert.ok(batch.includes("if: inputs.mode != 'cleanup-ended'"));
+});
+
+// 2026-11-02(월) KST 실행 기준의 저장 페이지
+const MON_NOW = '2026-11-01T22:30:00Z';
+const MON = '2026-11-02';
+const weeklyPages = () => new Map([
+  ['ended', { id: 'ended', key: 'ended', lotto: null, urgentDate: null, end: '2026-11-01' }],
+  ['today', { id: 'today', key: 'today', lotto: null, urgentDate: null, end: MON }],
+  ['future', { id: 'future', key: 'future', lotto: null, urgentDate: null, end: '2026-12-01' }],
+  ['no-end', { id: 'no-end', key: 'no-end', lotto: null, urgentDate: null, end: null }],
+]);
+const weeklyMails = (mails) => mails.filter((mail) => mail.subject.includes('금주 일정'));
+
+test('a successful weekly send archives only ended pages and logs the count', async () => {
+  const store = fakeStore(weeklyPages());
+  const h = harness({ store, nowIso: MON_NOW, fetch: apiFetch({ rows: [] }) });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(weeklyMails(h.mails).length, 1);
+  assert.deepEqual(store.state.archived, ['ended']);
+  assert.ok(h.logs.some((line) => line.includes('archived=1')));
+});
+
+test('force-weekly also archives on a non-weekly day', async () => {
+  const pages = new Map([['old', { id: 'old', key: 'old', lotto: null, urgentDate: null, end: '2026-11-04' }]]);
+  const store = fakeStore(pages);
+  const h = harness({ store, fetch: apiFetch({ rows: [] }) });
+  await run({ argv: ['--force-weekly'], env: h.env, deps: h.deps });
+  assert.deepEqual(store.state.archived, ['old']);
+});
+
+test('the order is mail, weekly state, then archive, with urgent stamps before the archive', async () => {
+  const events = [];
+  const base = fakeStore(weeklyPages());
+  const store = {
+    ...base,
+    setWeeklyState: async () => { events.push('state'); },
+    stampUrgent: async () => { events.push('stamp'); },
+    archivePage: async () => { events.push('archive'); },
+  };
+  const h = harness({
+    store,
+    nowIso: MON_NOW,
+    fetch: apiFetch({ rows: [remainderRow(MON)] }),
+    sendMail: async () => { events.push('mail'); },
+    sendKakao: async () => { events.push('kakao'); },
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(events, ['mail', 'state', 'kakao', 'stamp', 'archive']);
+});
+
+test('no archive when the weekly mail fails', async () => {
+  const store = fakeStore(weeklyPages());
+  const h = harness({
+    store,
+    nowIso: MON_NOW,
+    fetch: apiFetch({ rows: [] }),
+    sendMail: async (mail) => {
+      if (mail.subject.includes('금주 일정')) throw new Error('x');
+    },
+  });
+  await run({ env: h.env, deps: h.deps });
+  assert.deepEqual(store.state.archived, []);
+  assert.ok(h.logs.some((line) => line.includes('archived=0')));
+});
+
+test('no archive when the weekly mail is deferred', async () => {
+  const store = fakeStore(weeklyPages());
+  const base = apiFetch({ rows: [] });
+  const h = harness({
+    store,
+    nowIso: MON_NOW,
+    fetch: async (url) => (String(url).includes('getOPT') ? new Response('', { status: 500 }) : base(url)),
+  });
+  await run({ env: h.env, deps: h.deps });
+  assert.equal(weeklyMails(h.mails).length, 0);
+  assert.ok(h.mails.some((mail) => mail.text.includes('weekly_deferred')));
+  assert.deepEqual(store.state.archived, []);
+});
+
+test('no archive when the weekly state cannot be saved', async () => {
+  const base = fakeStore(weeklyPages());
+  const store = { ...base, setWeeklyState: async () => { throw new Error('x'); } };
+  const h = harness({ store, nowIso: MON_NOW, fetch: apiFetch({ rows: [] }) });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(weeklyMails(h.mails).length, 1);
+  assert.deepEqual(base.state.archived, []);
+});
+
+test('no archive on non-weekly runs, an already stamped week, or dry-run and test-send', async () => {
+  const thursday = fakeStore(weeklyPages());
+  const notWeekly = harness({ store: thursday, fetch: apiFetch({ rows: [] }) });
+  await run({ env: notWeekly.env, deps: notWeekly.deps });
+  assert.deepEqual(thursday.state.archived, []);
+
+  const stamped = fakeStore(weeklyPages(), MON);
+  const again = harness({ store: stamped, nowIso: MON_NOW, fetch: apiFetch({ rows: [] }) });
+  await run({ env: again.env, deps: again.deps });
+  assert.deepEqual(stamped.state.archived, []);
+
+  const dry = fakeStore(weeklyPages());
+  const dryRun = harness({ store: dry, nowIso: MON_NOW, fetch: apiFetch({ rows: [] }) });
+  await run({ argv: ['--dry-run', '--force-weekly'], env: dryRun.env, deps: dryRun.deps });
+  assert.deepEqual(dry.state.archived, []);
+
+  const send = fakeStore(weeklyPages());
+  const testSend = harness({ store: send, nowIso: MON_NOW, fetch: apiFetch({ rows: [] }) });
+  await run({ argv: ['--test-send'], env: testSend.env, deps: testSend.deps });
+  assert.deepEqual(send.state.archived, []);
+});
+
+test('a partial archive failure is reported, sets the exit code and continues', async () => {
+  const pages = new Map([
+    ['a', { id: 'a', key: 'a', lotto: null, urgentDate: null, end: '2026-11-01' }],
+    ['b', { id: 'b', key: 'b', lotto: null, urgentDate: null, end: '2026-11-01' }],
+  ]);
+  const base = fakeStore(pages);
+  const store = {
+    ...base,
+    archivePage: async (id) => {
+      if (id === 'a') throw new Error('https://api.notion.com/v1/pages/a');
+      base.state.archived.push(id);
+    },
+  };
+  const h = harness({ store, nowIso: MON_NOW, fetch: apiFetch({ rows: [] }) });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.deepEqual(base.state.archived, ['b']);
+  assert.equal(weeklyMails(h.mails).length, 1);
+  assert.equal(base.state.weekly, MON);
+  assert.ok(h.logs.some((line) => line.includes('archived=1')));
+  const summary = h.mails.find((mail) => mail.subject.includes('배치 오류'));
+  assert.ok(summary.text.includes('cleanup_failed x1'));
+  assert.ok(!summary.text.includes('api.notion.com'));
+});
+
+test('urgent alerts go out and stamp normally on a run that archives', async () => {
+  const pages = weeklyPages();
+  pages.set('7-7', { id: 'p7', key: '7-7', lotto: null, urgentDate: null, end: MON });
+  // 저장된 종료일이 지났지만 오늘 다시 접수가 시작된 공고도 알림과 기록이 먼저 끝난다.
+  pages.set('8-7', { id: 'p8', key: '8-7', lotto: '로또', urgentDate: null, end: '2026-11-01' });
+  const store = fakeStore(pages);
+  const rows = [remainderRow(MON), remainderRow(MON, { HOUSE_MANAGE_NO: '8' })];
+  const h = harness({ store, nowIso: MON_NOW, fetch: apiFetch({ rows }) });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(h.kakao.length, 2);
+  assert.deepEqual(store.state.stamps.map((stamp) => stamp.id).sort(), ['p8', 'page-7-7']);
+  assert.deepEqual(store.state.archived.sort(), ['ended', 'p8']);
+});
+
+const endedNotionPage = (id) => ({
+  id,
+  properties: {
+    '고유 키': { rich_text: [{ plain_text: id }] },
+    '접수 종료일': { date: { start: '2026-11-01' } },
+  },
+});
+
+test('a Notion stall that starts during archiving stops after one retry cycle and is reported', async () => {
+  const h = stalledNotionHarness({
+    rows: [],
+    nowIso: MON_NOW,
+    pages: [endedNotionPage('a'), endedNotionPage('b')],
+    stall: (method, path) => method === 'PATCH' && path.startsWith('/pages/'),
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(weeklyMails(h.mails).length, 1);
+  assert.deepEqual(h.notionCalls.filter((call) => call.startsWith('PATCH')), Array(6).fill('PATCH /pages/a'));
+  const summary = h.mails.find((mail) => mail.subject.includes('배치 오류'));
+  assert.ok(summary.text.includes('cleanup_failed x2'));
+  assert.ok(summary.text.includes('notion_network x2'));
+  assert.ok(h.logs.some((line) => line.includes('archived=0')));
+});
+
+test('a Notion stall on urgent stamps keeps the alert sent and skips archive calls', async () => {
+  const ended = endedNotionPage;
+  const h = stalledNotionHarness({
+    rows: [remainderRow(MON)],
+    nowIso: MON_NOW,
+    pages: [ended('a'), ended('b')],
+    stall: (method, path) => method === 'PATCH' && path.startsWith('/pages/'),
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(h.kakao.length, 1);
+  assert.equal(h.notionCalls.filter((call) => call.startsWith('PATCH')).length, 6);
+  const summary = h.mails.find((mail) => mail.subject.includes('배치 오류'));
+  assert.ok(summary.text.includes('cleanup_failed x2'));
+  assert.ok(summary.text.includes('notion_network'));
+});
+
+test('pages already archived are not touched again on the next weekly run', async () => {
+  const remaining = new Map([['a', { id: 'a', key: 'a', lotto: null, urgentDate: null, end: '2026-11-01' }]]);
+  const first = fakeStore(remaining);
+  const one = harness({ store: first, nowIso: MON_NOW, fetch: apiFetch({ rows: [] }) });
+  await run({ env: one.env, deps: one.deps });
+  assert.deepEqual(first.state.archived, ['a']);
+
+  // Notion 조회는 휴지통 페이지를 돌려주지 않으므로 다음 실행의 목록은 비어 있다.
+  const second = fakeStore(new Map());
+  const two = harness({ store: second, nowIso: '2026-11-08T22:30:00Z', fetch: apiFetch({ rows: [] }) });
+  await run({ env: two.env, deps: two.deps });
+  assert.deepEqual(second.state.archived, []);
 });
 
 test('invalid mode exits 1 before doing anything', async () => {
