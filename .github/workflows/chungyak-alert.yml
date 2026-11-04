@@ -15,6 +15,7 @@ on:
           - dry-run
           - force-weekly
           - test-send
+          - cleanup-ended
 
 permissions:
   contents: read
@@ -44,7 +45,16 @@ jobs:
 
       - run: npm ci
 
+      - name: Clean up ended pages
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'cleanup-ended'
+        run: node src/main.js
+        env:
+          CHUNGYAK_MODE: cleanup-ended
+          NOTION_KEY: ${{ secrets.CHUNGYAK_NOTION_KEY }}
+          CHUNGYAK_NOTION_PAGE_ID: ${{ secrets.CHUNGYAK_NOTION_PAGE_ID }}
+
       - name: Refresh Kakao token
+        if: inputs.mode != 'cleanup-ended'
         continue-on-error: true
         run: node src/kakao-refresh.js
         env:
@@ -54,6 +64,7 @@ jobs:
 
       - name: Save rotated Kakao token
         id: save_refresh
+        if: inputs.mode != 'cleanup-ended'
         continue-on-error: true
         run: |
           if [ -f "$RUNNER_TEMP/kakao_refresh" ]; then
@@ -63,6 +74,7 @@ jobs:
           GH_TOKEN: ${{ secrets.KAKAO_SECRET_WRITER_PAT }}
 
       - name: Run batch
+        if: inputs.mode != 'cleanup-ended'
         run: node src/main.js
         env:
           CHUNGYAK_MODE: ${{ inputs.mode }}

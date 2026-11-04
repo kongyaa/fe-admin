@@ -18,7 +18,13 @@ import {
   weekdayOf,
 } from './util.js';
 
-const MODES = { normal: [], 'dry-run': ['--dry-run'], 'force-weekly': ['--force-weekly'], 'test-send': ['--test-send'] };
+const MODES = {
+  normal: [],
+  'dry-run': ['--dry-run'],
+  'force-weekly': ['--force-weekly'],
+  'test-send': ['--test-send'],
+  'cleanup-ended': ['--cleanup-ended'],
+};
 
 export const SOURCES = [
   '청약홈 분양정보 조회 서비스 (data.go.kr 15098547): 사용',
@@ -38,11 +44,18 @@ export function parseFlags(argv, env) {
     print,
     forceWeekly: args.has('--force-weekly'),
     testSend: args.has('--test-send'),
+    cleanupEnded: args.has('--cleanup-ended'),
   };
 }
 
 export function isActive(notice, today) {
   return !notice.overallEnd || notice.overallEnd >= today;
+}
+
+// Notion에 없는 공고 중 접수가 끝난 것은 저장하지 않는다. 날짜가 있으면 날짜를 우선한다.
+export function isClosedNotice(notice, today) {
+  if (notice.overallEnd) return notice.overallEnd < today;
+  return notice.kind === 'lh' && /마감|종료/.test(notice.noticeStatus ?? '');
 }
 
 export function dedupeNotices(notices) {
@@ -126,6 +139,39 @@ async function runTestSend({ sendMail, sendKakao, today, log }) {
   return failed ? 1 : 0;
 }
 
+// 수동 전용. 저장된 접수 종료일이 오늘(KST) 이전인 페이지만 Notion 휴지통으로 옮긴다.
+async function runCleanupEnded({ store, today, dryRun, log }) {
+  let pages;
+  try {
+    if (!store) throw new Error('store unavailable');
+    await store.init({ createMissing: false });
+    pages = [...(await store.loadExisting()).values()];
+  } catch {
+    log('cleanup archived=0 kept=0 failed=1');
+    return 1;
+  }
+  const counts = { archived: 0, kept: 0, failed: 0 };
+  const ended = [];
+  for (const page of pages) {
+    if (page.end && page.end < today) ended.push(page);
+    else counts.kept += 1;
+  }
+  if (dryRun) {
+    log(`cleanup dry-run candidates=${ended.length} kept=${counts.kept}`);
+    return 0;
+  }
+  for (const page of ended) {
+    try {
+      await store.archivePage(page.id);
+      counts.archived += 1;
+    } catch {
+      counts.failed += 1;
+    }
+  }
+  log(`cleanup archived=${counts.archived} kept=${counts.kept} failed=${counts.failed}`);
+  return counts.failed > 0 ? 1 : 0;
+}
+
 export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const fetchFn = deps.fetch ?? globalThis.fetch;
   const sleep = deps.sleep ?? defaultSleep;
@@ -138,6 +184,25 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   if (!flags) {
     log('invalid mode');
     return 1;
+  }
+
+  if (flags.cleanupEnded) {
+    if (env.GITHUB_EVENT_NAME === 'schedule') {
+      log('cleanup refused on schedule');
+      return 1;
+    }
+    const canCreate = env.NOTION_KEY && env.CHUNGYAK_NOTION_PAGE_ID;
+    const store = deps.store ?? (canCreate
+      ? createNotionStore({
+        key: env.NOTION_KEY,
+        parentPageId: env.CHUNGYAK_NOTION_PAGE_ID,
+        config,
+        sources: SOURCES,
+        fetch: fetchFn,
+        sleep,
+      })
+      : null);
+    return runCleanupEnded({ store, today, dryRun: flags.dryRun, log });
   }
 
   const dataKey = decodeServiceKey(env.DATA_GO_KR_KEY);
@@ -221,6 +286,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
   for (const notice of notices) {
     const previous = existing.get(notice.key);
+    if (!previous && isClosedNotice(notice, today)) {
+      counts.skipped += 1;
+      continue;
+    }
     if (previous?.end && previous.end < today) {
       counts.skipped += 1;
       records.push({ notice, status: previous.lotto, urgentDate: previous.urgentDate, pageId: previous.id });
