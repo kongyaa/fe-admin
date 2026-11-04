@@ -1,0 +1,25 @@
+{
+  "alertRegions": ["서울", "경기", "인천"],
+  "lookbackDays": 60,
+  "lh": {
+    "lookaheadDays": 90,
+    "excludeTypeKeywords": ["토지", "상가"]
+  },
+  "notion": {
+    "databaseTitle": "청약 정보",
+    "sourcesPageTitle": "청약 수집 소스"
+  },
+  "lotto": {
+    "minGainManwon": 30000,
+    "minDiscountRate": 0.2,
+    "areaToleranceM2": 3,
+    "tradeMonths": 6,
+    "minSamples": 5,
+    "newBuildYears": 10,
+    "includeRemainder": true,
+    "includeResupply": true,
+    "includeArbitrary": false,
+    "includePriceCap": true,
+    "includePublicDistrict": true
+  }
+}
