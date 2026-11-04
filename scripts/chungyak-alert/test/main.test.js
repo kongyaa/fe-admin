@@ -698,17 +698,90 @@ test('a missing Kakao token is reported and the urgent alert goes by mail', asyn
   assert.ok(h.mails.some((mail) => mail.text.includes('kakao_access_token_missing')));
 });
 
-test('past notices are stored unevaluated; ended existing pages are not rewritten', async () => {
-  const rows = [remainderRow('2026-11-01')];
-  const fresh = harness({ fetch: apiFetch({ rows }) });
-  await run({ env: fresh.env, deps: fresh.deps });
-  assert.equal(fresh.store.state.upserts.length, 1);
-  assert.equal(fresh.store.state.upserts[0].evaluation, null);
+test('a new notice whose application has ended is skipped entirely', async () => {
+  const h = harness({ fetch: apiFetch({ rows: [remainderRow('2026-11-01')] }), nowIso: '2026-11-01T22:30:00Z' });
+  await run({ argv: ['--force-weekly'], env: h.env, deps: h.deps });
+  // 2026-11-02 KST 기준으로 11-01은 지났다.
+  assert.equal(h.store.state.upserts.length, 0);
+  assert.equal(h.kakao.length, 0);
+  assert.ok(h.logs.some((line) => line.includes('skipped=1')));
+  const weekly = h.mails.find((mail) => mail.subject.includes('금주 일정'));
+  assert.ok(!weekly.text.includes('무순위 단지'));
+});
 
-  const ended = new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: '2026-11-01' }]]);
-  const old = harness({ fetch: apiFetch({ rows }), store: fakeStore(ended) });
+test('the end date is compared in KST and the last day is still stored', async () => {
+  // 22:30 UTC는 KST로 다음 날이다.
+  const ended = harness({ fetch: apiFetch({ rows: [remainderRow('2026-11-04')] }) });
+  await run({ env: ended.env, deps: ended.deps });
+  assert.equal(ended.store.state.upserts.length, 0);
+
+  const lastDay = harness({ fetch: apiFetch({ rows: [remainderRow(THU)] }) });
+  await run({ env: lastDay.env, deps: lastDay.deps });
+  assert.equal(lastDay.store.state.upserts.length, 1);
+});
+
+test('a notice with no dates and no closed status is still stored', async () => {
+  const rows = [remainderRow(null, { SUBSCRPT_RCEPT_BGNDE: '', SUBSCRPT_RCEPT_ENDDE: '' })];
+  const h = harness({ fetch: apiFetch({ rows }) });
+  await run({ env: h.env, deps: h.deps });
+  assert.equal(h.store.state.upserts.length, 1);
+});
+
+const lhRow = (id, status, extra = {}) => ({
+  PAN_NM: `LH ${id}`,
+  CNP_CD_NM: '서울특별시',
+  PAN_SS: status,
+  ALL_CNT: 1,
+  DTL_URL: `https://apply.lh.or.kr/?panId=${id}`,
+  ...extra,
+});
+
+function lhFetch(rows) {
+  const base = apiFetch({ rows: [] });
+  return async (url) => {
+    if (String(url).includes('B552555')) return Response.json([{ dsList: rows.map((row) => ({ ...row, ALL_CNT: rows.length })) }]);
+    return base(url);
+  };
+}
+
+test('new LH notices with no dates are skipped only when closed', async () => {
+  const h = harness({
+    fetch: lhFetch([lhRow('1', '접수마감'), lhRow('2', '공고마감'), lhRow('3', '모집종료'), lhRow('4', '공고중'), lhRow('5', '접수중'), lhRow('6', undefined)]),
+  });
+  await run({ env: h.env, deps: h.deps });
+  assert.deepEqual(h.store.state.upserts.map((item) => item.key), ['LH-4', 'LH-5', 'LH-6']);
+  assert.ok(h.logs.some((line) => line.includes('skipped=3')));
+});
+
+test('LH dates take priority over the status text', async () => {
+  const h = harness({
+    fetch: lhFetch([
+      lhRow('1', '접수마감', { PAN_NT_ST_DT: '2026.11.01', CLSG_DT: '2026.11.20' }),
+      lhRow('2', '공고중', { PAN_NT_ST_DT: '2026.10.01', CLSG_DT: '2026.10.20' }),
+    ]),
+  });
+  await run({ env: h.env, deps: h.deps });
+  assert.deepEqual(h.store.state.upserts.map((item) => item.key), ['LH-1']);
+});
+
+test('existing pages keep their behaviour when the notice has ended', async () => {
+  const rows = [remainderRow('2026-11-01')];
+  const stored = new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: '2026-11-01' }]]);
+  const old = harness({ fetch: apiFetch({ rows }), store: fakeStore(stored) });
   await run({ env: old.env, deps: old.deps });
   assert.equal(old.store.state.upserts.length, 0);
+
+  // 전날까지 진행 중으로 기록된 페이지는 마지막으로 한 번 갱신하되 판별은 하지 않는다.
+  const open = new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]]);
+  const updated = harness({ fetch: apiFetch({ rows }), store: fakeStore(open) });
+  await run({ env: updated.env, deps: updated.deps });
+  assert.equal(updated.store.state.upserts.length, 1);
+  assert.equal(updated.store.state.upserts[0].evaluation, null);
+
+  const closedLh = new Map([['LH-1', { id: 'y', key: 'LH-1', lotto: null, urgentDate: null, end: null }]]);
+  const lh = harness({ fetch: lhFetch([lhRow('1', '접수마감')]), store: fakeStore(closedLh) });
+  await run({ env: lh.env, deps: lh.deps });
+  assert.deepEqual(lh.store.state.upserts.map((item) => item.key), ['LH-1']);
 });
 
 test('undetermined evaluation keeps an existing 로또 and alerts', async () => {
@@ -754,6 +827,140 @@ test('test-send sends one marked mail and one Kakao with no Notion use', async (
   assert.equal(h.mails.length, 1);
   assert.ok(h.mails[0].subject.includes('[테스트]'));
   assert.equal(h.kakao.length, 1);
+});
+
+const cleanupPage = (id, end) => ({
+  id,
+  properties: {
+    '고유 키': { rich_text: [{ plain_text: `key-${id}` }] },
+    '접수 종료일': { date: end ? { start: end } : null },
+  },
+});
+
+const cleanupPages = [
+  cleanupPage('ended', '2026-11-04'),
+  cleanupPage('ended-long-ago', '2020-01-01'),
+  cleanupPage('today', THU),
+  cleanupPage('future', '2026-12-01'),
+  cleanupPage('no-end', null),
+];
+
+// 22:30 UTC는 KST로 다음 날이라, 오늘은 THU이고 2026-11-04는 지난 날짜다.
+function cleanupHarness({ pages = cleanupPages, patch, children } = {}) {
+  const calls = [];
+  const other = [];
+  const fetch = async (url, init = {}) => {
+    if (!String(url).includes('api.notion.com')) {
+      other.push(String(url));
+      return new Response('', { status: 500 });
+    }
+    const path = new URL(url).pathname.replace('/v1', '');
+    calls.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : null });
+    if (init.method === 'GET') {
+      return Response.json({
+        has_more: false,
+        results: children ?? [{ id: 'db', type: 'child_database', child_database: { title: '청약 정보' } }],
+      });
+    }
+    if (path.endsWith('/query')) return Response.json({ has_more: false, results: pages });
+    if (init.method === 'PATCH' && patch) return patch(path);
+    return Response.json({ id: 'page' });
+  };
+  const h = harness({ fetch });
+  h.deps.store = undefined;
+  const patches = () => calls.filter((call) => call.method === 'PATCH');
+  return { ...h, calls, other, patches };
+}
+
+const CLEANUP_ENV = { NOTION_KEY: 'n', CHUNGYAK_NOTION_PAGE_ID: 'p', CHUNGYAK_MODE: 'cleanup-ended' };
+
+test('cleanup archives only ended pages; today and no end date are kept; nothing is sent', async () => {
+  const h = cleanupHarness();
+  assert.equal(await run({ env: CLEANUP_ENV, deps: h.deps }), 0);
+  assert.deepEqual(h.patches().map((call) => call.path).sort(), ['/pages/ended', '/pages/ended-long-ago']);
+  assert.ok(h.patches().every((call) => call.body.archived === true && Object.keys(call.body).length === 1));
+  assert.deepEqual(h.logs, ['cleanup archived=2 kept=3 failed=0']);
+  assert.equal(h.mails.length, 0);
+  assert.equal(h.kakao.length, 0);
+  assert.equal(h.other.length, 0);
+  assert.ok(!h.calls.some((call) => call.path === '/pages' || call.path === '/databases'));
+});
+
+test('--cleanup-ended flag works the same as the mode', async () => {
+  const h = cleanupHarness();
+  assert.equal(await run({ argv: ['--cleanup-ended'], env: { NOTION_KEY: 'n', CHUNGYAK_NOTION_PAGE_ID: 'p' }, deps: h.deps }), 0);
+  assert.equal(h.patches().length, 2);
+});
+
+test('cleanup exits 1 when an archive fails and continues with the rest', async () => {
+  const h = cleanupHarness({
+    patch: (path) => (path === '/pages/ended' ? new Response('', { status: 403 }) : Response.json({ id: 'x' })),
+  });
+  assert.equal(await run({ env: CLEANUP_ENV, deps: h.deps }), 1);
+  assert.equal(h.patches().length, 2);
+  assert.deepEqual(h.logs, ['cleanup archived=1 kept=3 failed=1']);
+  assert.equal(h.mails.length, 0);
+});
+
+test('cleanup respects the Notion outage guard', async () => {
+  const h = cleanupHarness({ patch: () => { throw new TypeError('fetch failed https://api.notion.com'); } });
+  assert.equal(await run({ env: CLEANUP_ENV, deps: h.deps }), 1);
+  assert.equal(h.patches().length, 6);
+  assert.deepEqual(h.logs, ['cleanup archived=0 kept=3 failed=2']);
+});
+
+test('cleanup does not create a missing database and logs only counts', async () => {
+  const h = cleanupHarness({ children: [] });
+  assert.equal(await run({ env: CLEANUP_ENV, deps: h.deps }), 1);
+  assert.ok(!h.calls.some((call) => call.method === 'POST'));
+  assert.deepEqual(h.logs, ['cleanup archived=0 kept=0 failed=1']);
+});
+
+test('cleanup fails without Notion settings and sends nothing', async () => {
+  const h = cleanupHarness();
+  assert.equal(await run({ env: { CHUNGYAK_MODE: 'cleanup-ended' }, deps: h.deps }), 1);
+  assert.equal(h.calls.length, 0);
+  assert.equal(h.mails.length, 0);
+});
+
+test('cleanup refuses to run from a scheduled event', async () => {
+  const h = cleanupHarness();
+  assert.equal(await run({ env: { ...CLEANUP_ENV, GITHUB_EVENT_NAME: 'schedule' }, deps: h.deps }), 1);
+  assert.equal(h.calls.length, 0);
+});
+
+test('cleanup with --dry-run only counts', async () => {
+  const h = cleanupHarness();
+  assert.equal(await run({ argv: ['--dry-run'], env: CLEANUP_ENV, deps: h.deps }), 0);
+  assert.equal(h.patches().length, 0);
+  assert.deepEqual(h.logs, ['cleanup dry-run candidates=2 kept=3']);
+});
+
+test('normal and dry-run modes never archive', async () => {
+  const pages = [cleanupPage('ended', '2026-11-04')];
+  const normal = cleanupHarness({ pages });
+  normal.deps.fetch = (base => async (url, init) => {
+    if (String(url).includes('api.notion.com')) return base(url, init);
+    return apiFetch({ rows: [] })(url);
+  })(normal.deps.fetch);
+  await run({ env: { DATA_GO_KR_KEY: SECRET, NOTION_KEY: 'n', CHUNGYAK_NOTION_PAGE_ID: 'p' }, deps: normal.deps });
+  assert.ok(normal.calls.some((call) => call.path.endsWith('/query')));
+  assert.ok(!normal.calls.some((call) => call.body?.archived !== undefined));
+
+  const dry = cleanupHarness({ pages });
+  dry.deps.fetch = apiFetch({ rows: [] });
+  assert.equal(await run({ argv: ['--dry-run'], env: { DATA_GO_KR_KEY: SECRET }, deps: dry.deps }), 0);
+  assert.equal(dry.calls.length, 0);
+});
+
+test('the workflow gates cleanup to manual runs and gives it only Notion secrets', () => {
+  const workflow = readFileSync(new URL('../../../.github/workflows/chungyak-alert.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.ok(workflow.includes('- cleanup-ended'));
+  const step = workflow.slice(workflow.indexOf('- name: Clean up ended pages'), workflow.indexOf('- name: Refresh Kakao token'));
+  assert.ok(step.includes("if: github.event_name == 'workflow_dispatch' && inputs.mode == 'cleanup-ended'"));
+  assert.deepEqual([...step.matchAll(/secrets\.(\w+)/g)].map((m) => m[1]), ['CHUNGYAK_NOTION_KEY', 'CHUNGYAK_NOTION_PAGE_ID']);
+  const batch = workflow.slice(workflow.indexOf('- name: Run batch'));
+  assert.ok(batch.includes("if: inputs.mode != 'cleanup-ended'"));
 });
 
 test('invalid mode exits 1 before doing anything', async () => {

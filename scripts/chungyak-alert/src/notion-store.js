@@ -166,10 +166,15 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   );
 
   return {
-    async init() {
+    async init({ createMissing = true } = {}) {
       children = await listChildren();
       const { databaseTitle, sourcesPageTitle } = config.notion;
       const database = children.find((block) => block.type === 'child_database' && block.child_database?.title === databaseTitle);
+      if (!createMissing) {
+        if (!database) throw new AppError('notion_database_missing');
+        databaseId = database.id;
+        return;
+      }
       if (database) {
         databaseId = database.id;
       } else {
@@ -224,6 +229,11 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
         { idempotent: false },
       );
       return created.id;
+    },
+
+    // Notion 휴지통으로 옮긴다. 영구 삭제가 아니다.
+    async archivePage(pageId) {
+      await request('PATCH', `/pages/${pageId}`, { archived: true });
     },
 
     async stampUrgent(pageId, date) {
