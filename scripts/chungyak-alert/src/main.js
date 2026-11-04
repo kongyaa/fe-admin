@@ -139,7 +139,28 @@ async function runTestSend({ sendMail, sendKakao, today, log }) {
   return failed ? 1 : 0;
 }
 
-// 수동 전용. 저장된 접수 종료일이 오늘(KST) 이전인 페이지만 Notion 휴지통으로 옮긴다.
+// 저장된 접수 종료일이 오늘(KST) 이전인 페이지만 대상이다. 종료일이 없거나 오늘 이후면 남긴다.
+function splitEndedPages(pages, today) {
+  const ended = pages.filter((page) => page.end && page.end < today);
+  return { ended, kept: pages.length - ended.length };
+}
+
+async function archivePages(store, pages, onFailure = () => {}) {
+  let archived = 0;
+  let failed = 0;
+  for (const page of pages) {
+    try {
+      await store.archivePage(page.id);
+      archived += 1;
+    } catch (error) {
+      failed += 1;
+      onFailure(error);
+    }
+  }
+  return { archived, failed };
+}
+
+// 수동 전용 정리 모드.
 async function runCleanupEnded({ store, today, dryRun, log }) {
   let pages;
   try {
@@ -150,26 +171,14 @@ async function runCleanupEnded({ store, today, dryRun, log }) {
     log('cleanup archived=0 kept=0 failed=1');
     return 1;
   }
-  const counts = { archived: 0, kept: 0, failed: 0 };
-  const ended = [];
-  for (const page of pages) {
-    if (page.end && page.end < today) ended.push(page);
-    else counts.kept += 1;
-  }
+  const { ended, kept } = splitEndedPages(pages, today);
   if (dryRun) {
-    log(`cleanup dry-run candidates=${ended.length} kept=${counts.kept}`);
+    log(`cleanup dry-run candidates=${ended.length} kept=${kept}`);
     return 0;
   }
-  for (const page of ended) {
-    try {
-      await store.archivePage(page.id);
-      counts.archived += 1;
-    } catch {
-      counts.failed += 1;
-    }
-  }
-  log(`cleanup archived=${counts.archived} kept=${counts.kept} failed=${counts.failed}`);
-  return counts.failed > 0 ? 1 : 0;
+  const { archived, failed } = await archivePages(store, ended);
+  log(`cleanup archived=${archived} kept=${kept} failed=${failed}`);
+  return failed > 0 ? 1 : 0;
 }
 
 export async function run({ argv = [], env = process.env, deps = {} } = {}) {
@@ -279,7 +288,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, urgentMailFallback: 0, weekly: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, urgentMailFallback: 0, weekly: 0, archived: 0 };
   const records = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
@@ -333,8 +342,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   }
 
   // 주간 메일은 발송 기록이 필요해 Notion이 정상일 때만 보낸다.
+  let weeklyDone = false;
   if (store) {
-    await sendWeekly({ records, store, sendMail, config, today, flags, applyhomeResult, addError, counts, markNotionFailed: () => { notionFailed = true; } });
+    weeklyDone = await sendWeekly({ records, store, sendMail, config, today, flags, applyhomeResult, addError, counts, markNotionFailed: () => { notionFailed = true; } });
   }
 
   if (!flags.dryRun) {
@@ -372,6 +382,17 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         addError('urgent_sent_without_stamp');
       }
     }
+  }
+
+  // 주간 메일과 발송 기록이 끝난 실행에서만 정리한다. 긴급 알림 뒤에 두어 발송과 기록을 막지 않는다.
+  if (weeklyDone) {
+    const { ended } = splitEndedPages([...existing.values()], today);
+    const { archived, failed } = await archivePages(store, ended, (error) => {
+      addError('cleanup_failed');
+      addError(safeError(error));
+    });
+    counts.archived = archived;
+    if (failed > 0) notionFailed = true;
   }
 
   if (flags.dryRun) {
@@ -413,14 +434,14 @@ async function sendWeekly({ records, store, sendMail, config, today, flags, appl
   } catch (error) {
     markNotionFailed();
     addError(safeError(error));
-    return;
+    return false;
   }
-  if (!shouldSendWeekly(today, lastMonday, flags.forceWeekly)) return;
+  if (!shouldSendWeekly(today, lastMonday, flags.forceWeekly)) return false;
   // 청약홈이 일부라도 실패하면 수요일 또는 강제 실행 전까지 다음 실행으로 미룬다.
   const partial = applyhomeResult.errors.length > 0;
   if (applyhomeResult.failedAll || (partial && weekdayOf(today) !== 3 && !flags.forceWeekly)) {
     addError('weekly_deferred');
-    return;
+    return false;
   }
   const { monday, sunday } = weekRange(today);
   const items = selectWeekly(records, monday, sunday, config.alertRegions);
@@ -430,14 +451,16 @@ async function sendWeekly({ records, store, sendMail, config, today, flags, appl
     counts.weekly += 1;
   } catch (error) {
     addError(safeError(error));
-    return;
+    return false;
   }
   try {
     await store.setWeeklyState(monday);
   } catch (error) {
     markNotionFailed();
     addError(safeError(error));
+    return false;
   }
+  return true;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
