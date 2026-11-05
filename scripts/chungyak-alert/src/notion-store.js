@@ -29,6 +29,7 @@ const P = {
   collected: '마지막 수집일',
   urgent: '긴급 알림 발송일',
   sequence: '순번',
+  interest: '관심',
 };
 
 const DB_SCHEMA = {
@@ -59,6 +60,7 @@ const DB_SCHEMA = {
   [P.collected]: { date: {} },
   [P.urgent]: { date: {} },
   [P.sequence]: { number: { format: 'number' } },
+  [P.interest]: { checkbox: {} },
 };
 
 const text = (value) => [{ type: 'text', text: { content: String(value).slice(0, 2000) } }];
@@ -67,7 +69,7 @@ const numberProp = (value) => (Number.isFinite(value) ? { number: value } : unde
 const selectProp = (value) => (value ? { select: { name: String(value).replace(/,/g, ' ').slice(0, 100) } } : undefined);
 const textProp = (value) => (value ? { rich_text: text(value) } : undefined);
 
-// 값이 없는 속성은 보내지 않아 기존 값을 지우지 않는다. 긴급 알림 발송일은 여기서 쓰지 않는다.
+// 값이 없는 속성은 보내지 않아 기존 값을 지우지 않는다. 긴급 알림 발송일과 사용자가 체크하는 관심은 여기서 쓰지 않는다.
 export function buildProperties(notice, evaluation, today) {
   const url = safeHttpUrl(notice.url);
   const properties = {
@@ -106,6 +108,10 @@ export function parseExistingPage(page) {
     end: props[P.end]?.date?.start?.slice(0, 10) ?? null,
     start: props[P.start]?.date?.start?.slice(0, 10) ?? null,
     sequence: props[P.sequence]?.number ?? null,
+    // 같은 이름의 다른 타입 속성은 체크로 보지 않는다.
+    interest: props[P.interest]?.checkbox === true,
+    name: (props[P.name]?.title ?? []).map((part) => part.plain_text).join(''),
+    link: props[P.link]?.url ?? null,
   };
 }
 
@@ -203,6 +209,18 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     }
   }
 
+  // 기존 DB에 관심 속성이 없을 때만 추가한다. 실패해도 수집과 알림을 막지 않고 다음 실행에서 다시 시도한다.
+  // 같은 이름의 다른 타입 속성은 사용자의 것일 수 있어 바꾸지 않는다.
+  async function ensureInterestProperty() {
+    try {
+      const database = await request('GET', `/databases/${databaseId}`);
+      if (database.properties?.[P.interest]) return;
+      await request('PATCH', `/databases/${databaseId}`, { properties: { [P.interest]: DB_SCHEMA[P.interest] } });
+    } catch {
+      // 위 주석 참고
+    }
+  }
+
   return {
     async init({ createMissing = true } = {}) {
       children = await listChildren();
@@ -216,6 +234,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       if (database) {
         databaseId = database.id;
         await ensureSequenceProperty();
+        await ensureInterestProperty();
       } else {
         const created = await request(
           'POST',

@@ -6,7 +6,7 @@ import { createMolitClient } from './sources/molit.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
 import { computeSequenceNumbers, createNotionStore } from './notion-store.js';
 import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } from './notify-gmail.js';
-import { buildKakaoText, sendKakaoMemo } from './notify-kakao.js';
+import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
 import {
   decodeServiceKey,
   defaultSleep,
@@ -77,6 +77,19 @@ export function selectUrgent(records, today, alertRegions) {
     if (stage) selected.push({ ...record, stage });
   }
   return selected;
+}
+
+// 실행 시작 때 읽은 Notion 행으로 고른다. 지역과 로또 여부는 보지 않는다.
+// handledKeys는 이번 실행에서 로또 알림 대상이 된 공고로, 하루 한 건만 보내기 위해 뺀다.
+export function selectInterest(rows, today, handledKeys = new Set()) {
+  return rows
+    .filter((row) => row.interest && row.start === today && row.urgentDate !== today && !handledKeys.has(row.key))
+    .map((row) => ({
+      notice: { key: row.key, name: row.name || row.key, url: linkFor(row.link) },
+      // 저장된 종료일이 시작일보다 이르면 지난 값이므로 표시하지 않는다.
+      stage: { name: '접수', start: row.start, end: row.end && row.end >= row.start ? row.end : null },
+      pageId: row.id,
+    }));
 }
 
 export function shouldSendWeekly(today, lastMonday, force = false) {
@@ -298,7 +311,26 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   let store = null;
   let existing = new Map();
-  if (!flags.dryRun) {
+  // dry-run은 관심 후보를 세려고 읽기만 한다. 저장과 판별이 일반 실행처럼 되지 않도록 existing과 store에 넣지 않는다.
+  let dryRunRows = null;
+  if (flags.dryRun) {
+    if (deps.store || (env.NOTION_KEY && env.CHUNGYAK_NOTION_PAGE_ID)) {
+      try {
+        const reader = deps.store ?? createNotionStore({
+          key: env.NOTION_KEY,
+          parentPageId: env.CHUNGYAK_NOTION_PAGE_ID,
+          config,
+          sources: SOURCES,
+          fetch: fetchFn,
+          sleep,
+        });
+        await reader.init({ createMissing: false });
+        dryRunRows = [...(await reader.loadExisting()).values()];
+      } catch (error) {
+        addError(safeError(error));
+      }
+    }
+  } else {
     try {
       if (!env.NOTION_KEY || !env.CHUNGYAK_NOTION_PAGE_ID) throw Object.assign(new Error(), { code: 'NOTION_ENV_MISSING' });
       store = deps.store ?? createNotionStore({
@@ -318,7 +350,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, urgentMailFallback: 0, weekly: 0, archived: 0, sequenced: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, sequenced: 0 };
   const records = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
@@ -378,39 +410,27 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   }
 
   if (!flags.dryRun) {
+    const alertContext = {
+      store,
+      sendKakao,
+      sendMail,
+      today,
+      addError,
+      counts,
+      markLost: () => { urgentLost = true; },
+      markNotionFailed: () => { notionFailed = true; },
+    };
     // 긴급 알림은 놓치는 쪽이 더 나쁘므로 기록할 곳이 없어도 보낸다. 다음 실행과 중복될 수 있다.
-    for (const record of selectUrgent(records, today, config.alertRegions)) {
+    const urgent = selectUrgent(records, today, config.alertRegions);
+    for (const record of urgent) {
       const text = buildKakaoText({ notice: record.notice, stage: record.stage, reason: record.reason });
-      let sent = false;
-      try {
-        await sendKakao({ text, url: record.notice.url });
-        sent = true;
-        counts.urgent += 1;
-      } catch (error) {
-        addError(safeError(error));
-        try {
-          await sendMail(buildUrgentMail({ notice: record.notice, text, url: record.notice.url }));
-          sent = true;
-          counts.urgent += 1;
-          counts.urgentMailFallback += 1;
-        } catch (mailError) {
-          addError(safeError(mailError));
-        }
-      }
-      if (!sent) {
-        urgentLost = true;
-        addError('urgent_lost');
-      } else if (store && record.pageId) {
-        try {
-          await store.stampUrgent(record.pageId, today);
-        } catch (error) {
-          notionFailed = true;
-          addError(safeError(error));
-          addError('urgent_sent_without_stamp');
-        }
-      } else {
-        addError('urgent_sent_without_stamp');
-      }
+      await deliverAlert(record, text, 'urgent', alertContext);
+    }
+    // 발송 실패가 실제로는 전달됐을 수 있어, 로또 쪽이 실패한 공고도 이번 실행에서 다시 보내지 않는다.
+    const handledKeys = new Set(urgent.map((record) => record.notice.key));
+    for (const record of selectInterest([...existing.values()], today, handledKeys)) {
+      const text = buildKakaoText({ notice: record.notice, stage: record.stage, prefix: '[관심 청약]' });
+      await deliverAlert(record, text, 'interest', alertContext);
     }
   }
 
@@ -442,8 +462,12 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   if (flags.dryRun) {
     const lotto = records.filter((record) => record.status === STATUS.LOTTO).length;
-    const urgent = selectUrgent(records, today, config.alertRegions).length;
-    log(`dry-run lotto=${lotto} urgent_candidates=${urgent}`);
+    const urgent = selectUrgent(records, today, config.alertRegions);
+    // Notion을 읽지 못한 dry-run은 후보를 알 수 없어 건수를 남기지 않는다.
+    const interest = dryRunRows
+      ? ` interest_candidates=${selectInterest(dryRunRows, today, new Set(urgent.map((record) => record.notice.key))).length}`
+      : '';
+    log(`dry-run lotto=${lotto} urgent_candidates=${urgent.length}${interest}`);
   }
   if (flags.print) {
     for (const { notice, status } of records) {
@@ -470,6 +494,40 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     || env.KAKAO_SECRET_WRITE_OUTCOME === 'failure'
     || summaryFailed;
   return fail ? 1 : 0;
+}
+
+// 카카오로 보내고, 실패하면 메일로 대신 보낸 뒤 발송일을 기록한다. 로또와 관심 알림이 함께 쓴다.
+async function deliverAlert({ notice, pageId }, text, countName, { store, sendKakao, sendMail, today, addError, counts, markLost, markNotionFailed }) {
+  let sent = false;
+  try {
+    await sendKakao({ text, url: notice.url });
+    sent = true;
+    counts[countName] += 1;
+  } catch (error) {
+    addError(safeError(error));
+    try {
+      await sendMail(buildUrgentMail({ notice, text, url: notice.url }));
+      sent = true;
+      counts[countName] += 1;
+      counts.urgentMailFallback += 1;
+    } catch (mailError) {
+      addError(safeError(mailError));
+    }
+  }
+  if (!sent) {
+    markLost();
+    addError('urgent_lost');
+  } else if (store && pageId) {
+    try {
+      await store.stampUrgent(pageId, today);
+    } catch (error) {
+      markNotionFailed();
+      addError(safeError(error));
+      addError('urgent_sent_without_stamp');
+    }
+  } else {
+    addError('urgent_sent_without_stamp');
+  }
 }
 
 async function sendWeekly({ records, store, sendMail, config, today, flags, applyhomeResult, addError, counts, markNotionFailed }) {

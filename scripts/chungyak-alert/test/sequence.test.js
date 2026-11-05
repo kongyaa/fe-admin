@@ -45,7 +45,7 @@ function apiFetch(rows) {
 // 페이지와 스키마 상태를 가진 Notion 가짜. intercept가 Response를 돌려주면 그 호출은 실패 등으로 대체된다.
 function notionFake({
   pages = [],
-  databaseProperties = { 순번: { type: 'number', number: { format: 'number' } } },
+  databaseProperties = { 순번: { type: 'number', number: { format: 'number' } }, 관심: { type: 'checkbox', checkbox: {} } },
   children,
   queryLagsArchive = false,
   intercept = () => null,
@@ -181,7 +181,7 @@ test('parseExistingPage returns the start date and the current sequence number',
 });
 
 test('init adds the property to an existing database only when it is missing', async () => {
-  const missing = notionFake({ databaseProperties: { 주택명: { title: {} } } });
+  const missing = notionFake({ databaseProperties: { 주택명: { title: {} }, 관심: { type: 'checkbox', checkbox: {} } } });
   await realStore(missing).init();
   const added = missing.calls.filter((call) => call.method === 'PATCH');
   assert.deepEqual(added, [{
@@ -203,12 +203,12 @@ test('init with createMissing false neither reads nor changes the schema', async
   assert.equal(writes(fake).length, 0);
 });
 
-test('a new database carries the property as its last column and is not patched', async () => {
+test('a new database carries the property and is not patched', async () => {
   const fake = notionFake({ children: [] });
   await realStore(fake).init();
   const created = fake.calls.find((call) => call.path === '/databases');
   const keys = Object.keys(created.body.properties);
-  assert.equal(keys.at(-1), '순번');
+  assert.ok(keys.includes('순번'));
   assert.deepEqual(created.body.properties.순번, { number: { format: 'number' } });
   assert.ok(!fake.calls.some((call) => call.method === 'PATCH'));
 });
@@ -396,7 +396,7 @@ test('a failed schema change does not block upserts or alerts and surfaces as se
 
 test('a same-named property of another type is left alone and renumbering skips with one error', async () => {
   const fake = notionFake({
-    databaseProperties: { 순번: { type: 'rich_text', rich_text: {} } },
+    databaseProperties: { 순번: { type: 'rich_text', rich_text: {} }, 관심: { type: 'checkbox', checkbox: {} } },
     pages: [page('a', { start: '2026-10-01' }), page('b', { start: '2026-10-02' })],
   });
   const h = harness(fake, { rows: [remainderRow] });
