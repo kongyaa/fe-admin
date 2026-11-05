@@ -26,6 +26,9 @@ const MODES = {
   'cleanup-ended': ['--cleanup-ended'],
 };
 
+// 잡 제한 시간은 15분이다.
+const SEQUENCE_BUDGET_MS = 10 * 60 * 1000;
+
 export const SOURCES = [
   '청약홈 분양정보 조회 서비스 (data.go.kr 15098547): 사용',
   '국토부 아파트 매매 실거래가 (data.go.kr 15126469): 시세 추정에 사용',
@@ -160,28 +163,29 @@ async function archivePages(store, pages, onFailure = () => {}) {
   return { archived, failed };
 }
 
-// 번호가 바뀐 행만 고친다. 한 행이 실패해도 나머지는 계속한다.
-async function applySequenceNumbers(store, onFailure) {
-  let updated = 0;
-  let failed = 0;
-  let rows;
+// 번호가 바뀐 행만 고친다. 표시용 열이므로 첫 실패나 시간 초과에서 멈추고 다음 실행에 맡긴다.
+async function applySequenceNumbers(store, { deadline, now, onFailure }) {
+  let changed;
   try {
-    rows = computeSequenceNumbers([...(await store.loadExisting()).values()]);
+    store.checkSequenceProperty();
+    changed = computeSequenceNumbers([...(await store.loadExisting()).values()])
+      .filter((row) => row.sequence !== row.number);
   } catch (error) {
     onFailure(error);
-    return { updated, failed: 1 };
+    return { updated: 0, skipped: 0 };
   }
-  for (const row of rows) {
-    if (row.sequence === row.number) continue;
+  let updated = 0;
+  for (const row of changed) {
+    if (now().getTime() >= deadline) return { updated, skipped: changed.length - updated };
     try {
       await store.setSequenceNumber(row.id, row.number);
       updated += 1;
     } catch (error) {
-      failed += 1;
       onFailure(error);
+      break;
     }
   }
-  return { updated, failed };
+  return { updated, skipped: 0 };
 }
 
 // 수동 전용 정리 모드.
@@ -211,7 +215,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const log = deps.log ?? ((line) => console.log(line));
   const write = deps.write;
   const config = deps.config ?? loadConfig();
-  const today = kstToday(deps.now ? deps.now() : new Date());
+  const now = deps.now ?? (() => new Date());
+  const startedAt = now();
+  const today = kstToday(startedAt);
 
   const flags = parseFlags(argv, env);
   if (!flags) {
@@ -420,13 +426,18 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   }
 
   // 순번은 모든 쓰기가 끝난 뒤 다시 읽어 매긴다. dry-run은 store가 null이라 여기 오지 않는다.
+  // 표시용 열이라 실패해도 오류 메일만 보내고 잡을 실패시키지 않는다.
   if (store && !notionFailed) {
-    const { updated, failed } = await applySequenceNumbers(store, (error) => {
-      addError('sequence_failed');
-      addError(safeError(error));
+    const { updated, skipped } = await applySequenceNumbers(store, {
+      deadline: startedAt.getTime() + SEQUENCE_BUDGET_MS,
+      now,
+      onFailure: (error) => {
+        addError('sequence_failed');
+        addError(safeError(error));
+      },
     });
     counts.sequenced = updated;
-    if (failed > 0) notionFailed = true;
+    if (skipped > 0) log(`sequence_skipped=${skipped}`);
   }
 
   if (flags.dryRun) {

@@ -130,6 +130,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   let outage = null;
   // 휴지통으로 옮긴 직후의 조회에 남아 있어도 이번 실행에서는 세지 않는다.
   const archivedIds = new Set();
+  let sequenceConflict = false;
 
   async function request(method, path, body, { idempotent = true } = {}) {
     if (outage) throw outage;
@@ -189,7 +190,13 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   async function ensureSequenceProperty() {
     try {
       const database = await request('GET', `/databases/${databaseId}`);
-      if (database.properties?.[P.sequence]) return;
+      const property = database.properties?.[P.sequence];
+      if (property?.type === 'number') return;
+      // 같은 이름의 다른 타입 속성은 사용자의 것일 수 있어 바꾸지 않고, 이번 실행의 순번 갱신만 건너뛴다.
+      if (property) {
+        sequenceConflict = true;
+        return;
+      }
       await request('PATCH', `/databases/${databaseId}`, { properties: { [P.sequence]: DB_SCHEMA[P.sequence] } });
     } catch {
       // 위 주석 참고
@@ -272,6 +279,10 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
 
     async stampUrgent(pageId, date) {
       await request('PATCH', `/pages/${pageId}`, { properties: { [P.urgent]: { date: { start: date } } } });
+    },
+
+    checkSequenceProperty() {
+      if (sequenceConflict) throw new AppError('sequence_property_conflict');
     },
 
     async setSequenceNumber(pageId, number) {

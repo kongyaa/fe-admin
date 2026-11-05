@@ -45,7 +45,7 @@ function apiFetch(rows) {
 // 페이지와 스키마 상태를 가진 Notion 가짜. intercept가 Response를 돌려주면 그 호출은 실패 등으로 대체된다.
 function notionFake({
   pages = [],
-  databaseProperties = { 순번: { number: { format: 'number' } } },
+  databaseProperties = { 순번: { type: 'number', number: { format: 'number' } } },
   children,
   queryLagsArchive = false,
   intercept = () => null,
@@ -67,7 +67,7 @@ function notionFake({
     if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ id: 'db', properties: state.databaseProperties });
     if (init.method === 'POST' && path === '/databases') return Response.json({ id: 'db' });
     if (init.method === 'PATCH' && path.startsWith('/databases/')) {
-      Object.assign(state.databaseProperties, body.properties);
+      for (const [name, value] of Object.entries(body.properties)) state.databaseProperties[name] = { type: 'number', ...value };
       return Response.json({ id: 'db' });
     }
     if (path.endsWith('/query')) {
@@ -312,7 +312,7 @@ test('cleanup-ended archives without renumbering or touching the schema', async 
   assert.deepEqual(writes(fake).map((call) => call.path), ['/pages/id-ended']);
 });
 
-test('a failed row PATCH is recorded, the rest continue, and alerts still go out', async () => {
+test('a failed row PATCH stops renumbering, reaches the error mail once and does not fail the job', async () => {
   const fake = notionFake({
     pages: [
       page('a', { start: '2026-10-01', sequence: 8 }),
@@ -321,17 +321,17 @@ test('a failed row PATCH is recorded, the rest continue, and alerts still go out
     intercept: (call) => (call.path === '/pages/id-a' && call.body?.properties?.순번 ? new Response('body-with-secret', { status: 403 }) : null),
   });
   const h = harness(fake, { rows: [remainderRow] });
-  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(h.kakao.length, 1);
-  assert.deepEqual(sequencePatches(fake), [['id-a', 1], ['id-b', 2], ['new-1', 3]]);
+  assert.deepEqual(sequencePatches(fake), [['id-a', 1]]);
   const summary = errorMail(h);
   assert.ok(summary.text.includes('sequence_failed x1'));
-  assert.ok(summary.text.includes('notion_http_403'));
+  assert.ok(summary.text.includes('notion_http_403 x1'));
   const output = [...h.logs, summary.text].join('\n');
   for (const secret of ['id-a', 'id-b', 'SECRET', 'body-with-secret', 'api.notion.com']) assert.ok(!output.includes(secret), secret);
 });
 
-test('a failed reload is recorded and does not crash the run', async () => {
+test('a failed reload reaches the error mail and does not fail the job', async () => {
   const fake = notionFake({
     pages: [page('a', { start: '2026-10-01', sequence: 8 })],
     intercept: (call, calls) => (call.path.endsWith('/query') && calls.filter((item) => item.path.endsWith('/query')).length === 2
@@ -339,13 +339,13 @@ test('a failed reload is recorded and does not crash the run', async () => {
       : null),
   });
   const h = harness(fake, { rows: [remainderRow] });
-  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(h.kakao.length, 1);
   assert.deepEqual(sequencePatches(fake), []);
   assert.ok(errorMail(h).text.includes('sequence_failed x1'));
 });
 
-test('an outage during renumbering stops Notion calls and still returns', async () => {
+test('an outage during renumbering costs one retry cycle, is reported once and does not fail the job', async () => {
   let stalled = 0;
   const fake = notionFake({
     pages: [page('a', { start: '2026-10-01' }), page('b', { start: '2026-10-02' })],
@@ -358,9 +358,9 @@ test('an outage during renumbering stops Notion calls and still returns', async 
     },
   });
   const h = harness(fake);
-  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(stalled, 6);
-  assert.ok(errorMail(h).text.includes('sequence_failed x2'));
+  assert.ok(errorMail(h).text.includes('sequence_failed x1'));
   assert.ok(!errorMail(h).text.includes('api.notion.com'));
 });
 
@@ -388,8 +388,63 @@ test('a failed schema change does not block upserts or alerts and surfaces as se
     },
   });
   const h = harness(fake, { rows: [remainderRow] });
-  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(fake.state.created, 1);
   assert.equal(h.kakao.length, 1);
-  assert.ok(errorMail(h).text.includes('sequence_failed'));
+  assert.ok(errorMail(h).text.includes('sequence_failed x1'));
+});
+
+test('a same-named property of another type is left alone and renumbering skips with one error', async () => {
+  const fake = notionFake({
+    databaseProperties: { 순번: { type: 'rich_text', rich_text: {} } },
+    pages: [page('a', { start: '2026-10-01' }), page('b', { start: '2026-10-02' })],
+  });
+  const h = harness(fake, { rows: [remainderRow] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(!fake.calls.some((call) => call.method === 'PATCH' && call.path.startsWith('/databases/')));
+  assert.deepEqual(sequencePatches(fake), []);
+  assert.equal(fake.state.created, 1);
+  assert.equal(h.kakao.length, 1);
+  const summary = errorMail(h);
+  assert.ok(summary.text.includes('sequence_failed x1'));
+  assert.ok(summary.text.includes('sequence_property_conflict x1'));
+});
+
+test('renumbering stops at the time budget without an error and the next run continues', async () => {
+  let current = Date.parse(THU_NOW);
+  const fake = notionFake({
+    pages: [
+      page('a', { start: '2026-10-01' }),
+      page('b', { start: '2026-10-02' }),
+      page('c', { start: '2026-10-03' }),
+    ],
+    intercept: (call) => {
+      if (call.body?.properties?.순번) current += 10 * 60 * 1000;
+      return null;
+    },
+  });
+  const h = harness(fake);
+  h.deps.now = () => new Date(current);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(sequencePatches(fake), [['id-a', 1]]);
+  assert.ok(h.logs.includes('sequence_skipped=2'));
+  assert.ok(h.logs.some((line) => line.includes('sequenced=1')));
+  assert.equal(errorMail(h), undefined);
+  assert.ok(!h.logs.join('\n').includes('id-'));
+
+  const before = fake.calls.length;
+  const next = harness(fake);
+  assert.equal(await run({ env: next.env, deps: next.deps }), 0);
+  assert.deepEqual(sequencePatches({ calls: fake.calls.slice(before) }), [['id-b', 2], ['id-c', 3]]);
+});
+
+test('renumbering does not affect the exit code that cleanup failures still set', async () => {
+  const fake = notionFake({
+    pages: [page('ended', { end: '2026-11-01' })],
+    intercept: (call) => (call.body?.archived ? new Response('', { status: 403 }) : null),
+  });
+  const h = harness(fake, { nowIso: MON_NOW });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.ok(errorMail(h).text.includes('cleanup_failed x1'));
+  assert.ok(!errorMail(h).text.includes('sequence_failed'));
 });
