@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { STATUS, estimateBestGain, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
+import { STATUS, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
+import { estimateBestMargin } from '../src/market-estimate.js';
 import { createMolitClient } from '../src/sources/molit.js';
 
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
@@ -23,7 +24,8 @@ const trades = (count, unit, extra = {}) => Array.from({ length: count }, () => 
   amount: unit * 84,
   area: 84,
   umd: '역삼동',
-  buildYear: 2022,
+  // 올해 입주 단지라 연식 보정이 없다.
+  buildYear: 2026,
   ...extra,
 }));
 
@@ -34,27 +36,30 @@ const evaluate = (notice, { models = [{ houseType: '084A', area: 84, price: 1000
   getTrades: async () => data,
 });
 
-test('price rule: gain at or above 3억 is 로또', async () => {
-  const result = await evaluate(apt(), { data: trades(5, 1600) });
+test('price rule: margin at or above 3억 is 로또', async () => {
+  const result = await evaluate(apt(), { data: trades(5, 1700) });
   assert.equal(result.status, STATUS.LOTTO);
-  assert.equal(result.estimate, 134400);
-  assert.equal(result.gain, 34400);
+  assert.equal(result.estimate, 142800);
+  // 142800 - 100000 - 옵션 1500 - 취득세 3300 (10억의 3.3%)
+  assert.equal(result.margin, 38000);
   assert.ok(result.reason.includes('법정동'));
+  assert.ok(result.reason.includes('안전 마진 3.8억'));
 });
 
-test('price rule: discount of 20% with a small gain is 로또', async () => {
+test('price rule: margin rate of 20% with a small margin is 로또', async () => {
   const result = await evaluate(apt(), {
     models: [{ houseType: '084A', area: 84, price: 30000 }],
     data: trades(5, 500),
   });
-  assert.equal(result.gain, 12000);
+  // 42000 - 30000 - 1500 - 330 = 10170, 10170 / 42000 = 24%
+  assert.equal(result.margin, 10170);
   assert.equal(result.status, STATUS.LOTTO);
 });
 
 test('price rule: below both thresholds is 아님', async () => {
   const result = await evaluate(apt(), { data: trades(5, 1250) });
   assert.equal(result.status, STATUS.NOT);
-  assert.equal(result.gain, 5000);
+  assert.equal(result.margin, 200);
 });
 
 test('too few samples is 판별 불가', async () => {
@@ -85,6 +90,9 @@ test('flag trigger makes 로또 even when price says no, and records the price',
   assert.equal(low.status, STATUS.LOTTO);
   assert.equal(low.estimate, 92400);
   assert.ok(low.reason.includes('무순위'));
+  // 92400 - 100000 - 1500 - 3300 = -12400. 조건형 로또는 마진이 음수여도 유지하고 근거에 함께 적는다.
+  assert.equal(low.margin, -12400);
+  assert.ok(low.reason.includes('안전 마진 -1.2억'));
 
   const noData = await evaluate(apt({ kind: 'remainder', houseSecd: '06' }), { data: [] });
   assert.equal(noData.status, STATUS.LOTTO);
@@ -137,7 +145,7 @@ test('price cap and public district trigger 로또 by default', async () => {
   assert.equal(plain.status, STATUS.NOT);
 });
 
-test('any qualifying model makes 로또 and the largest qualifying gain is recorded', async () => {
+test('any qualifying model makes 로또 and the largest qualifying margin is recorded', async () => {
   const large = trades(5, 1000, { area: 120, amount: 120000 });
   const small = trades(5, 1000, { area: 59, amount: 59000 });
   const small2 = { houseType: '059B', area: 59, price: 45000 };
@@ -152,10 +160,12 @@ test('any qualifying model makes 로또 and the largest qualifying gain is recor
   assert.equal(result.status, STATUS.LOTTO);
   assert.equal(result.topPrice, 40000);
   assert.equal(result.estimate, 59000);
-  assert.equal(result.gain, 19000);
+  // 59000 - 40000 - 1500 - 440
+  assert.equal(result.margin, 17060);
+  assert.ok(result.reason.includes('059A'));
 });
 
-test('with no qualifying model the largest gain is recorded and the status is 아님', async () => {
+test('with no qualifying model the largest margin is recorded and the status is 아님', async () => {
   const result = await evaluate(apt(), {
     models: [
       { houseType: '120A', area: 120, price: 110000 },
@@ -164,7 +174,8 @@ test('with no qualifying model the largest gain is recorded and the status is �
     data: [...trades(5, 1000, { area: 120, amount: 120000 }), ...trades(5, 1000, { area: 59, amount: 59000 })],
   });
   assert.equal(result.status, STATUS.NOT);
-  assert.equal(result.gain, 10000);
+  // 120000 - 110000 - 1500 - 3630
+  assert.equal(result.margin, 4870);
   assert.equal(result.estimate, 120000);
 });
 
@@ -199,52 +210,40 @@ test('non-APT types are 대상 외 and LH makes no calls', async () => {
   assert.equal(called, false);
 });
 
-test('scope prefers 법정동, falls back to 시군구, and prefers new builds when enough', () => {
-  const lotto = config.lotto;
+const market = config.market;
+const subject = { umd: '역삼동', brandTier: 'other', ageYears: 0, stationM: null, name: '' };
+const best = (models, rows) => estimateBestMargin({ models, rows, subject, lotto: config.lotto, market, today });
+
+test('without location the scope prefers 법정동 and falls back to 시군구', () => {
   const models = [{ houseType: '084A', area: 84, price: 100000 }];
   const dong = trades(5, 1000);
   const other = trades(5, 2000, { umd: '삼성동' });
 
-  const first = estimateBestGain({ models, trades: [...dong, ...other], umd: '역삼동', lotto, today });
-  assert.equal(first.scope, '법정동 신축');
+  const first = best(models, [...dong, ...other]);
+  assert.equal(first.basis.scope, '법정동');
   assert.equal(first.estimate, 84000);
 
-  const widened = estimateBestGain({ models, trades: [...trades(2, 1000), ...other], umd: '역삼동', lotto, today });
-  assert.ok(widened.scope.startsWith('시군구'));
-  assert.equal(widened.samples, 7);
-
-  const oldTrades = trades(5, 1000, { buildYear: 1990 });
-  const mixedFew = estimateBestGain({ models, trades: [...oldTrades, ...trades(4, 3000)], umd: '역삼동', lotto, today });
-  assert.equal(mixedFew.scope, '법정동');
-  assert.equal(mixedFew.samples, 9);
-
-  const mixedMany = estimateBestGain({ models, trades: [...oldTrades, ...trades(5, 3000)], umd: '역삼동', lotto, today });
-  assert.equal(mixedMany.scope, '법정동 신축');
-  assert.equal(mixedMany.estimate, 252000);
+  const widened = best(models, [...trades(2, 1000), ...other]);
+  assert.equal(widened.basis.scope, '시군구');
+  assert.equal(widened.basis.samples, 7);
 });
 
-test('area tolerance filters trades and the largest gain model is kept', () => {
-  const lotto = config.lotto;
+test('area tolerance filters trades and the largest margin model is kept', () => {
   const far = trades(5, 3000, { area: 120, amount: 3000 * 120 });
-  assert.equal(estimateBestGain({ models: [{ area: 84, price: 1 }], trades: far, umd: '역삼동', lotto, today }), null);
+  assert.equal(best([{ area: 84, price: 1 }], far), null);
 
-  const best = estimateBestGain({
-    models: [
-      { houseType: 'small', area: 84, price: 120000 },
-      { houseType: 'cheap', area: 84, price: 90000 },
-      { houseType: 'invalid', area: null, price: 1 },
-    ],
-    trades: trades(5, 1250),
-    umd: '역삼동',
-    lotto,
-    today,
-  });
-  assert.equal(best.houseType, 'cheap');
-  assert.equal(best.gain, 15000);
+  const result = best([
+    { houseType: 'small', area: 84, price: 120000 },
+    { houseType: 'cheap', area: 84, price: 90000 },
+    { houseType: 'invalid', area: null, price: 1 },
+  ], trades(5, 1250));
+  assert.equal(result.houseType, 'cheap');
+  // 105000 - 90000 - 1500 - 2970
+  assert.equal(result.margin, 10530);
 });
 
 test('cancelled trades are excluded from the estimate', async () => {
-  const row = (amount, cancelled) => `<item><dealAmount>${amount}</dealAmount><excluUseAr>84</excluUseAr><umdNm>역삼동</umdNm><buildYear>2022</buildYear><cdealType>${cancelled}</cdealType></item>`;
+  const row = (amount, cancelled) => `<item><dealAmount>${amount}</dealAmount><excluUseAr>84</excluUseAr><umdNm>역삼동</umdNm><buildYear>2026</buildYear><cdealType>${cancelled}</cdealType></item>`;
   const items = [
     ...Array.from({ length: 5 }, () => row('84,000', '')),
     ...Array.from({ length: 6 }, () => row('999,000', 'O')),

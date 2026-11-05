@@ -20,8 +20,9 @@ const P = {
   winner: '당첨자발표일',
   topPrice: '최고 분양가',
   estimate: '추정 시세',
-  gain: '예상 차익',
-  rate: '차익률',
+  margin: '안전 마진',
+  marginRate: '마진율',
+  confidence: '시세 신뢰도',
   lotto: '로또 여부',
   reason: '판별 근거',
   link: '공고 링크',
@@ -31,6 +32,12 @@ const P = {
   sequence: '순번',
   interest: '관심',
 };
+
+// 이전 실행까지 쓰던 속성 이름. 값이 유지되도록 삭제하지 않고 이름만 바꾼다.
+const LEGACY = { margin: '예상 차익', marginRate: '차익률' };
+const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence };
+// 스키마를 읽지 못해 이번 실행의 이름을 모를 때 쓴다. 이 세 속성만 빼서 다른 값의 저장을 막지 않는다.
+const NO_COLUMNS = { margin: null, marginRate: null, confidence: null };
 
 const DB_SCHEMA = {
   [P.name]: { title: {} },
@@ -47,8 +54,9 @@ const DB_SCHEMA = {
   [P.winner]: { date: {} },
   [P.topPrice]: { number: { format: 'number' } },
   [P.estimate]: { number: { format: 'number' } },
-  [P.gain]: { number: { format: 'number' } },
-  [P.rate]: { number: { format: 'percent' } },
+  [P.margin]: { number: { format: 'number' } },
+  [P.marginRate]: { number: { format: 'percent' } },
+  [P.confidence]: { select: { options: [{ name: '상' }, { name: '중' }, { name: '하' }] } },
   [P.lotto]: {
     select: {
       options: [{ name: '로또' }, { name: '아님' }, { name: '판별 불가' }, { name: '대상 외' }],
@@ -70,7 +78,8 @@ const selectProp = (value) => (value ? { select: { name: String(value).replace(/
 const textProp = (value) => (value ? { rich_text: text(value) } : undefined);
 
 // 값이 없는 속성은 보내지 않아 기존 값을 지우지 않는다. 긴급 알림 발송일과 사용자가 체크하는 관심은 여기서 쓰지 않는다.
-export function buildProperties(notice, evaluation, today) {
+// 제한 유형은 clearMarket으로 저장된 추정 값을 명시적으로 지운다.
+export function buildProperties(notice, evaluation, today, columns = DEFAULT_COLUMNS) {
   const url = safeHttpUrl(notice.url);
   const properties = {
     [P.name]: { title: text(notice.name || notice.key) },
@@ -86,15 +95,16 @@ export function buildProperties(notice, evaluation, today) {
     [P.rank2]: dateProp(firstStageDate(notice.stages, '2순위')),
     [P.winner]: dateProp(notice.winnerDate),
     [P.topPrice]: numberProp(evaluation?.topPrice),
-    [P.estimate]: numberProp(evaluation?.estimate),
-    [P.gain]: numberProp(evaluation?.gain),
-    [P.rate]: numberProp(evaluation?.rate),
+    [P.estimate]: evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.estimate),
     [P.lotto]: selectProp(evaluation?.status),
     [P.reason]: textProp(evaluation?.reason),
     [P.link]: url && url.length <= 2000 ? { url } : undefined,
     [P.source]: selectProp(notice.source),
     [P.collected]: dateProp(today),
   };
+  if (columns.margin) properties[columns.margin] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.margin);
+  if (columns.marginRate) properties[columns.marginRate] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.marginRate);
+  if (columns.confidence) properties[columns.confidence] = evaluation?.clearMarket ? { select: null } : selectProp(evaluation?.confidence);
   return Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
 }
 
@@ -137,6 +147,9 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   // 휴지통으로 옮긴 직후의 조회에 남아 있어도 이번 실행에서는 세지 않는다.
   const archivedIds = new Set();
   let sequenceConflict = false;
+  // 이번 실행에서 쓸 속성 이름. 이름 변경이 실패하면 옛 이름으로 저장해 모든 행이 400으로 실패하지 않게 한다.
+  let columns = DEFAULT_COLUMNS;
+  const schemaIssues = [];
 
   async function request(method, path, body, { idempotent = true } = {}) {
     if (outage) throw outage;
@@ -219,15 +232,53 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     }
   }
 
-  // 스키마는 한 번만 읽는다. 읽기나 한쪽 추가가 실패해도 수집과 알림을 막지 않는다.
+  async function patchSchema(change, issue) {
+    try {
+      await request('PATCH', `/databases/${databaseId}`, { properties: change });
+      return true;
+    } catch {
+      schemaIssues.push(issue);
+      return false;
+    }
+  }
+
+  // 옛 이름이 있고 새 이름이 없을 때만 이름을 바꾼다. 있는 속성 위로 바꾸지 않아 두 번 실행해도 같다.
+  // 돌려주는 값은 이번 실행에서 쓸 이름이고, 숫자 속성이 하나도 없으면 null이다.
+  async function ensureNumberColumn(properties, newName, oldName) {
+    const isNumber = (name) => properties[name]?.type === 'number';
+    if (isNumber(newName)) return newName;
+    if (properties[newName]) return isNumber(oldName) ? oldName : null;
+    if (isNumber(oldName)) {
+      const renamed = await patchSchema({ [oldName]: { name: newName } }, 'notion_rename_failed');
+      return renamed ? newName : oldName;
+    }
+    const added = await patchSchema({ [newName]: DB_SCHEMA[newName] }, 'notion_property_add_failed');
+    return added ? newName : null;
+  }
+
+  async function ensureConfidenceColumn(properties) {
+    const property = properties[P.confidence];
+    if (property) return property.type === 'select' ? P.confidence : null;
+    const added = await patchSchema({ [P.confidence]: DB_SCHEMA[P.confidence] }, 'notion_property_add_failed');
+    return added ? P.confidence : null;
+  }
+
+  // 스키마는 한 번만 읽는다. 읽기나 변경이 실패해도 수집과 알림을 막지 않는다.
   async function ensureProperties() {
     let properties;
     try {
       const database = await request('GET', `/databases/${databaseId}`);
       properties = database.properties ?? {};
     } catch {
+      columns = NO_COLUMNS;
+      schemaIssues.push('notion_schema_read_failed');
       return;
     }
+    columns = {
+      margin: await ensureNumberColumn(properties, P.margin, LEGACY.margin),
+      marginRate: await ensureNumberColumn(properties, P.marginRate, LEGACY.marginRate),
+      confidence: await ensureConfidenceColumn(properties),
+    };
     await ensureSequenceProperty(properties);
     await ensureInterestProperty(properties);
   }
@@ -286,7 +337,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     },
 
     async upsert(notice, evaluation, existing, today) {
-      const properties = buildProperties(notice, evaluation, today);
+      const properties = buildProperties(notice, evaluation, today, columns);
       if (existing) {
         await request('PATCH', `/pages/${existing.id}`, { properties });
         return existing.id;
@@ -309,6 +360,9 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     async stampUrgent(pageId, date) {
       await request('PATCH', `/pages/${pageId}`, { properties: { [P.urgent]: { date: { start: date } } } });
     },
+
+    // 오류 메일에 건수만 남길 고정 식별자 목록이다.
+    schemaIssues: () => [...schemaIssues],
 
     checkSequenceProperty() {
       if (sequenceConflict) throw new AppError('sequence_property_conflict');

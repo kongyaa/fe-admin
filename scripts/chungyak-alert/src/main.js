@@ -2,8 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { collectApplyhome, createModelLookup } from './sources/applyhome.js';
 import { collectLh } from './sources/lh.js';
-import { createMolitClient } from './sources/molit.js';
+import { createKakaoLocalClient } from './sources/kakao-local.js';
+import { createMolitClient, createPresaleClient } from './sources/molit.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
+import { restrictedType } from './market-estimate.js';
 import { computeSequenceNumbers, createNotionStore } from './notion-store.js';
 import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } from './notify-gmail.js';
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
@@ -33,6 +35,8 @@ const SEQUENCE_BUDGET_MS = 10 * 60 * 1000;
 export const SOURCES = [
   '청약홈 분양정보 조회 서비스 (data.go.kr 15098547): 사용',
   '국토부 아파트 매매 실거래가 (data.go.kr 15126469): 시세 추정에 사용',
+  '국토부 아파트 분양권전매 실거래가 (data.go.kr 15126471): 같은 단지 시세와 비교 단지에 사용',
+  '카카오 로컬 API: 좌표와 가까운 지하철역을 실행 중에만 조회, 결과는 저장하지 않음',
   'LH 임대공고 조회: 저장만 사용, 날짜가 없으면 알림 제외',
   'SH·GH 공고: v2 예정',
 ];
@@ -121,6 +125,14 @@ export function selectWeekly(records, monday, sunday, alertRegions) {
   }
   return items.sort((a, b) => a.weekStages[0].start.localeCompare(b.weekStages[0].start));
 }
+
+// 이번 실행에서 판정하지 않은 공고의 상태. 제한 유형은 이전 로또 기록을 되살리지 않는다.
+function carriedStatus(notice, previous, config) {
+  if (restrictedType(notice, config.market)) return STATUS.OUT_OF_SCOPE;
+  return previous?.lotto ?? null;
+}
+
+const tagCounts = (stats) => Object.entries(stats).map(([name, value]) => `${name}=${value}`).join(' ');
 
 function readAccessToken(env) {
   const file = env.KAKAO_ACCESS_FILE;
@@ -274,6 +286,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   maskServiceKey(dataKey, env, write);
   const accessToken = deps.accessToken !== undefined ? deps.accessToken : readAccessToken(env);
   maskValue(accessToken, env, write);
+  maskValue(env.KAKAO_REST_KEY, env, write);
 
   const sendMail = deps.sendMail ?? createGmailSender({
     user: env.GMAIL_USER,
@@ -286,6 +299,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   const errors = new Map();
   const addError = (kind) => errors.set(kind, (errors.get(kind) ?? 0) + 1);
+  // 오류 메일 없이 로그에만 건수를 남기는 항목이다. 분양권 API 미승인, 카카오 호출 상한 등이다.
+  const softErrors = new Map();
+  const addSoftError = (kind) => softErrors.set(kind, (softErrors.get(kind) ?? 0) + 1);
   let notionFailed = false;
   let applyhomeResult = { notices: [], errors: [], failedAll: true };
   let lhNotices = [];
@@ -354,6 +370,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         sleep,
       });
       await store.init();
+      store.schemaIssues?.().forEach(addError);
       existing = await store.loadExisting();
     } catch (error) {
       notionFailed = true;
@@ -366,6 +383,19 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const records = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
+  const presale = createPresaleClient({ fetch: fetchFn, key: dataKey, sleep, now, budgetMs: config.market.presale.budgetMs, onSoft: addSoftError });
+  const locator = config.market.location.enabled
+    ? createKakaoLocalClient({
+      fetch: fetchFn,
+      key: env.KAKAO_REST_KEY,
+      location: config.market.location,
+      sleep,
+      now,
+      onError: addError,
+      onSoft: addSoftError,
+    })
+    : null;
+  const marketCounts = { locationFallback: 0, 상: 0, 중: 0, 하: 0 };
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
   const interestRows = new Map(dryRunRows ?? existing);
   for (const notice of notices) {
@@ -380,7 +410,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
     if (previous?.end && previous.end < today) {
       counts.skipped += 1;
-      records.push({ notice, status: previous.lotto, urgentDate: previous.urgentDate, pageId: previous.id });
+      records.push({ notice, status: carriedStatus(notice, previous, config), urgentDate: previous.urgentDate, pageId: previous.id });
       continue;
     }
     let evaluation = null;
@@ -391,6 +421,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
           today,
           getModels,
           getTrades: (code, months) => molit.getTrades(code, months),
+          getPresale: (code, months) => presale.getTrades(code, months),
+          locator,
           onError: addError,
         });
       } catch (error) {
@@ -399,10 +431,12 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       }
       evaluation = keepPreviousLotto(evaluation, previous?.lotto);
       counts.evaluated += 1;
+      if (evaluation.confidence) marketCounts[evaluation.confidence] += 1;
+      if (evaluation.locationFallback) marketCounts.locationFallback += 1;
     }
     const record = {
       notice,
-      status: evaluation?.status ?? previous?.lotto ?? null,
+      status: evaluation?.status ?? carriedStatus(notice, previous, config),
       reason: evaluation?.reason ?? null,
       urgentDate: previous?.urgentDate ?? null,
       pageId: previous?.id ?? null,
@@ -494,6 +528,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   log(`collected=${notices.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
   log(`errors=${[...errors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
+  log(`market location_calls=${locator?.stats().calls ?? 0} location_fallback=${marketCounts.locationFallback} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
+  log(`trade_tags ${tagCounts(molit.stats())}`);
+  log(`presale_tags ${tagCounts(presale.stats())}`);
 
   let summaryFailed = false;
   if (errors.size > 0 && !flags.dryRun) {

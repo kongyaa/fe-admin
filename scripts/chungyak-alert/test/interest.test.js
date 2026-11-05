@@ -120,7 +120,8 @@ const notionPage = ({ id = 'id-1', key = 'k-1', name = '관심 단지', interest
   },
 });
 
-const COMPLETE_SCHEMA = { 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} } };
+const COMPLETE_SCHEMA = { ...MARKET_SCHEMA, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
 
 function notionFake({ pages = [], databaseProperties = COMPLETE_SCHEMA, children, intercept = () => null } = {}) {
   const calls = [];
@@ -487,7 +488,7 @@ test('upserts never touch the check', async () => {
 });
 
 test('init adds the property only when it is missing', async () => {
-  const missing = notionFake({ databaseProperties: { 순번: { type: 'number', number: {} } } });
+  const missing = notionFake({ databaseProperties: { ...MARKET_SCHEMA, 순번: { type: 'number', number: {} } } });
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{
     method: 'PATCH',
@@ -502,7 +503,7 @@ test('init adds the property only when it is missing', async () => {
 
 test('a same-named property of another type is left alone and nothing is alerted from it', async () => {
   const fake = notionFake({
-    databaseProperties: { 순번: { type: 'number', number: {} }, 관심: { type: 'rich_text', rich_text: {} } },
+    databaseProperties: { ...MARKET_SCHEMA, 순번: { type: 'number', number: {} }, 관심: { type: 'rich_text', rich_text: {} } },
     pages: [notionPage({ interest: { type: 'rich_text', rich_text: [{ plain_text: '체크' }] } })],
   });
   const h = notionHarness(fake, { rows: [collected()] });
@@ -727,7 +728,7 @@ test('the dry-run count follows the fresh source values too', async () => {
 
 test('init reads the schema once and both properties are checked against that response', async () => {
   const schemaReads = (fake) => fake.calls.filter((call) => call.method === 'GET' && call.path === '/databases/db');
-  const missing = notionFake({ databaseProperties: {} });
+  const missing = notionFake({ databaseProperties: { ...MARKET_SCHEMA } });
   await realStore(missing).init();
   assert.equal(schemaReads(missing).length, 1);
   assert.deepEqual(schemaPatches(missing).map((call) => Object.keys(call.body.properties)), [['순번'], ['관심']]);
@@ -741,7 +742,7 @@ test('init reads the schema once and both properties are checked against that re
 test('a failed add for one property still attempts the other', async () => {
   for (const [failing, other] of [['순번', '관심'], ['관심', '순번']]) {
     const fake = notionFake({
-      databaseProperties: {},
+      databaseProperties: { ...MARKET_SCHEMA },
       intercept: (call) => (call.method === 'PATCH' && call.body?.properties?.[failing] ? new Response('', { status: 403 }) : null),
     });
     await realStore(fake).init();
@@ -751,7 +752,7 @@ test('a failed add for one property still attempts the other', async () => {
 });
 
 test('a wrong-type 순번 keeps its conflict while a missing 관심 is still added', async () => {
-  const fake = notionFake({ databaseProperties: { 순번: { type: 'rich_text', rich_text: {} } } });
+  const fake = notionFake({ databaseProperties: { ...MARKET_SCHEMA, 순번: { type: 'rich_text', rich_text: {} } } });
   const store = realStore(fake);
   await store.init();
   assert.deepEqual(schemaPatches(fake).map((call) => Object.keys(call.body.properties)), [['관심']]);

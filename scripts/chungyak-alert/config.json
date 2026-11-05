@@ -10,16 +10,88 @@
     "sourcesPageTitle": "청약 수집 소스"
   },
   "lotto": {
-    "minGainManwon": 30000,
-    "minDiscountRate": 0.2,
+    "minMarginManwon": 30000,
+    "minMarginRate": 0.2,
     "areaToleranceM2": 3,
     "tradeMonths": 6,
     "minSamples": 5,
-    "newBuildYears": 10,
     "includeRemainder": true,
     "includeResupply": true,
     "includeArbitrary": false,
     "includePriceCap": true,
     "includePublicDistrict": true
+  },
+  "market": {
+    "restrictedNameKeywords": ["토지임대", "지분적립", "신혼희망"],
+    "optionCostManwon": 1500,
+    "acquisitionTax": {
+      "lowPriceManwon": 60000,
+      "highPriceManwon": 90000,
+      "lowRate": 0.01,
+      "highRate": 0.03,
+      "educationRatio": 0.1
+    },
+    "tradeFilter": {
+      "lowFloorMax": 2,
+      "outlierMinSamples": 4,
+      "outlierBand": 0.25,
+      "recencyHalfLifeMonths": 6
+    },
+    "sameComplex": {
+      "minSamples": 3,
+      "highSamples": 5,
+      "highSpread": 0.15,
+      "minNameLength": 5
+    },
+    "comparables": {
+      "maxDistanceM": 2000,
+      "maxComparables": 8,
+      "minComplexSamples": 2,
+      "distanceDecayM": 1000,
+      "maxLookupsPerNotice": 12
+    },
+    "adjustment": {
+      "minFactor": 0.7,
+      "maxFactor": 1.35,
+      "station": {
+        "bands": [
+          { "maxM": 300, "factor": 1.06 },
+          { "maxM": 500, "factor": 1.04 },
+          { "maxM": 800, "factor": 1.02 },
+          { "maxM": 1200, "factor": 1.0 }
+        ],
+        "otherFactor": 0.97
+      },
+      "brand": {
+        "factors": { "top": 1.05, "mid": 1.02, "other": 1.0 },
+        "nameKeywords": {
+          "top": ["래미안", "자이", "힐스테이트", "디에이치", "아크로", "e편한세상", "이편한세상", "푸르지오", "써밋", "아이파크", "더샵", "롯데캐슬", "르엘", "sk뷰"],
+          "mid": ["센트레빌", "베르디움", "하늘채", "디에트르", "s-클래스", "에스클래스", "우미린", "어울림", "리첸시아", "포레나", "꿈에그린", "위브", "스위첸", "데시앙", "풍경채", "리슈빌", "엘리프", "더플래티넘", "예가", "유보라", "파밀리에", "에피트", "비발디", "더휴", "해링턴", "로얄듀크"]
+        },
+        "builderKeywords": {
+          "top": ["삼성물산", "gs건설", "지에스건설", "현대건설", "현대엔지니어링", "dl이앤씨", "디엘이앤씨", "대우건설", "hdc현대산업개발", "에이치디씨현대산업개발", "포스코이앤씨", "포스코건설", "롯데건설", "sk에코플랜트", "에스케이에코플랜트"],
+          "mid": ["동부건설", "호반건설", "코오롱글로벌", "대방건설", "중흥토건", "중흥건설", "우미건설", "금호건설", "한화건설", "한화 건설부문", "두산건설", "kcc건설", "태영건설", "제일건설", "계룡건설", "쌍용건설", "반도건설", "신동아건설", "hl디앤아이한라", "한신공영", "효성중공업", "동원개발"]
+        }
+      },
+      "age": {
+        "ratePerYear": 0.01,
+        "maxYears": 20
+      }
+    },
+    "confidence": {
+      "high": { "samples": 20, "comparables": 4, "spread": 0.15, "looError": 0.1 },
+      "mid": { "samples": 5, "comparables": 2, "spread": 0.3, "looError": 0.2 }
+    },
+    "location": {
+      "enabled": true,
+      "maxCallsPerRun": 800,
+      "budgetMs": 180000,
+      "minIntervalMs": 100,
+      "timeoutMs": 5000,
+      "stationRadiusM": 1300
+    },
+    "presale": {
+      "budgetMs": 120000
+    }
   }
 }

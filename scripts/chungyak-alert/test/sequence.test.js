@@ -45,7 +45,7 @@ function apiFetch(rows) {
 // 페이지와 스키마 상태를 가진 Notion 가짜. intercept가 Response를 돌려주면 그 호출은 실패 등으로 대체된다.
 function notionFake({
   pages = [],
-  databaseProperties = { 순번: { type: 'number', number: { format: 'number' } }, 관심: { type: 'checkbox', checkbox: {} } },
+  databaseProperties = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, 순번: { type: 'number', number: { format: 'number' } }, 관심: { type: 'checkbox', checkbox: {} } },
   children,
   queryLagsArchive = false,
   intercept = () => null,
@@ -100,6 +100,8 @@ function notionFake({
   };
   return { calls, fetch, state };
 }
+
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} } };
 
 const NOTION_CONFIG = { notion: { databaseTitle: '청약 정보', sourcesPageTitle: '청약 수집 소스' } };
 
@@ -181,7 +183,7 @@ test('parseExistingPage returns the start date and the current sequence number',
 });
 
 test('init adds the property to an existing database only when it is missing', async () => {
-  const missing = notionFake({ databaseProperties: { 주택명: { title: {} }, 관심: { type: 'checkbox', checkbox: {} } } });
+  const missing = notionFake({ databaseProperties: { ...MARKET_SCHEMA, 주택명: { title: {} }, 관심: { type: 'checkbox', checkbox: {} } } });
   await realStore(missing).init();
   const added = missing.calls.filter((call) => call.method === 'PATCH');
   assert.deepEqual(added, [{
@@ -396,7 +398,7 @@ test('a failed schema change does not block upserts or alerts and surfaces as se
 
 test('a same-named property of another type is left alone and renumbering skips with one error', async () => {
   const fake = notionFake({
-    databaseProperties: { 순번: { type: 'rich_text', rich_text: {} }, 관심: { type: 'checkbox', checkbox: {} } },
+    databaseProperties: { ...MARKET_SCHEMA, 순번: { type: 'rich_text', rich_text: {} }, 관심: { type: 'checkbox', checkbox: {} } },
     pages: [page('a', { start: '2026-10-01' }), page('b', { start: '2026-10-02' })],
   });
   const h = harness(fake, { rows: [remainderRow] });
