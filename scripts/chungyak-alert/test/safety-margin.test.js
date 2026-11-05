@@ -8,7 +8,7 @@ import { buildProperties, createNotionStore, parseExistingPage } from '../src/no
 import { normalizeDetail, ENDPOINTS } from '../src/sources/applyhome.js';
 import { createAptInfoClient } from '../src/sources/apt-info.js';
 import { AppError } from '../src/util.js';
-import { createMolitClient, createPresaleClient, fetchMonth, fetchPresaleMonth, parseMolitXml, parsePresaleXml } from '../src/sources/molit.js';
+import { collectTagNames, createMolitClient, createPresaleClient, fetchMonth, fetchPresaleMonth, formatTagNames, parseMolitXml, parsePresaleXml } from '../src/sources/molit.js';
 
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
 const today = '2026-11-05';
@@ -1256,6 +1256,50 @@ test('dry-run stays write-free while reading the manual value and market data', 
   assert.equal(h.kakao.length, 0);
   assert.equal(base.calls.apt.length, 2);
   assert.ok(marketLine(h).includes('station_used=1'));
+});
+
+test('tag name diagnostics keep only safe names and never values', () => {
+  const names = new Set();
+  collectTagNames(`<r><resultCode>000</resultCode><secretOutside>x</secretOutside><items>
+    <item><aptNm>비밀단지</aptNm><dealAmount>84,000</dealAmount><ownershipGbn><![CDATA[<cdataValue>입]]></ownershipGbn><구분>입</구분><bad-name>x</bad-name><attr a="b">y</attr></item>
+    <item><aptNm>다른단지</aptNm><floor>10</floor><note>&lt;escaped&gt;</note></item>
+  </items></r>`, names);
+  assert.deepEqual([...names].sort(), ['aptNm', 'dealAmount', 'floor', 'note', 'ownershipGbn']);
+  assert.equal(formatTagNames(names), 'aptNm,dealAmount,floor,note,ownershipGbn');
+  assert.equal(formatTagNames(new Set()), 'none');
+
+  const many = new Set();
+  const items = Array.from({ length: 200 }, (_, index) => `<name_${String(index).padStart(3, '0')}_${'x'.repeat(30)}>1</name_${String(index).padStart(3, '0')}_${'x'.repeat(30)}>`).join('');
+  collectTagNames(`<item>${items}</item>`, many);
+  assert.equal(many.size, 80);
+  const capped = formatTagNames(many);
+  assert.ok(capped.length <= 804);
+  assert.ok(capped.endsWith(',...'));
+  assert.match(capped, /^[A-Za-z0-9_,.]+$/);
+});
+
+test('a full run logs tag names once for each API, without values', async () => {
+  const VALUES = ['비밀단지', 'VALUE-BUILD-2026', '래미안', '777,000', '역삼동'];
+  const saleItem = `<aptNm>${VALUES[0]}</aptNm><dealAmount>${VALUES[3]}</dealAmount><excluUseAr>84</excluUseAr><floor>10</floor><umdNm>${VALUES[4]}</umdNm><jibun>100</jibun><buildYear>2026</buildYear><dealingGbn>${VALUES[1]}</dealingGbn><dealYear>2026</dealYear><dealMonth>9</dealMonth><dealDay>3</dealDay>`;
+  const presaleItem = `<aptNm>${VALUES[2]}</aptNm><dealAmount>${VALUES[3]}</dealAmount><excluUseAr>84</excluUseAr><floor>10</floor><umdNm>${VALUES[4]}</umdNm><jibun>9</jibun><dealYear>2026</dealYear><dealMonth>9</dealMonth><dealDay>3</dealDay><newPresaleTag><![CDATA[<cdataValue>${VALUES[0]}]]></newPresaleTag><한글태그>${VALUES[1]}</한글태그>`;
+  const world = worldFetch({
+    trades: [saleItem],
+    presale: (url) => new Response(xml(url.searchParams.get('DEAL_YMD') === '202610' ? [presaleItem] : [])),
+  });
+  const h = harness({ fetch: world.fetch });
+  assert.equal(await run({ argv: ['--dry-run'], env: h.env, deps: h.deps }), 0);
+  const line = (prefix) => h.logs.filter((item) => item.startsWith(prefix));
+  assert.deepEqual(line('sale_tag_names='), ['sale_tag_names=aptNm,buildYear,dealAmount,dealDay,dealMonth,dealYear,dealingGbn,excluUseAr,floor,jibun,umdNm']);
+  assert.deepEqual(line('presale_tag_names='), ['presale_tag_names=aptNm,dealAmount,dealDay,dealMonth,dealYear,excluUseAr,floor,jibun,newPresaleTag,umdNm']);
+  const output = h.logs.join('\n');
+  for (const value of [...VALUES, 'cdataValue', '한글태그']) assert.ok(!output.includes(value), value);
+});
+
+test('tag name lines say none when an API returned no items', async () => {
+  const h = harness({ fetch: worldFetch({ rows: [] }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(h.logs.includes('sale_tag_names=none'));
+  assert.ok(h.logs.includes('presale_tag_names=none'));
 });
 
 test('the molit client reports tag tallies without names', async () => {

@@ -24,6 +24,33 @@ function readDealDate(block) {
   return normalizeDate(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
 }
 
+const MAX_TAG_NAMES = 80;
+const MAX_TAG_NAMES_LENGTH = 800;
+
+// 공개 로그용 진단이다. 값은 읽지 않고 항목의 태그 이름만 모은다. CDATA 안의 내용과 허용 문자 밖의 이름은 버린다.
+export function collectTagNames(xml, names) {
+  for (const [, block] of String(xml).matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const withoutCdata = block.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+    for (const [, name] of withoutCdata.matchAll(/<([A-Za-z0-9_]{1,40})>/g)) {
+      if (names.size >= MAX_TAG_NAMES) return;
+      names.add(name);
+    }
+  }
+}
+
+// 정렬해 이름 단위로 자른다. 잘리면 끝에 ...을 붙인다.
+export function formatTagNames(names) {
+  if (names.size === 0) return 'none';
+  const sorted = [...names].sort();
+  let text = '';
+  for (const name of sorted) {
+    const next = text ? `${text},${name}` : name;
+    if (next.length > MAX_TAG_NAMES_LENGTH) return `${text},...`;
+    text = next;
+  }
+  return text;
+}
+
 function parseItems(xml, isExcluded, extra) {
   const itemBlocks = [...String(xml).matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1]);
   const rows = [];
@@ -82,7 +109,7 @@ export function parsePresaleXml(xml) {
   );
 }
 
-async function fetchPages({ fetch, key, lawdCode, dealYm, sleep, url, kind, retry = {}, parse }) {
+async function fetchPages({ fetch, key, lawdCode, dealYm, sleep, url, kind, retry = {}, parse, tagNames }) {
   const rows = [];
   let seen = 0;
   for (let pageNo = 1; pageNo <= MAX_PAGES; pageNo += 1) {
@@ -94,7 +121,9 @@ async function fetchPages({ fetch, key, lawdCode, dealYm, sleep, url, kind, retr
       pageNo: String(pageNo),
     });
     const response = await fetchWithRetry(fetch, `${url}?${query}`, {}, { kind, sleep, ...retry });
-    const parsed = parse(await response.text());
+    const body = await response.text();
+    if (tagNames) collectTagNames(body, tagNames);
+    const parsed = parse(body);
     if (!parsed.resultCode) throw new AppError(`${kind}_parse`);
     if (!/^0+$/.test(parsed.resultCode)) {
       throw new AppError(`${kind}_result_${parsed.resultCode.replace(/\W/g, '').slice(0, 10)}`);
@@ -142,13 +171,14 @@ const emptyStats = () => ({ rows: 0, noFloor: 0, noDate: 0, noDealing: 0, noJibu
 export function createMolitClient({ fetch, key, sleep }) {
   const cache = new Map();
   const stats = emptyStats();
+  const tagNames = new Set();
   // 응답 없는 API가 잡 제한 시간을 다 쓰지 않도록 첫 장애 뒤에는 호출하지 않는다.
   let outage = null;
   const month = (lawdCode, dealYm) => {
     if (outage) return Promise.reject(outage);
     const cacheKey = `${lawdCode}-${dealYm}`;
     if (!cache.has(cacheKey)) {
-      cache.set(cacheKey, fetchMonth({ fetch, key, lawdCode, dealYm, sleep }).then(
+      cache.set(cacheKey, fetchMonth({ fetch, key, lawdCode, dealYm, sleep, tagNames }).then(
         (rows) => {
           tallyTags(stats, rows);
           return rows;
@@ -168,6 +198,7 @@ export function createMolitClient({ fetch, key, sleep }) {
       return results;
     },
     stats: () => stats,
+    tagNames: () => formatTagNames(tagNames),
   };
 }
 
@@ -175,6 +206,7 @@ export function createMolitClient({ fetch, key, sleep }) {
 export function createPresaleClient({ fetch, key, sleep = defaultSleep, now = () => new Date(), budgetMs, onSoft = () => {} }) {
   const cache = new Map();
   const stats = emptyStats();
+  const tagNames = new Set();
   let failed = false;
   let startedAt = null;
   const fail = (kind) => {
@@ -194,7 +226,7 @@ export function createPresaleClient({ fetch, key, sleep = defaultSleep, now = ()
           const cacheKey = `${lawdCode}-${dealYm}`;
           if (!cache.has(cacheKey)) {
             if (now().getTime() - startedAt >= budgetMs) return fail('presale_budget');
-            const monthRows = await fetchPresaleMonth({ fetch, key, lawdCode, dealYm, sleep });
+            const monthRows = await fetchPresaleMonth({ fetch, key, lawdCode, dealYm, sleep, tagNames });
             tallyTags(stats, monthRows);
             cache.set(cacheKey, monthRows);
           }
@@ -206,5 +238,6 @@ export function createPresaleClient({ fetch, key, sleep = defaultSleep, now = ()
       return { rows, ok: true };
     },
     stats: () => stats,
+    tagNames: () => formatTagNames(tagNames),
   };
 }
