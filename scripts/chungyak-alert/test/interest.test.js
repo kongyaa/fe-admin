@@ -27,6 +27,9 @@ const collected = (extra = {}) => ({
   ...extra,
 });
 
+// 알림 지역 밖이라 로또 알림이 겹치지 않는 공고
+const busan = (extra = {}) => collected({ SUBSCRPT_AREA_CODE_NM: '부산', HSSPLY_ADRES: '부산광역시 해운대구 우동 1', ...extra });
+
 function apiFetch({ rows = [], fail = false } = {}) {
   return async (url) => {
     const text = String(url);
@@ -234,8 +237,7 @@ test('the Kakao prefix is an argument and lotto stays the default', () => {
 
 test('a checked notice outside the alert regions alerts on its start date, whatever its lotto status', async () => {
   const store = fakeStore(rowsMap(row({ key: '7-7', lotto: '로또' })));
-  const busan = collected({ SUBSCRPT_AREA_CODE_NM: '부산', HSSPLY_ADRES: '부산광역시 해운대구 우동 1' });
-  const h = harness({ store, rows: [busan] });
+  const h = harness({ store, rows: [busan({ HOUSE_NM: '관심 단지', SUBSCRPT_RCEPT_ENDDE: '2026-11-07', PBLANC_URL: LINK })] });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(h.kakao.length, 1);
   assert.ok(h.kakao[0].text.startsWith('[관심 청약] 관심 단지\n접수 오늘 시작 2026-11-05~2026-11-07\n'));
@@ -621,6 +623,139 @@ test('logs stay count-only on a sending run', async () => {
   await run({ env: h.env, deps: h.deps });
   const output = h.logs.join('\n');
   for (const secret of ['비밀 단지', 'secret-id', LINK, 'k-1', SECRET, 'token']) assert.ok(!output.includes(secret), secret);
+});
+
+// upsert가 받은 새 값을 기록하는 스토어. failUpsert면 기록한 뒤 실패한다.
+function recordingStore(existing, { failUpsert = false } = {}) {
+  const base = fakeStore(existing);
+  const written = [];
+  return {
+    ...base,
+    written,
+    upsert: async (item, _evaluation, previous) => {
+      written.push({ key: item.key, start: item.overallStart, end: item.overallEnd, name: item.name, url: item.url });
+      if (failUpsert) throw new Error('x');
+      return previous?.id ?? `page-${item.key}`;
+    },
+  };
+}
+
+const TOMORROW = '2026-11-06';
+const LATER = '2026-11-10';
+const movedLater = () => busan({ SUBSCRPT_RCEPT_BGNDE: LATER, SUBSCRPT_RCEPT_ENDDE: '2026-11-12' });
+const movedToToday = () => busan({ HOUSE_NM: '새 이름', SUBSCRPT_RCEPT_ENDDE: '2026-11-08', PBLANC_URL: 'https://www.applyhome.co.kr/fresh' });
+const storedRow = (extra = {}) => row({ key: '7-7', end: '2026-12-01', ...extra });
+
+test('a stored start of today moved later by the source sends nothing', async () => {
+  const store = recordingStore(rowsMap(storedRow({ start: THU })));
+  const h = harness({ store, rows: [movedLater()] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(store.written.map((item) => item.start), [LATER]);
+  assert.equal(h.kakao.length, 0);
+  assert.deepEqual(store.state.stamps, []);
+  assert.ok(summaryLine(h).includes(' interest=0 '));
+});
+
+test('a stored start of tomorrow moved to today sends today with the fresh values', async () => {
+  const store = recordingStore(rowsMap(storedRow({ start: TOMORROW })));
+  const h = harness({ store, rows: [movedToToday()] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(store.written.map((item) => item.start), [THU]);
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith(`[관심 청약] 새 이름\n접수 오늘 시작 ${THU}~2026-11-08\n`));
+  assert.equal(h.kakao[0].url, 'https://www.applyhome.co.kr/fresh');
+  assert.deepEqual(store.state.stamps, [{ id: 'page-secret-id', date: THU }]);
+});
+
+test('a failed upsert still decides from the fresh source values, in both directions', async () => {
+  const later = recordingStore(rowsMap(storedRow({ start: THU })), { failUpsert: true });
+  const one = harness({ store: later, rows: [movedLater()] });
+  assert.equal(await run({ env: one.env, deps: one.deps }), 1);
+  assert.equal(later.written.length, 1);
+  assert.equal(one.kakao.length, 0);
+  assert.deepEqual(later.state.stamps, []);
+
+  const today = recordingStore(rowsMap(storedRow({ start: TOMORROW })), { failUpsert: true });
+  const two = harness({ store: today, rows: [movedToToday()] });
+  assert.equal(await run({ env: two.env, deps: two.deps }), 1);
+  assert.equal(two.kakao.length, 1);
+  assert.ok(two.kakao[0].text.startsWith(`[관심 청약] 새 이름\n접수 오늘 시작 ${THU}~2026-11-08\n`));
+  assert.deepEqual(today.state.stamps, [{ id: 'page-secret-id', date: THU }]);
+});
+
+test('empty source values keep the stored ones', async () => {
+  const store = recordingStore(rowsMap(storedRow({ end: '2026-11-07' })));
+  const h = harness({
+    store,
+    rows: [busan({ HOUSE_NM: '', SUBSCRPT_RCEPT_BGNDE: '', SUBSCRPT_RCEPT_ENDDE: '', PBLANC_URL: 'javascript:alert(1)' })],
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(store.written.length, 1);
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith(`[관심 청약] 관심 단지\n접수 오늘 시작 ${THU}~2026-11-07\n`));
+  assert.equal(h.kakao[0].url, LINK);
+});
+
+test('a row skipped as ended is not upserted and stays as read', async () => {
+  const store = recordingStore(rowsMap(storedRow({ start: THU, end: '2026-11-01' })));
+  const h = harness({ store, rows: [movedLater()] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(store.written.length, 0);
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith(`[관심 청약] 관심 단지\n접수 오늘 시작 ${THU}\n`));
+});
+
+test('a row created in this run gets no interest alert', async () => {
+  const store = recordingStore(new Map());
+  const h = harness({ store, rows: [busan()] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(store.written.length, 1);
+  assert.equal(h.kakao.length, 0);
+});
+
+test('the dry-run count follows the fresh source values too', async () => {
+  const count = async (stored, source) => {
+    const h = harness({ store: fakeStore(rowsMap(stored)), rows: [source] });
+    assert.equal(await run({ argv: ['--dry-run'], env: h.env, deps: h.deps }), 0);
+    return dryRunLine(h).split(' ').at(-1);
+  };
+  assert.equal(await count(storedRow({ start: THU }), movedLater()), 'interest_candidates=0');
+  assert.equal(await count(storedRow({ start: TOMORROW }), movedToToday()), 'interest_candidates=1');
+  assert.equal(await count(storedRow({ start: THU, end: '2026-11-01' }), movedLater()), 'interest_candidates=1');
+  assert.equal(await count(storedRow({ start: TOMORROW, interest: false }), movedToToday()), 'interest_candidates=0');
+});
+
+test('init reads the schema once and both properties are checked against that response', async () => {
+  const schemaReads = (fake) => fake.calls.filter((call) => call.method === 'GET' && call.path === '/databases/db');
+  const missing = notionFake({ databaseProperties: {} });
+  await realStore(missing).init();
+  assert.equal(schemaReads(missing).length, 1);
+  assert.deepEqual(schemaPatches(missing).map((call) => Object.keys(call.body.properties)), [['순번'], ['관심']]);
+
+  const present = notionFake();
+  await realStore(present).init();
+  assert.equal(schemaReads(present).length, 1);
+  assert.deepEqual(schemaPatches(present), []);
+});
+
+test('a failed add for one property still attempts the other', async () => {
+  for (const [failing, other] of [['순번', '관심'], ['관심', '순번']]) {
+    const fake = notionFake({
+      databaseProperties: {},
+      intercept: (call) => (call.method === 'PATCH' && call.body?.properties?.[failing] ? new Response('', { status: 403 }) : null),
+    });
+    await realStore(fake).init();
+    assert.ok(schemaPatches(fake).some((call) => call.body.properties[other]), other);
+    assert.equal(schemaPatches(fake).length, 2);
+  }
+});
+
+test('a wrong-type 순번 keeps its conflict while a missing 관심 is still added', async () => {
+  const fake = notionFake({ databaseProperties: { 순번: { type: 'rich_text', rich_text: {} } } });
+  const store = realStore(fake);
+  await store.init();
+  assert.deepEqual(schemaPatches(fake).map((call) => Object.keys(call.body.properties)), [['관심']]);
+  assert.throws(() => store.checkSequenceProperty(), { kind: 'sequence_property_conflict' });
 });
 
 test('on a run that archives, the alert and its stamp come first and a stale end date is not shown', async () => {

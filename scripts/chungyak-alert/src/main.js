@@ -14,6 +14,7 @@ import {
   maskServiceKey,
   maskValue,
   safeError,
+  safeHttpUrl,
   weekRange,
   weekdayOf,
 } from './util.js';
@@ -79,7 +80,18 @@ export function selectUrgent(records, today, alertRegions) {
   return selected;
 }
 
-// 실행 시작 때 읽은 Notion 행으로 고른다. 지역과 로또 여부는 보지 않는다.
+// buildProperties처럼 값이 없으면 저장된 값을 둔다. 체크와 발송일은 Notion 행의 값이다.
+function overlayNotice(row, notice) {
+  return {
+    ...row,
+    start: notice.overallStart || row.start,
+    end: notice.overallEnd || row.end,
+    name: notice.name || row.name,
+    link: safeHttpUrl(notice.url) ?? row.link,
+  };
+}
+
+// 실행 시작 때 읽은 Notion 행에 이번 실행의 원본 값을 덮어 고른다. 지역과 로또 여부는 보지 않는다.
 // handledKeys는 이번 실행에서 로또 알림 대상이 된 공고로, 하루 한 건만 보내기 위해 뺀다.
 export function selectInterest(rows, today, handledKeys = new Set()) {
   return rows
@@ -325,7 +337,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
           sleep,
         });
         await reader.init({ createMissing: false });
-        dryRunRows = [...(await reader.loadExisting()).values()];
+        dryRunRows = await reader.loadExisting();
       } catch (error) {
         addError(safeError(error));
       }
@@ -355,7 +367,12 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
+  const interestRows = new Map(dryRunRows ?? existing);
   for (const notice of notices) {
+    // 저장 대상 행은 원본의 최신 값으로 판단한다. 저장이 실패해도 같다. 로또 알림과 같은 기준이고, 옮겨진 날짜로 잘못 보내거나 놓치지 않는다.
+    // 접수가 끝나 갱신하지 않는 행은 읽은 그대로 둔다. 이번 실행에 새로 만든 행은 아직 체크될 수 없어 넣지 않는다.
+    const row = interestRows.get(notice.key);
+    if (row && !(row.end && row.end < today)) interestRows.set(notice.key, overlayNotice(row, notice));
     const previous = existing.get(notice.key);
     if (!previous && isClosedNotice(notice, today)) {
       counts.skipped += 1;
@@ -428,7 +445,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
     // 발송 실패가 실제로는 전달됐을 수 있어, 로또 쪽이 실패한 공고도 이번 실행에서 다시 보내지 않는다.
     const handledKeys = new Set(urgent.map((record) => record.notice.key));
-    for (const record of selectInterest([...existing.values()], today, handledKeys)) {
+    for (const record of selectInterest([...interestRows.values()], today, handledKeys)) {
       const text = buildKakaoText({ notice: record.notice, stage: record.stage, prefix: '[관심 청약]' });
       await deliverAlert(record, text, 'interest', alertContext);
     }
@@ -465,7 +482,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     const urgent = selectUrgent(records, today, config.alertRegions);
     // Notion을 읽지 못한 dry-run은 후보를 알 수 없어 건수를 남기지 않는다.
     const interest = dryRunRows
-      ? ` interest_candidates=${selectInterest(dryRunRows, today, new Set(urgent.map((record) => record.notice.key))).length}`
+      ? ` interest_candidates=${selectInterest([...interestRows.values()], today, new Set(urgent.map((record) => record.notice.key))).length}`
       : '';
     log(`dry-run lotto=${lotto} urgent_candidates=${urgent.length}${interest}`);
   }

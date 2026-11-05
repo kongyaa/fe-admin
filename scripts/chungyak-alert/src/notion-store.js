@@ -193,10 +193,9 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
 
   // 기존 DB에 순번 속성이 없을 때만 추가한다. 순번은 표시용이라 실패해도 수집과 알림을 막지 않는다.
   // 장애면 다음 호출이 같은 오류로 멈추고, 속성이 계속 없으면 순번 갱신이 sequence_failed로 드러난다.
-  async function ensureSequenceProperty() {
+  async function ensureSequenceProperty(properties) {
     try {
-      const database = await request('GET', `/databases/${databaseId}`);
-      const property = database.properties?.[P.sequence];
+      const property = properties[P.sequence];
       if (property?.type === 'number') return;
       // 같은 이름의 다른 타입 속성은 사용자의 것일 수 있어 바꾸지 않고, 이번 실행의 순번 갱신만 건너뛴다.
       if (property) {
@@ -211,14 +210,26 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
 
   // 기존 DB에 관심 속성이 없을 때만 추가한다. 실패해도 수집과 알림을 막지 않고 다음 실행에서 다시 시도한다.
   // 같은 이름의 다른 타입 속성은 사용자의 것일 수 있어 바꾸지 않는다.
-  async function ensureInterestProperty() {
+  async function ensureInterestProperty(properties) {
     try {
-      const database = await request('GET', `/databases/${databaseId}`);
-      if (database.properties?.[P.interest]) return;
+      if (properties[P.interest]) return;
       await request('PATCH', `/databases/${databaseId}`, { properties: { [P.interest]: DB_SCHEMA[P.interest] } });
     } catch {
       // 위 주석 참고
     }
+  }
+
+  // 스키마는 한 번만 읽는다. 읽기나 한쪽 추가가 실패해도 수집과 알림을 막지 않는다.
+  async function ensureProperties() {
+    let properties;
+    try {
+      const database = await request('GET', `/databases/${databaseId}`);
+      properties = database.properties ?? {};
+    } catch {
+      return;
+    }
+    await ensureSequenceProperty(properties);
+    await ensureInterestProperty(properties);
   }
 
   return {
@@ -233,8 +244,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       }
       if (database) {
         databaseId = database.id;
-        await ensureSequenceProperty();
-        await ensureInterestProperty();
+        await ensureProperties();
       } else {
         const created = await request(
           'POST',
