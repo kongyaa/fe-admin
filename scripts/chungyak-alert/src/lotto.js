@@ -1,12 +1,12 @@
 import {
+  STATION,
   buildSubject,
   cleanTrades,
   estimateBestMargin,
-  haversineMeters,
   lookupCandidates,
+  matchApartment,
   meetsPriceRule,
   restrictedType,
-  stationLookupKeys,
 } from './market-estimate.js';
 import { resolveAddress } from './sgg-codes.js';
 import { completeMonths, safeError } from './util.js';
@@ -41,18 +41,21 @@ function flagTrigger(notice, lotto) {
   return null;
 }
 
-// 판별 근거는 Notion에 저장되므로 카카오 응답에서 나온 값(역 거리, 역 계수, 단지 거리)은 넣지 않는다.
-// 카카오 운영 정책이 응답을 가공한 값의 저장도 허용하지 않기 때문이다. docs/sources.md 참고.
+function stationText(basis) {
+  if (basis.stationState === STATION.USED) return `역 도보 ${basis.walkMinutes}분(입력)`;
+  if (basis.stationState === STATION.NO_DATA) return `역 도보 ${basis.walkMinutes}분(입력), 비교 단지 역 정보 부족으로 역 보정 없음`;
+  return '역 도보 미입력, 역 보정 없음';
+}
+
 function basisText(basis) {
   if (basis.kind === 'same') {
     return `같은 단지 거래 ${basis.samples}건(분양권 ${basis.presaleSamples}건), 보정 없음`;
   }
   const names = basis.comparables
     .slice(0, 3)
-    .map((item) => `${item.name || '이름 없음'}(브랜드 ${percent(item.brandRatio)}, 연식 ${percent(item.ageRatio)})`)
+    .map((item) => `${item.name || '이름 없음'}(${item.walkBand ? `${item.walkBand}, ` : ''}브랜드 ${percent(item.brandRatio)}, 연식 ${percent(item.ageRatio)})`)
     .join(', ');
-  const scope = basis.stationUsed ? '역세권 보정 포함' : `${basis.scope} 기준, 위치 보정 없음`;
-  return `비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건, ${scope}: ${names}`;
+  return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${basis.scope}): ${names}`;
 }
 
 const priceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${Math.round(best.marginRate * 100)}% (${best.houseType}, 신뢰도 ${best.confidence}); `
@@ -70,28 +73,26 @@ function subjectJibun(address, umd) {
   return /^\d+(-\d+)?$/.test(next) ? next : null;
 }
 
-// 좌표는 이 함수 안에서만 쓰고 돌려주지 않는다. 호출 실패는 클라이언트가 한 번만 알리고, 여기서는 위치 보정을 건너뛴다.
-async function resolveLocations({ locator, notice, subject, areaText, models, rows, lotto, market, today }) {
-  if (!locator) return { locationOk: false, locations: new Map() };
+// 공고 단지 입력이 있을 때만 비교 단지의 역 정보를 조회한다. 조회 실패는 클라이언트가 한 번만 로그에 남긴다.
+async function resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft }) {
+  const stations = new Map();
+  if (!aptInfo || !Number.isFinite(subject.walkMinutes)) return stations;
   const candidates = lookupCandidates({ models, rows, subject, lotto, market, today });
-  if (candidates.length === 0) return { locationOk: false, locations: new Map() };
+  if (candidates.length === 0) return stations;
   try {
-    const origin = await locator.locateSubject({ address: notice.address, name: notice.name, areaText });
-    if (!origin) return { locationOk: false, locations: new Map() };
-    const locations = new Map();
+    const directory = await aptInfo.getDirectory(code);
     for (const complex of candidates) {
-      const coord = await locator.locateComplex(`${areaText} ${complex.umd ?? ''} ${complex.jibun}`.replace(/\s+/g, ' ').trim());
-      if (coord) locations.set(complex.key, { coord, distanceM: haversineMeters(origin, coord) });
+      const apartment = matchApartment(complex, directory, market);
+      if (!apartment) {
+        onSoft('apt_name_unmatched');
+        continue;
+      }
+      const station = await aptInfo.getStation(apartment.code);
+      if (station) stations.set(complex.key, station);
     }
-    subject.stationM = await locator.nearestStation(origin);
-    for (const key of stationLookupKeys({ models, rows, locations, lotto, market, today })) {
-      const location = locations.get(key);
-      location.stationM = await locator.nearestStation(location.coord);
-    }
-    return { locationOk: true, locations, keywordLocated: Boolean(origin.viaKeyword) };
+    return stations;
   } catch {
-    subject.stationM = null;
-    return { locationOk: false, locations: new Map() };
+    return new Map();
   }
 }
 
@@ -104,8 +105,8 @@ async function readPresale(getPresale, code, months) {
   }
 }
 
-// getModels/getTrades 실패는 판정을 막지 않고 onError로 모은다. getPresale과 locator는 실패해도 신뢰도만 낮춘다.
-export async function evaluateLotto(notice, { config, today, getModels, getTrades, getPresale, locator, onError = () => {} }) {
+// getModels/getTrades 실패는 판정을 막지 않고 onError로 모은다. getPresale과 aptInfo는 실패해도 신뢰도만 낮춘다.
+export async function evaluateLotto(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {} }) {
   const { lotto, market } = config;
   const result = (status, reason, extra = {}) => ({
     status, reason, topPrice: null, estimate: null, margin: null, marginRate: null, confidence: null, ...extra,
@@ -141,10 +142,9 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
   const topPrice = models ? topPriceOf(models) : null;
 
   let best = null;
-  let locationOk = false;
   let undetermined = models ? null : '주택형 정보 조회 실패';
   if (models) {
-    const { code, umd, areaText } = resolveAddress(notice.address, notice.region);
+    const { code, umd } = resolveAddress(notice.address, notice.region);
     if (!code) {
       undetermined = '시군구 코드 미매핑';
     } else {
@@ -158,18 +158,16 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
           builder: notice.builder,
           umd,
           jibun: subjectJibun(notice.address, umd),
+          walkMinutes,
           market,
         });
-        const location = await resolveLocations({ locator, notice, subject, areaText, models, rows, lotto, market, today });
-        locationOk = location.locationOk;
+        const stations = await resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft });
         best = estimateBestMargin({
           models,
           rows,
           subject,
-          locations: location.locations,
-          locationOk,
+          stations,
           presaleOk: presale.ok,
-          keywordLocated: location.keywordLocated,
           lotto,
           market,
           today,
@@ -189,8 +187,8 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
       margin: best.margin,
       marginRate: best.marginRate,
       confidence: best.confidence,
-      // 비교 단지로 계산했지만 위치 보정을 쓰지 못한 경우다. 건수만 센다.
-      locationFallback: best.basis.kind === 'comparables' && !best.basis.stationUsed,
+      // 건수만 센다. 같은 단지 거래로 계산하면 역 보정이 필요 없어 비어 있다.
+      stationState: best.basis.stationState ?? null,
     }
     : { topPrice };
 

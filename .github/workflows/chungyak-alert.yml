@@ -81,7 +81,6 @@ jobs:
           KAKAO_ACCESS_FILE: ${{ runner.temp }}/kakao_access
           KAKAO_SECRET_WRITE_OUTCOME: ${{ steps.save_refresh.outcome }}
           DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
-          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
           NOTION_KEY: ${{ secrets.CHUNGYAK_NOTION_KEY }}
           CHUNGYAK_NOTION_PAGE_ID: ${{ secrets.CHUNGYAK_NOTION_PAGE_ID }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}

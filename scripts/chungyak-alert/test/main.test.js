@@ -10,7 +10,7 @@ import { buildKakaoText, sendKakaoMemo } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 
 const THU = '2026-11-05';
-const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} } };
 const notice = (extra = {}) => ({
   key: '1-1',
   name: '테스트',
@@ -205,7 +205,7 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
       '접수 종료일': { date: null },
     },
   });
-  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, sequence: null, interest: false, name: '', link: null });
+  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, sequence: null, interest: false, name: '', link: null, walkMinutes: null });
 });
 
 function notionFake(children = []) {

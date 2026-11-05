@@ -211,10 +211,10 @@ test('non-APT types are 대상 외 and LH makes no calls', async () => {
 });
 
 const market = config.market;
-const subject = { umd: '역삼동', brandTier: 'other', ageYears: 0, stationM: null, name: '' };
+const subject = { umd: '역삼동', brandTier: 'other', ageYears: 0, walkMinutes: null, name: '' };
 const best = (models, rows) => estimateBestMargin({ models, rows, subject, lotto: config.lotto, market, today });
 
-test('without location the scope prefers 법정동 and falls back to 시군구', () => {
+test('the comparable scope prefers 법정동 and falls back to 시군구', () => {
   const models = [{ houseType: '084A', area: 84, price: 100000 }];
   const dong = trades(5, 1000);
   const other = trades(5, 2000, { umd: '삼성동' });

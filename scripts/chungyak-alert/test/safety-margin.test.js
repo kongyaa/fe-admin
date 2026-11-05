@@ -4,19 +4,16 @@ import { test } from 'node:test';
 import { STATUS, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
 import { run } from '../src/main.js';
 import { buildKakaoText } from '../src/notify-kakao.js';
-import { buildProperties, createNotionStore } from '../src/notion-store.js';
+import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 import { normalizeDetail, ENDPOINTS } from '../src/sources/applyhome.js';
-import { cleanAddress, createKakaoLocalClient } from '../src/sources/kakao-local.js';
+import { createAptInfoClient } from '../src/sources/apt-info.js';
 import { createMolitClient, createPresaleClient, fetchMonth, fetchPresaleMonth, parseMolitXml, parsePresaleXml } from '../src/sources/molit.js';
-import { resolveAddress } from '../src/sgg-codes.js';
 
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
-const { location } = config.market;
 const today = '2026-11-05';
 const THU = today;
 const THU_NOW = '2026-11-04T22:30:00Z';
 const noSleep = async () => {};
-const fastLocation = { ...location, minIntervalMs: 0 };
 const KAKAO_SECRET = 'SECRET-KAKAO-KEY';
 const DATA_SECRET = 'SECRET-DATA-KEY';
 
@@ -163,226 +160,134 @@ test('months already cached are served after the presale budget has passed', asy
   assert.deepEqual(soft, ['presale_budget']);
 });
 
-const kakaoResponse = (documents) => Response.json({ meta: { total_count: documents.length }, documents });
+const listBody = (items, totalCount = items.length) => ({ header: { resultCode: '00', resultMsg: 'OK' }, body: { items, numOfRows: '1000', pageNo: '1', totalCount: String(totalCount) } });
+const detailBody = (item) => ({ header: { resultCode: '00', resultMsg: 'OK' }, body: { item } });
+const listItem = (kaptName, kaptCode = 'A1', as3 = '역삼동') => ({ bjdCode: '1168010100', kaptCode, kaptName, as1: '서울특별시', as2: '강남구', as3 });
 
-function kakaoClient(handler, { locationConfig = fastLocation, key = 'k', now } = {}) {
+function aptClient(handler, { limits = config.market.aptInfo, now } = {}) {
   const calls = [];
-  const errors = [];
   const soft = [];
-  const client = createKakaoLocalClient({
-    key,
-    location: locationConfig,
+  const client = createAptInfoClient({
+    key: 'k+/=',
+    limits,
     sleep: noSleep,
     now,
-    onError: (kind) => errors.push(kind),
     onSoft: (kind) => soft.push(kind),
-    fetch: async (url, init) => {
+    fetch: async (url) => {
       const parsed = new URL(url);
-      calls.push({ path: parsed.pathname, params: Object.fromEntries(parsed.searchParams), headers: init.headers });
+      calls.push({ path: parsed.pathname, params: Object.fromEntries(parsed.searchParams) });
       return handler(parsed);
     },
   });
-  return { client, calls, errors, soft };
+  return { client, calls, soft };
 }
 
-test('Kakao requests use the documented endpoints, header and parameters', async () => {
-  const { client, calls } = kakaoClient((url) => {
-    if (url.pathname.endsWith('/address.json')) return kakaoResponse([{ x: '127.03', y: '37.5' }]);
-    return kakaoResponse([{ x: '127.04', y: '37.5', distance: '250' }]);
+test('the apartment client uses the operations and parameters in the official spec', async () => {
+  const { client, calls, soft } = aptClient((url) => (url.pathname.endsWith('/getSigunguAptList4')
+    ? Response.json(listBody([listItem('역삼푸른숲')]))
+    : Response.json(detailBody({ kaptCode: 'A1', subwayLine: '2호선', subwayStation: '역삼', kaptdWtimesub: '5~10분이내' }))));
+  assert.deepEqual(await client.getDirectory('11680'), [{ code: 'A1', name: '역삼푸른숲', dong: '역삼동', ri: '' }]);
+  assert.deepEqual(await client.getStation('A1'), { walkMinutes: 10, walkBand: '5~10분이내' });
+  assert.equal(calls[0].path, '/1613000/AptListService4/getSigunguAptList4');
+  assert.deepEqual(calls[0].params, { serviceKey: 'k+/=', sigunguCode: '11680', pageNo: '1', numOfRows: '1000' });
+  assert.equal(calls[1].path, '/1613000/AptBasisInfoServiceV5/getAphusDtlInfoV5');
+  // 명세대로 상세 정보만 ServiceKey다.
+  assert.deepEqual(calls[1].params, { ServiceKey: 'k+/=', kaptCode: 'A1' });
+  assert.deepEqual(soft, []);
+});
+
+test('the apartment client reads wrapped envelopes, item lists and every page', async () => {
+  const wrapped = aptClient(() => Response.json({ response: listBody({ item: [listItem('가단지', 'A1'), listItem('나단지', 'A2')] }) }));
+  assert.equal((await wrapped.client.getDirectory('1')).length, 2);
+  const single = aptClient(() => Response.json({ response: listBody({ item: listItem('가단지') }) }));
+  assert.equal((await single.client.getDirectory('1')).length, 1);
+
+  const pages = aptClient((url) => {
+    const pageNo = Number(url.searchParams.get('pageNo'));
+    return Response.json(listBody(pageNo === 1 ? Array.from({ length: 1000 }, (_, index) => listItem(`단지${index}`, `A${index}`)) : [listItem('마지막', 'Z')], 1001));
   });
-  const coord = await client.locateComplex('서울특별시 강남구 역삼동 100');
-  assert.deepEqual(coord, { x: 127.03, y: 37.5 });
-  assert.equal(await client.nearestStation(coord), 250);
-  assert.equal(calls[0].path, '/v2/local/search/address.json');
-  assert.equal(calls[0].params.query, '서울특별시 강남구 역삼동 100');
-  assert.equal(calls[0].headers.Authorization, 'KakaoAK k');
-  assert.equal(calls[1].path, '/v2/local/search/category.json');
-  assert.deepEqual(calls[1].params, { category_group_code: 'SW8', x: '127.03', y: '37.5', radius: '1300', sort: 'distance', size: '1' });
+  const all = await pages.client.getDirectory('1');
+  assert.equal(all.length, 1001);
+  assert.equal(pages.calls.length, 2);
+  const empty = aptClient(() => Response.json(listBody('')));
+  assert.deepEqual(await empty.client.getDirectory('1'), []);
 });
 
-test('Kakao station search handles none in range and a missing distance', async () => {
-  const none = kakaoClient(() => kakaoResponse([]));
-  assert.equal(await none.client.nearestStation({ x: 127, y: 37 }), null);
-  assert.deepEqual(none.errors, []);
-
-  // distance가 없으면 역 좌표로 계산한다. 위도 0.001도는 약 111m다.
-  const computed = kakaoClient(() => kakaoResponse([{ x: '127', y: '37.001' }]));
-  const meters = await computed.client.nearestStation({ x: 127, y: 37 });
-  assert.ok(meters > 100 && meters < 120);
-
-  const broken = kakaoClient(() => kakaoResponse([{ place_name: 'x' }]));
-  await assert.rejects(broken.client.nearestStation({ x: 127, y: 37 }), { kind: 'kakao_local_parse' });
-  assert.deepEqual(broken.errors, ['kakao_local_parse']);
-});
-
-test('the subject is located by address first', async () => {
-  const byAddress = kakaoClient(() => kakaoResponse([{ x: '127', y: '37' }]));
-  assert.deepEqual(await byAddress.client.locateSubject({ address: '서울특별시 강남구 역삼동 1 일원', name: 'A', areaText: '서울특별시 강남구' }), { x: 127, y: 37 });
-  assert.equal(byAddress.calls[0].params.query, '서울특별시 강남구 역삼동 1');
-  assert.equal(byAddress.calls.length, 1);
-});
-
-const keywordClient = (documents) => kakaoClient((url) => (url.pathname.endsWith('/keyword.json') ? kakaoResponse(documents) : kakaoResponse([])));
-const locateByName = (client, name = '역삼 푸른숲 단지') => client.locateSubject({ address: '서울특별시 강남구 A-3블록', name, areaText: '서울특별시 강남구' });
-const place = (placeName, x = '127', addressName = '서울 강남구 역삼동 1') => ({ x, y: '37', place_name: placeName, address_name: addressName });
-
-test('the keyword fallback takes a place in the district whose name contains the subject name', async () => {
-  const found = keywordClient([place('역삼푸른숲 아파트', '1', '부산 강서구 어딘가'), place('역삼 푸른숲 아파트 101동')]);
-  assert.deepEqual(await locateByName(found.client), { x: 127, y: 37, viaKeyword: true });
-  assert.equal(found.calls[1].params.query, '강남구 역삼 푸른숲 단지');
-  assert.equal(await locateByName(keywordClient([place('역삼푸른숲', '1', '부산 해운대구 어딘가')]).client), null);
-});
-
-test('the keyword fallback rejects sales facilities and other complexes', async () => {
-  for (const name of ['역삼푸른숲 견본주택', '역삼푸른숲 모델하우스', '역삼푸른숲 분양사무소', '역삼푸른숲 홍보관', '역삼 옛푸른 아파트', '푸른숲']) {
-    assert.equal(await locateByName(keywordClient([place(name)]).client), null, name);
-  }
-  // 앞의 결과가 분양 시설이어도 뒤의 단지를 찾는다.
-  const skipped = keywordClient([place('역삼푸른숲 견본주택', '1'), place('역삼푸른숲')]);
-  assert.deepEqual(await locateByName(skipped.client), { x: 127, y: 37, viaKeyword: true });
-  // 이름이 비면 검색하지 않는다.
-  const blank = keywordClient([place('아무 단지')]);
-  assert.equal(await locateByName(blank.client, ''), null);
-  assert.equal(blank.calls.length, 1);
-});
-
-test('a keyword-located subject caps a comparable estimate at 중 and leaves no trace in the result', async () => {
-  const trades = ['11', '12', '13', '14'].map((jibun, index) => saleRows(5, 2000, { aptName: `단지${'가나다라'[index]}`, jibun })).flat();
-  const byAddress = await evaluate(apt(), { trades, locator: fakeLocator() });
-  assert.equal(byAddress.confidence, '상');
-  const byKeyword = await evaluate(apt(), {
-    trades,
-    locator: fakeLocator({ async locateSubject() { return { x: 127, y: 37.5, viaKeyword: true }; } }),
-  });
-  assert.equal(byKeyword.confidence, '중');
-  assert.equal(byKeyword.estimate, byAddress.estimate);
-  assert.ok(!JSON.stringify(byKeyword).includes('viaKeyword'));
-});
-
-test('address cleaning keeps 동 names that contain the removed words', () => {
-  assert.equal(cleanAddress('서울특별시 강남구 일원동 1'), '서울특별시 강남구 일원동 1');
-  assert.equal(cleanAddress('경기도 시흥시 거모동 1234 일원'), '경기도 시흥시 거모동 1234');
-  assert.equal(cleanAddress('경기도 시흥시 거모동 1234번지 외 3필지 (A블록)'), '경기도 시흥시 거모동 1234');
-  assert.equal(resolveAddress('경기도 시흥시 거모동 1234').areaText, '경기도 시흥시');
-  assert.equal(resolveAddress('경기도 수원시 영통구 이의동 1').areaText, '경기도 수원시 영통구');
-  assert.equal(resolveAddress('강남구 역삼동 1', '서울').areaText, '서울 강남구');
-  assert.equal(resolveAddress('부산광역시 해운대구 우동').areaText, null);
-});
-
-test('Kakao results are memoised, so repeat lookups make no calls', async () => {
-  const { client, calls } = kakaoClient(() => kakaoResponse([{ x: '127', y: '37', distance: '100' }]));
-  await client.locateComplex('q');
-  await client.locateComplex('q');
-  await client.nearestStation({ x: 127, y: 37 });
-  await client.nearestStation({ x: 127, y: 37 });
+test('the apartment client memoises by district and complex', async () => {
+  const { client, calls } = aptClient((url) => (url.pathname.endsWith('/getSigunguAptList4')
+    ? Response.json(listBody([listItem('가단지')]))
+    : Response.json(detailBody({ kaptdWtimesub: '5분이내' }))));
+  await client.getDirectory('1');
+  await client.getDirectory('1');
+  await client.getStation('A1');
+  await client.getStation('A1');
   assert.equal(calls.length, 2);
   assert.equal(client.stats().calls, 2);
 });
 
-test('Kakao quota, auth and malformed failures stop after one attempt and reach the error mail', async () => {
-  for (const [handler, kind] of [
-    [() => new Response('', { status: 429 }), 'kakao_local_http_429'],
-    [() => new Response('', { status: 401 }), 'kakao_local_http_401'],
-    [() => new Response('', { status: 403 }), 'kakao_local_http_403'],
-    [() => new Response('not json'), 'kakao_local_parse'],
-    [() => Response.json({ meta: {} }), 'kakao_local_parse'],
+test('missing or unreadable station values are counted and treated as no value', async () => {
+  const items = { A1: { kaptCode: 'A1', kaptdWtimesub: '' }, A2: { kaptCode: 'A2', kaptdWtimesub: null }, A3: { kaptCode: 'A3' }, A4: { kaptCode: 'A4', kaptdWtimesub: '역 앞' }, A5: null, A6: { kaptdWtimesub: '20분초과' } };
+  const { client, soft } = aptClient((url) => Response.json(detailBody(items[url.searchParams.get('kaptCode')])));
+  for (const code of ['A1', 'A2', 'A3', 'A4', 'A5']) assert.equal(await client.getStation(code), null, code);
+  assert.deepEqual(await client.getStation('A6'), { walkMinutes: 21, walkBand: '20분초과' });
+  assert.deepEqual(client.tags(), { listRows: 0, listNoCode: 0, listNoDong: 0, details: 6, noItem: 1, noField: 1, emptyWalk: 2, badWalk: 1 });
+  assert.deepEqual(soft, []);
+});
+
+test('every apartment API failure is soft, reported once and stops further calls', async () => {
+  for (const [handler, kind, attempts] of [
+    [() => new Response('Forbidden', { status: 403 }), 'aptlist_http_403', 1],
+    [() => new Response('', { status: 401 }), 'aptlist_http_401', 1],
+    [() => new Response('', { status: 500 }), 'aptlist_http_500', 2],
+    [() => { throw new TypeError('fetch failed'); }, 'aptlist_network', 2],
+    [() => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); }, 'aptlist_timeout', 2],
+    [() => ({ ok: true, json: async () => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); } }), 'aptlist_timeout', 1],
+    [() => new Response('<OpenAPI_ServiceResponse/>'), 'aptlist_parse', 1],
+    [() => Response.json({ other: 1 }), 'aptlist_parse', 1],
+    [() => Response.json({ header: { resultCode: '30' }, body: {} }), 'aptlist_result_30', 1],
+    [() => Response.json(listBody([{ wrongTag: 1 }])), 'aptlist_parse', 1],
   ]) {
-    const { client, calls, errors, soft } = kakaoClient(handler);
-    await assert.rejects(client.locateComplex('a'), { kind });
-    await assert.rejects(client.locateComplex('b'), { kind });
-    await assert.rejects(client.nearestStation({ x: 1, y: 2 }), { kind });
-    assert.equal(calls.length, 1, kind);
-    assert.deepEqual(errors, [kind]);
-    assert.deepEqual(soft, []);
-  }
-});
-
-const transientFailures = [
-  [() => new Response('', { status: 500 }), 'kakao_local_http_500'],
-  [() => new Response('', { status: 503 }), 'kakao_local_http_503'],
-  [() => { throw new TypeError('fetch failed'); }, 'kakao_local_network'],
-  [() => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); }, 'kakao_local_timeout'],
-  [() => ({ ok: true, json: async () => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); } }), 'kakao_local_timeout'],
-];
-
-test('one transient Kakao failure is retried and the run continues', async () => {
-  for (const [handler, kind] of transientFailures) {
-    let count = 0;
-    const { client, calls, errors, soft } = kakaoClient((url) => {
-      count += 1;
-      return count === 1 ? handler(url) : kakaoResponse([{ x: '127', y: '37' }]);
-    });
-    assert.deepEqual(await client.locateComplex('a'), { x: 127, y: 37 }, kind);
-    assert.deepEqual(await client.locateComplex('b'), { x: 127, y: 37 }, kind);
-    assert.equal(calls.length, 3, kind);
-    assert.deepEqual(errors, []);
-    assert.deepEqual(soft, []);
-    assert.equal(client.stats().calls, 3);
-  }
-});
-
-test('a transient Kakao failure that remains after the retry is soft and stops further calls', async () => {
-  for (const [handler, kind] of transientFailures) {
-    const { client, calls, errors, soft } = kakaoClient(handler);
-    await assert.rejects(client.locateComplex('a'), { kind });
-    await assert.rejects(client.locateComplex('b'), { kind });
-    assert.equal(calls.length, 2, kind);
-    assert.deepEqual(errors, []);
+    const { client, calls, soft } = aptClient(handler);
+    await assert.rejects(client.getDirectory('1'), { kind });
+    await assert.rejects(client.getDirectory('2'), { kind });
+    await assert.rejects(client.getStation('A1'), { kind });
+    assert.equal(calls.length, attempts, kind);
     assert.deepEqual(soft, [kind]);
   }
+  const detail = aptClient(() => new Response('', { status: 403 }));
+  await assert.rejects(detail.client.getStation('A1'), { kind: 'aptinfo_http_403' });
 });
 
-test('the retry does not go past the call cap', async () => {
-  const { client, calls, soft } = kakaoClient(() => new Response('', { status: 500 }), {
-    locationConfig: { ...fastLocation, maxCallsPerRun: 1 },
-  });
-  await assert.rejects(client.locateComplex('a'), { kind: 'kakao_local_http_500' });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(soft, ['kakao_local_http_500']);
-});
-
-test('a Kakao 400 is one bad query and does not stop other lookups', async () => {
+test('one transient apartment API failure is retried', async () => {
   let count = 0;
-  const { client, errors } = kakaoClient(() => {
+  const { client, calls, soft } = aptClient(() => {
     count += 1;
-    return count === 1 ? new Response('', { status: 400 }) : kakaoResponse([{ x: '127', y: '37' }]);
+    return count === 1 ? new Response('', { status: 503 }) : Response.json(detailBody({ kaptdWtimesub: '5분이내' }));
   });
-  assert.equal(await client.locateComplex('bad'), null);
-  assert.deepEqual(await client.locateComplex('good'), { x: 127, y: 37 });
-  assert.deepEqual(errors, []);
-});
-
-test('the Kakao call cap stops calls without an error mail', async () => {
-  const { client, calls, soft, errors } = kakaoClient(() => kakaoResponse([{ x: '127', y: '37' }]), {
-    locationConfig: { ...fastLocation, maxCallsPerRun: 2 },
-  });
-  await client.locateComplex('a');
-  await client.locateComplex('b');
-  await assert.rejects(client.locateComplex('c'), { kind: 'kakao_local_call_cap' });
-  await assert.rejects(client.locateComplex('d'), { kind: 'kakao_local_call_cap' });
+  assert.equal((await client.getStation('A1')).walkMinutes, 5);
   assert.equal(calls.length, 2);
-  assert.deepEqual(soft, ['kakao_local_call_cap']);
-  assert.deepEqual(errors, []);
+  assert.deepEqual(soft, []);
 });
 
-test('the Kakao time budget stops calls without an error mail', async () => {
+test('the apartment client stops at its call cap and time budget', async () => {
+  const handler = () => Response.json(detailBody({ kaptdWtimesub: '5분이내' }));
+  const capped = aptClient(handler, { limits: { ...config.market.aptInfo, maxCallsPerRun: 2 } });
+  await capped.client.getStation('A1');
+  await capped.client.getStation('A2');
+  await assert.rejects(capped.client.getStation('A3'), { kind: 'apt_call_cap' });
+  await assert.rejects(capped.client.getStation('A4'), { kind: 'apt_call_cap' });
+  assert.equal(capped.calls.length, 2);
+  assert.deepEqual(capped.soft, ['apt_call_cap']);
+
   let current = 0;
-  const { client, calls, soft } = kakaoClient(() => {
+  const timed = aptClient(() => {
     current += 100;
-    return kakaoResponse([{ x: '127', y: '37' }]);
-  }, { locationConfig: { ...fastLocation, budgetMs: 100 }, now: () => new Date(current) });
-  await client.locateComplex('a');
-  await assert.rejects(client.locateComplex('b'), { kind: 'kakao_local_budget' });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(soft, ['kakao_local_budget']);
-});
-
-test('a missing Kakao key makes no call and reports once', async () => {
-  const { client, calls, errors } = kakaoClient(() => kakaoResponse([]), { key: '' });
-  await assert.rejects(client.locateComplex('a'), { kind: 'kakao_local_key_missing' });
-  await assert.rejects(client.locateComplex('b'), { kind: 'kakao_local_key_missing' });
-  assert.equal(calls.length, 0);
-  assert.deepEqual(errors, ['kakao_local_key_missing']);
+    return handler();
+  }, { limits: { ...config.market.aptInfo, budgetMs: 100 }, now: () => new Date(current) });
+  await timed.client.getStation('A1');
+  await assert.rejects(timed.client.getStation('A2'), { kind: 'apt_budget' });
+  assert.equal(timed.calls.length, 1);
+  assert.deepEqual(timed.soft, ['apt_budget']);
 });
 
 const apt = (extra = {}) => ({
@@ -411,61 +316,99 @@ const saleRows = (count, unit, extra = {}) => Array.from({ length: count }, () =
   ...extra,
 }));
 
-// 공고 단지 역 900m, 비교 단지 역 200m, 거리 약 300m인 위치 조회 가짜
-const fakeLocator = (overrides = {}) => ({
+// 비교 단지 역 도보 3분(5분이내)을 돌려주는 공동주택 조회 가짜
+const fakeAptInfo = (overrides = {}) => ({
   calls: [],
-  async locateSubject() { return { x: 127, y: 37.5 }; },
-  async locateComplex(query) {
-    this.calls.push(query);
-    return { x: 127, y: 37.5027 };
+  async getDirectory() { return [{ code: 'A1', name: '래미안역세권', dong: '역삼동', ri: '' }]; },
+  async getStation(code) {
+    this.calls.push(code);
+    return { walkMinutes: 5, walkBand: '5분이내' };
   },
-  async nearestStation(coord) { return coord.y === 37.5 ? 900 : 200; },
   ...overrides,
 });
 
-const evaluate = (notice, { trades = [], presale, locator, models = [{ houseType: '084A', area: 84, price: 100000 }], errors = [] } = {}) => evaluateLotto(notice, {
+const evaluate = (notice, { trades = [], presale, aptInfo, walkMinutes, soft = [], models = [{ houseType: '084A', area: 84, price: 100000 }], errors = [] } = {}) => evaluateLotto(notice, {
   config,
   today,
   getModels: async () => models,
   getTrades: async () => trades,
   getPresale: presale ? async () => presale : undefined,
-  locator,
+  aptInfo,
+  walkMinutes,
   onError: (kind) => errors.push(kind),
+  onSoft: (kind) => soft.push(kind),
 });
 
-test('a located comparable is adjusted and the reason names it without any Kakao-derived value', async () => {
-  const locator = fakeLocator();
-  const result = await evaluate(apt(), { trades: saleRows(5, 2000, { aptName: '래미안역세권' }), locator });
-  // 2000 / (1.06 × 1.05) × 84 = 150943
-  assert.equal(result.estimate, 150943);
-  assert.equal(locator.calls[0], '서울특별시 강남구 역삼동 100');
-  assert.ok(result.reason.includes('래미안역세권'));
-  assert.ok(result.reason.includes('브랜드 -5%'));
-  assert.ok(result.reason.includes('역세권 보정 포함'));
-  // 운영 정책상 역 거리, 역 계수, 단지 거리, 좌표는 저장되는 값에 넣지 않는다.
-  const stored = JSON.stringify(result);
-  for (const forbidden of ['900', '200m', '500m', '1.06', '127', '37.5', 'stationM', 'distanceM', 'coord']) {
-    assert.ok(!stored.includes(forbidden), forbidden);
+test('a subject value with a matched comparable band adjusts the estimate and shows both in the reason', async () => {
+  const aptInfo = fakeAptInfo();
+  const result = await evaluate(apt(), { trades: saleRows(5, 2000, { aptName: '래미안역세권' }), aptInfo, walkMinutes: 15 });
+  // 2000 × 1.02 / (1.06 × 1.05) × 84 = 153962
+  assert.equal(result.estimate, 153962);
+  assert.equal(result.stationState, 'used');
+  assert.deepEqual(aptInfo.calls, ['A1']);
+  assert.ok(result.reason.includes('역 도보 15분(입력)'));
+  assert.ok(result.reason.includes('래미안역세권(5분이내, 브랜드 -5%, 연식 +0%)'));
+});
+
+test('no subject value makes no apartment calls, applies no station factor and caps confidence at 중', async () => {
+  let called = 0;
+  const aptInfo = fakeAptInfo({ async getDirectory() { called += 1; return []; } });
+  const trades = ['가', '나', '다', '라'].flatMap((name, index) => saleRows(5, 2000, { aptName: `${name}단지`, jibun: `${index}a` }));
+  for (const walkMinutes of [undefined, null]) {
+    const result = await evaluate(apt(), { trades, aptInfo, walkMinutes });
+    assert.equal(result.estimate, 2000 * 84);
+    assert.equal(result.confidence, '중');
+    assert.equal(result.stationState, 'noInput');
+    assert.ok(result.reason.includes('역 도보 미입력, 역 보정 없음'));
   }
-  assert.equal(result.locationFallback, false);
+  assert.equal(called, 0);
 });
 
-test('a lookup failure skips the location adjustment, still estimates and sets confidence to 하', async () => {
-  const failing = [
-    fakeLocator({ async locateSubject() { throw new Error('quota'); } }),
-    fakeLocator({ async locateComplex() { throw new Error('quota'); } }),
-    fakeLocator({ async nearestStation() { throw new Error('quota'); } }),
-    fakeLocator({ async locateSubject() { return null; } }),
-    undefined,
+test('apartment failures and name mismatches skip the station adjustment, lower confidence and still estimate', async () => {
+  const trades = ['가', '나', '다', '라'].flatMap((name, index) => saleRows(5, 2000, { aptName: `${name}단지`, jibun: `${index}a` }));
+  const direct = await evaluate(apt(), { trades, walkMinutes: 15 });
+  assert.equal(direct.stationState, 'noData');
+  const cases = [
+    fakeAptInfo({ async getDirectory() { throw new Error('quota'); } }),
+    fakeAptInfo({ async getDirectory() { return [{ code: 'Z', name: '전혀다른이름', dong: '역삼동', ri: '' }]; } }),
+    fakeAptInfo({
+      async getDirectory() { return ['가', '나', '다', '라'].map((name) => ({ code: name, name: `${name}단지`, dong: '역삼동', ri: '' })); },
+      async getStation() { throw new Error('stall'); },
+    }),
+    fakeAptInfo({
+      async getDirectory() { return ['가', '나', '다', '라'].map((name) => ({ code: name, name: `${name}단지`, dong: '역삼동', ri: '' })); },
+      async getStation() { return null; },
+    }),
   ];
-  for (const locator of failing) {
-    const result = await evaluate(apt(), { trades: saleRows(5, 2000, { aptName: '래미안역세권' }), locator });
-    // 브랜드 보정은 남고 역 보정만 빠진다. 2000 / 1.05 × 84 = 160000
-    assert.equal(result.estimate, 160000);
-    assert.equal(result.confidence, '하');
-    assert.equal(result.locationFallback, true);
-    assert.ok(result.reason.includes('위치 보정 없음'));
+  for (const aptInfo of cases) {
+    const result = await evaluate(apt(), { trades, aptInfo, walkMinutes: 15 });
+    assert.equal(result.estimate, 2000 * 84);
+    assert.equal(result.stationState, 'noData');
+    // 표본은 상 기준을 넘고, 값 부족으로 한 단계 내린다.
+    assert.equal(result.confidence, '중');
+    assert.ok(result.reason.includes('역 도보 15분(입력), 비교 단지 역 정보 부족으로 역 보정 없음'));
   }
+  // 조회가 중간에 멈추면 받아 둔 값도 쓰지 않는다. 일부만으로 보정하지 않으려는 것이다.
+  const three = trades.filter((row) => row.aptName !== '라단지');
+  let station = 0;
+  const partial = await evaluate(apt(), {
+    trades: three,
+    walkMinutes: 15,
+    aptInfo: fakeAptInfo({
+      async getDirectory() { return ['가', '나', '다'].map((name) => ({ code: name, name: `${name}단지`, dong: '역삼동', ri: '' })); },
+      async getStation() {
+        station += 1;
+        if (station === 3) throw new Error('stall');
+        return { walkMinutes: 5, walkBand: '5분이내' };
+      },
+    }),
+  });
+  assert.equal(partial.stationState, 'noData');
+  assert.equal(partial.estimate, 2000 * 84);
+
+  const soft = [];
+  await evaluate(apt(), { trades, aptInfo: cases[1], walkMinutes: 15, soft });
+  assert.deepEqual(soft, Array(4).fill('apt_name_unmatched'));
 });
 
 test('a presale outage lowers confidence and keeps the estimate; presale rows can decide same-complex', async () => {
@@ -497,46 +440,44 @@ test('a presale outage lowers each confidence level by one', async () => {
     ...saleRows(5, 2000, { aptName: '나단지', jibun: '12' }),
     ...saleRows(5, 2000, { aptName: '다단지', jibun: '13' }),
   ];
-  const locator = fakeLocator();
-  assert.equal((await evaluate(apt(), { trades, locator, presale: { rows: [], ok: true } })).confidence, '중');
-  assert.equal((await evaluate(apt(), { trades, locator, presale: { rows: [], ok: false } })).confidence, '하');
+  assert.equal((await evaluate(apt(), { trades, presale: { rows: [], ok: true } })).confidence, '중');
+  assert.equal((await evaluate(apt(), { trades, presale: { rows: [], ok: false } })).confidence, '하');
   const same = saleRows(5, 1200, { aptName: '공고단지', jibun: '1' });
   assert.equal((await evaluate(apt(), { trades: same, presale: { rows: [], ok: true } })).confidence, '상');
   assert.equal((await evaluate(apt(), { trades: same, presale: { rows: [], ok: false } })).confidence, '중');
 });
 
-test('same-complex models make no location calls', async () => {
-  let located = 0;
-  const locator = fakeLocator({ async locateSubject() { located += 1; return null; } });
-  const result = await evaluate(apt(), { trades: saleRows(5, 1500, { aptName: '공고단지', jibun: '1' }), locator });
-  assert.equal(located, 0);
-  assert.equal(result.locationFallback, false);
+test('same-complex models make no apartment calls even with a subject value', async () => {
+  let called = 0;
+  const aptInfo = fakeAptInfo({ async getDirectory() { called += 1; return []; } });
+  const result = await evaluate(apt(), { trades: saleRows(5, 1500, { aptName: '공고단지', jibun: '1' }), aptInfo, walkMinutes: 15 });
+  assert.equal(called, 0);
+  assert.equal(result.stationState, null);
   assert.equal(result.estimate, 1500 * 84);
 });
 
-test('a real client with a small cap degrades to 하 for later notices without further calls', async () => {
-  const calls = [];
+test('a real client with a small cap degrades later notices without further calls', async () => {
   const soft = [];
-  const client = createKakaoLocalClient({
+  const calls = [];
+  const client = createAptInfoClient({
     key: 'k',
-    location: { ...fastLocation, maxCallsPerRun: 3 },
+    limits: { ...config.market.aptInfo, maxCallsPerRun: 2 },
     sleep: noSleep,
     onSoft: (kind) => soft.push(kind),
     fetch: async (url) => {
       calls.push(String(url));
-      if (String(url).includes('category.json')) return kakaoResponse([{ distance: '100', x: '127', y: '37.5' }]);
-      return kakaoResponse([{ x: '127', y: '37.5' }]);
+      return String(url).includes('getSigunguAptList4')
+        ? Response.json(listBody([listItem('역삼푸른숲', 'A1'), listItem('역삼큰나무', 'A2')]))
+        : Response.json(detailBody({ kaptdWtimesub: '5분이내' }));
     },
   });
-  const trades = saleRows(5, 1000, { aptName: '가단지' });
-  const first = await evaluate(apt(), { trades, locator: client });
-  assert.equal(first.locationFallback, false);
-  assert.equal(calls.length, 3);
-  const second = await evaluate(apt({ address: '서울특별시 강남구 역삼동 2', name: '다른공고' }), { trades: saleRows(5, 1000, { aptName: '나단지', jibun: '200' }), locator: client });
-  assert.equal(second.locationFallback, true);
-  assert.equal(second.confidence, '하');
-  assert.equal(calls.length, 3);
-  assert.deepEqual(soft, ['kakao_local_call_cap']);
+  const first = await evaluate(apt(), { trades: saleRows(5, 1000, { aptName: '역삼푸른숲', jibun: '11' }), aptInfo: client, walkMinutes: 5 });
+  assert.equal(first.stationState, 'used');
+  assert.equal(calls.length, 2);
+  const second = await evaluate(apt(), { trades: saleRows(5, 1000, { aptName: '역삼큰나무', jibun: '12' }), aptInfo: client, walkMinutes: 5 });
+  assert.equal(second.stationState, 'noData');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(soft, ['apt_call_cap']);
 });
 
 test('restricted types are 대상 외 with empty margin, before triggers and before any lookup', async () => {
@@ -615,18 +556,19 @@ test('the Applyhome constructor field becomes the subject builder', () => {
 const OLD = { '예상 차익': { type: 'number', number: {} }, 차익률: { type: 'number', number: {} } };
 const NEW = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} } };
 const CONFIDENCE_PROP = { '시세 신뢰도': { type: 'select', select: {} } };
-const OTHERS = { 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
+const WALK = { '역 도보(분)': { type: 'number', number: {} } };
+const OTHERS = { ...WALK, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
 
 const notice = (extra = {}) => ({ key: '1-1', name: '테스트', region: '서울', typeLabel: 'APT', source: '청약홈', url: 'https://www.applyhome.co.kr/a', stages: [], ...extra });
 
 test('buildProperties uses the new names and omits empty values', () => {
-  const props = buildProperties(notice(), { status: '아님', estimate: 100, margin: -5, marginRate: -0.05, confidence: '중', locationFallback: true }, THU);
+  const props = buildProperties(notice(), { status: '아님', estimate: 100, margin: -5, marginRate: -0.05, confidence: '중', stationState: 'used' }, THU);
   assert.deepEqual(props['안전 마진'], { number: -5 });
   assert.deepEqual(props['마진율'], { number: -0.05 });
   assert.deepEqual(props['시세 신뢰도'], { select: { name: '중' } });
   assert.equal(props['예상 차익'], undefined);
   assert.equal(props['차익률'], undefined);
-  assert.ok(!Object.keys(props).some((name) => name === 'null' || name === 'locationFallback'));
+  assert.ok(!Object.keys(props).some((name) => name === 'null' || name === 'stationState'));
 
   const empty = buildProperties(notice(), { status: '판별 불가' }, THU);
   assert.equal(Object.hasOwn(empty, '안전 마진'), false);
@@ -812,6 +754,44 @@ test('a new name of another type is left alone, and the old column keeps receivi
   assert.equal(Object.hasOwn(written, '안전 마진'), false);
 });
 
+test('역 도보(분) is added only if missing, read from the row and never written', async () => {
+  const { 순번, 관심 } = OTHERS;
+  const others = { ...NEW, ...CONFIDENCE_PROP, 순번, 관심 };
+  const missing = schemaFake(others);
+  await realStore(missing).init();
+  assert.deepEqual(schemaPatches(missing), [{ '역 도보(분)': { number: { format: 'number' } } }]);
+
+  const present = schemaFake({ ...others, ...WALK });
+  await realStore(present).init();
+  assert.deepEqual(schemaPatches(present), []);
+
+  // 다른 타입이면 건드리지 않고 빈 값으로 본다.
+  const conflict = schemaFake({ ...others, '역 도보(분)': { type: 'rich_text', rich_text: {} } });
+  await realStore(conflict).init();
+  assert.deepEqual(schemaPatches(conflict), []);
+  const row = (property) => parseExistingPage({ id: 'p', properties: { '고유 키': { rich_text: [{ plain_text: 'k' }] }, '역 도보(분)': property } }).walkMinutes;
+  assert.equal(row({ type: 'rich_text', rich_text: [{ plain_text: '7' }] }), null);
+  assert.equal(row({ type: 'number', number: 7 }), 7);
+  assert.equal(row({ type: 'number', number: 0 }), 0);
+  assert.equal(row({ type: 'number', number: null }), null);
+  assert.equal(row({ type: 'number', number: -1 }), null);
+  assert.equal(row(undefined), null);
+
+  const created = schemaFake({}, { children: [] });
+  await realStore(created).init();
+  assert.deepEqual(created.calls.find((call) => call.path === '/databases').body.properties['역 도보(분)'], { number: { format: 'number' } });
+
+  const props = buildProperties(notice(), { ...evaluation, walkMinutes: 7 }, THU);
+  assert.equal(Object.hasOwn(props, '역 도보(분)'), false);
+
+  const failed = schemaFake(others, {
+    intercept: (call) => (call.method === 'PATCH' && call.path === '/databases/db' ? new Response('', { status: 403 }) : null),
+  });
+  const store = realStore(failed);
+  await store.init();
+  assert.deepEqual(store.schemaIssues(), ['notion_property_add_failed']);
+});
+
 test('시세 신뢰도 is added only if missing, and another type is left alone', async () => {
   const missing = schemaFake({ ...NEW, ...OTHERS });
   await realStore(missing).init();
@@ -854,16 +834,18 @@ const aptRow = (extra = {}) => ({
   ...extra,
 });
 
-function worldFetch({ rows = [aptRow()], kakao, presale, trades = [tradeTags({ name: '래미안비밀', jibun: '100', amount: '168,000' })] } = {}) {
-  const calls = { kakao: [], presale: [], molit: [] };
+function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tradeTags({ name: '래미안비밀', jibun: '100', amount: '168,000' })] } = {}) {
+  const calls = { kakao: [], presale: [], molit: [], apt: [] };
   const fetch = async (url) => {
     const text = String(url);
     const parsed = new URL(text);
-    if (text.includes('dapi.kakao.com')) {
-      calls.kakao.push(text);
-      if (kakao) return kakao(parsed);
-      if (parsed.pathname.endsWith('/category.json')) return kakaoResponse([{ distance: parsed.searchParams.get('x') === '127' ? '900' : '200', x: '127', y: '37.5' }]);
-      return kakaoResponse([{ x: parsed.searchParams.get('query').endsWith('100') ? '127.002' : '127', y: '37.5' }]);
+    if (text.includes('dapi.kakao.com')) calls.kakao.push(text);
+    if (text.includes('AptListService4') || text.includes('AptBasisInfoServiceV5')) {
+      calls.apt.push(text);
+      if (aptHandler) return aptHandler(parsed);
+      return text.includes('AptListService4')
+        ? Response.json(listBody([listItem('래미안비밀')]))
+        : Response.json(detailBody({ kaptCode: 'A1', subwayLine: '2호선', subwayStation: '역삼', kaptdWtimesub: '5분이내' }));
     }
     if (text.includes('RTMSDataSvcSilvTrade')) {
       calls.presale.push(text);
@@ -917,7 +899,6 @@ function harness({ store = fakeStore(), fetch, env = {}, argv } = {}) {
       fetch,
       store,
       accessToken: 'token',
-      config: { ...config, market: { ...config.market, location: { ...location, minIntervalMs: 0 } } },
       sleep: noSleep,
       now: () => new Date(THU_NOW),
       log: (line) => logs.push(line),
@@ -931,80 +912,82 @@ function harness({ store = fakeStore(), fetch, env = {}, argv } = {}) {
 const marketLine = (h) => h.logs.find((line) => line.startsWith('market '));
 const errorMail = (h) => h.mails.find((mail) => mail.subject.includes('배치 오류'));
 
-test('a normal run looks up locations, stores the margin and keeps secrets and details out of the logs', async () => {
+const withWalk = (walkMinutes) => new Map([['7-7', { id: 'x', key: '7-7', lotto: null, urgentDate: null, end: THU, walkMinutes }]]);
+
+test('a normal run reads the manual value, looks up comparables, stores the margin and keeps details out of the logs', async () => {
   const world = worldFetch();
-  const h = harness({ fetch: world.fetch, env: { GITHUB_ACTIONS: 'true' } });
+  const h = harness({ store: fakeStore(withWalk(15)), fetch: world.fetch, env: { GITHUB_ACTIONS: 'true' } });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const [{ evaluation: value, properties }] = h.store.state.upserts;
-  // 비교 단지 168000 / 84 = 2000, ÷ (1.06 × 1.05) × 84
-  assert.equal(value.estimate, 150943);
+  // 비교 단지 168000 / 84 = 2000, × 1.02 / (1.06 × 1.05) × 84
+  assert.equal(value.estimate, 153962);
   assert.equal(value.status, STATUS.LOTTO);
   assert.equal(properties['안전 마진'].number, value.margin);
   assert.equal(properties['시세 신뢰도'].select.name, value.confidence);
-  assert.ok(properties['판별 근거'].rich_text[0].text.content.includes('래미안비밀'));
-  // 주소 2회, 역 2회
-  assert.equal(world.calls.kakao.length, 4);
-  assert.ok(h.logs.includes('market location_calls=4 location_fallback=0 confidence_high=0 confidence_mid=0 confidence_low=1 soft=none'));
+  const reason = properties['판별 근거'].rich_text[0].text.content;
+  assert.ok(reason.includes('래미안비밀(5분이내'));
+  assert.ok(reason.includes('역 도보 15분(입력)'));
+  assert.equal(Object.hasOwn(properties, '역 도보(분)'), false);
+  // 목록 1회, 상세 1회
+  assert.equal(world.calls.apt.length, 2);
+  assert.ok(h.logs.includes('market apt_calls=2 station_used=1 station_no_input=0 station_no_data=0 confidence_high=0 confidence_mid=0 confidence_low=1 soft=none'));
+  assert.ok(h.logs.includes('apt_tags listRows=1 listNoCode=0 listNoDong=0 details=1 noItem=0 noField=0 emptyWalk=0 badWalk=0'));
   assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=5 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=5')));
-  assert.ok(h.written.includes(`::add-mask::${KAKAO_SECRET}`));
   assert.ok(h.written.includes(`::add-mask::${DATA_SECRET}`));
 
-  const output = JSON.stringify([h.logs, h.mails]);
-  for (const secret of [KAKAO_SECRET, DATA_SECRET, 'dapi.kakao.com', '비밀공고단지', '래미안비밀', '역삼동', '7-7']) {
+  for (const secret of [KAKAO_SECRET, DATA_SECRET, 'apis.data.go.kr', '비밀공고단지', '래미안비밀', '역삼동', '7-7', 'A1']) {
     assert.ok(!h.logs.join('\n').includes(secret), secret);
   }
-  assert.ok(!output.includes(KAKAO_SECRET));
-  assert.ok(!output.includes(DATA_SECRET));
-
-  // Notion에 쓰는 값에 좌표와 역 거리, 카카오 응답이 없다.
-  const stored = JSON.stringify(properties);
-  for (const forbidden of ['127.002', '37.5', '900', 'documents', 'category']) assert.ok(!stored.includes(forbidden), forbidden);
+  assert.ok(!JSON.stringify(h.mails).includes(DATA_SECRET));
 });
 
-test('a Kakao 429 stops location calls, mails its kind once and the job still succeeds at low confidence', async () => {
-  const rows = [aptRow(), aptRow({ HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 강남구 역삼동 2' })];
-  const world = worldFetch({ rows, kakao: () => new Response(`denied ${KAKAO_SECRET}`, { status: 429 }) });
-  const h = harness({ fetch: world.fetch });
-  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
-  assert.equal(world.calls.kakao.length, 1);
-  assert.ok(h.store.state.upserts.every((item) => item.evaluation.confidence === '하' && item.evaluation.estimate > 0));
-  assert.ok(errorMail(h).text.includes('kakao_local_http_429 x1'));
-  assert.ok(!JSON.stringify([h.logs, h.mails]).includes(KAKAO_SECRET));
-});
-
-test('a missing Kakao key still estimates at low confidence', async () => {
+test('the batch no longer uses the Kakao Local API or its key', async () => {
   const world = worldFetch();
-  const h = harness({ fetch: world.fetch, env: { KAKAO_REST_KEY: '' } });
+  const h = harness({ store: fakeStore(withWalk(15)), fetch: world.fetch, env: { GITHUB_ACTIONS: 'true' } });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
-  assert.equal(world.calls.kakao.length, 0);
-  assert.equal(h.store.state.upserts[0].evaluation.confidence, '하');
-  assert.ok(errorMail(h).text.includes('kakao_local_key_missing x1'));
+  assert.deepEqual(world.calls.kakao, []);
+  assert.ok(!h.written.some((line) => line.includes(KAKAO_SECRET)));
+  assert.equal(Object.hasOwn(config.market, 'location'), false);
+  const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.ok(!main.includes('KAKAO_REST_KEY'));
 });
 
-test('location can be switched off in config with no calls and no error', async () => {
+test('a row without the manual value makes no apartment calls and caps confidence', async () => {
   const world = worldFetch();
-  const h = harness({ fetch: world.fetch });
-  h.deps.config = { ...config, market: { ...config.market, location: { ...location, enabled: false } } };
+  const h = harness({ store: fakeStore(withWalk(null)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
-  assert.equal(world.calls.kakao.length, 0);
-  assert.equal(h.store.state.upserts[0].evaluation.confidence, '하');
+  assert.equal(world.calls.apt.length, 0);
+  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 confidence_high=0 confidence_mid=0 confidence_low=1 soft=none'));
+  // 2000 / 1.05 × 84. 역 보정 없이 브랜드만 보정한다.
+  assert.equal(h.store.state.upserts[0].evaluation.estimate, 160000);
+});
+
+test('apartment API failures in a full run stay out of the error mail and stop after one attempt cycle', async () => {
+  for (const [response, kind, attempts] of [
+    [() => new Response('Forbidden', { status: 403 }), 'aptlist_http_403', 1],
+    [() => new Response('', { status: 503 }), 'aptlist_http_503', 2],
+    [() => new Response('<OpenAPI_ServiceResponse/>'), 'aptlist_parse', 1],
+  ]) {
+    const rows = [aptRow(), aptRow({ HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 강남구 역삼동 2' })];
+    const world = worldFetch({ rows, apt: response });
+    const stored = new Map([...withWalk(15), ['8-7', { id: 'y', key: '8-7', lotto: null, urgentDate: null, end: THU, walkMinutes: 15 }]]);
+    const h = harness({ store: fakeStore(stored), fetch: world.fetch });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    assert.equal(errorMail(h), undefined, kind);
+    assert.equal(world.calls.apt.length, attempts, kind);
+    assert.ok(marketLine(h).includes('station_no_data=2'), kind);
+    assert.ok(marketLine(h).endsWith(`soft=${kind}:1`), kind);
+    assert.ok(h.store.state.upserts.every((item) => item.evaluation.estimate > 0));
+  }
+});
+
+test('a name mismatch in a full run is soft and counted', async () => {
+  const world = worldFetch({ apt: () => Response.json(listBody([listItem('전혀다른이름')])) });
+  const h = harness({ store: fakeStore(withWalk(15)), fetch: world.fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(errorMail(h), undefined);
-});
-
-test('a remaining Kakao 5xx in a full run is log-only, while 401 reaches the error mail', async () => {
-  const server = worldFetch({ kakao: () => new Response('', { status: 503 }) });
-  const soft = harness({ fetch: server.fetch });
-  assert.equal(await run({ env: soft.env, deps: soft.deps }), 0);
-  assert.equal(server.calls.kakao.length, 2);
-  assert.equal(errorMail(soft), undefined);
-  assert.ok(marketLine(soft).endsWith('soft=kakao_local_http_503:1'));
-  assert.equal(soft.store.state.upserts[0].evaluation.confidence, '하');
-
-  const denied = worldFetch({ kakao: () => new Response('', { status: 401 }) });
-  const hard = harness({ fetch: denied.fetch });
-  assert.equal(await run({ env: hard.env, deps: hard.deps }), 0);
-  assert.equal(denied.calls.kakao.length, 1);
-  assert.ok(errorMail(hard).text.includes('kakao_local_http_401 x1'));
+  assert.ok(marketLine(h).endsWith('soft=apt_name_unmatched:1'));
+  assert.equal(world.calls.apt.length, 1);
 });
 
 const summaryLine = (h) => h.logs.find((line) => line.startsWith('collected='));
@@ -1072,7 +1055,7 @@ test('a restricted notice clears stored values through the real store and sends 
   assert.deepEqual(patch.body.properties['마진율'], { number: null });
   assert.deepEqual(patch.body.properties['시세 신뢰도'], { select: null });
   assert.equal(h.kakao.length, 0);
-  assert.equal(base.calls.kakao.length, 0);
+  assert.equal(base.calls.apt.length, 0);
   assert.equal(base.calls.molit.length, 0);
 });
 
@@ -1113,19 +1096,25 @@ test('rename failure in a full run keeps upserts and alerts going and reaches th
   assert.ok(errorMail(h).text.includes('notion_rename_failed x2'));
 });
 
-test('dry-run stays write-free while reading market data', async () => {
+test('dry-run stays write-free while reading the manual value and market data', async () => {
   const fake = schemaFake({ ...OLD, ...OTHERS });
   const base = worldFetch();
+  const stored = { id: 'stored', properties: { '고유 키': { rich_text: [{ plain_text: '7-7' }] }, '접수 종료일': { date: { start: THU } }, '역 도보(분)': { number: 15 } } };
   const h = harness({
     store: null,
-    fetch: async (url, init) => (String(url).includes('api.notion.com') ? fake.fetch(url, init) : base.fetch(url)),
+    fetch: async (url, init = {}) => {
+      if (!String(url).includes('api.notion.com')) return base.fetch(url);
+      if (String(url).endsWith('/query')) return Response.json({ has_more: false, results: [stored] });
+      return fake.fetch(url, init);
+    },
   });
   h.deps.store = undefined;
   assert.equal(await run({ argv: ['--dry-run'], env: h.env, deps: h.deps }), 0);
   assert.deepEqual(fake.calls.filter((call) => call.method === 'PATCH' || (call.method === 'POST' && !call.path.endsWith('/query'))), []);
   assert.equal(h.mails.length, 0);
   assert.equal(h.kakao.length, 0);
-  assert.equal(base.calls.kakao.length, 4);
+  assert.equal(base.calls.apt.length, 2);
+  assert.ok(marketLine(h).includes('station_used=1'));
 });
 
 test('the molit client reports tag tallies without names', async () => {
@@ -1134,16 +1123,19 @@ test('the molit client reports tag tallies without names', async () => {
   assert.deepEqual(client.stats(), { rows: 2, noFloor: 1, noDate: 1, noDealing: 1, noJibun: 1, noSeq: 2, noOwnership: 0 });
 });
 
-test('the workflow passes the Kakao key to the batch step', () => {
+test('the workflow keeps the Kakao key only for the token refresh step', () => {
   const workflow = readFileSync(new URL('../../../.github/workflows/chungyak-alert.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const batch = workflow.slice(workflow.indexOf('- name: Run batch'), workflow.indexOf('- name: Remove token files'));
-  assert.ok(batch.includes('KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}'));
+  assert.ok(!batch.includes('KAKAO_REST_KEY'));
+  const refresh = workflow.slice(workflow.indexOf('- name: Refresh Kakao token'), workflow.indexOf('- name: Save rotated Kakao token'));
+  assert.ok(refresh.includes('KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}'));
 });
 
 test('config has every coefficient and SETUP says they are judgement starting values', () => {
   const setup = readFileSync(new URL('../docs/SETUP.md', import.meta.url), 'utf8');
   assert.ok(setup.includes('판단이 들어간 시작값'));
-  assert.ok(config.market.location.maxCallsPerRun > 0);
-  assert.equal(config.market.comparables.maxDistanceM, 2000);
+  assert.ok(config.market.aptInfo.maxCallsPerRun > 0);
+  assert.ok(config.market.comparables.minStationShare > 0);
+  assert.ok(config.market.adjustment.station.bands.every((band) => band.maxMinutes > 0));
   assert.equal(config.market.optionCostManwon, 1500);
 });

@@ -45,10 +45,9 @@
       "minDistinctiveLength": 3
     },
     "comparables": {
-      "maxDistanceM": 2000,
       "maxComparables": 8,
       "minComplexSamples": 2,
-      "distanceDecayM": 1000,
+      "minStationShare": 0.6,
       "maxLookupsPerNotice": 12
     },
     "adjustment": {
@@ -56,10 +55,10 @@
       "maxFactor": 1.35,
       "station": {
         "bands": [
-          { "maxM": 300, "factor": 1.06 },
-          { "maxM": 500, "factor": 1.04 },
-          { "maxM": 800, "factor": 1.02 },
-          { "maxM": 1200, "factor": 1.0 }
+          { "maxMinutes": 5, "factor": 1.06 },
+          { "maxMinutes": 10, "factor": 1.04 },
+          { "maxMinutes": 15, "factor": 1.02 },
+          { "maxMinutes": 20, "factor": 1.0 }
         ],
         "otherFactor": 0.97
       },
@@ -83,13 +82,10 @@
       "high": { "samples": 20, "comparables": 4, "spread": 0.15, "looError": 0.1 },
       "mid": { "samples": 5, "comparables": 2, "spread": 0.3, "looError": 0.2 }
     },
-    "location": {
-      "enabled": true,
-      "maxCallsPerRun": 800,
-      "budgetMs": 180000,
-      "minIntervalMs": 100,
-      "timeoutMs": 5000,
-      "stationRadiusM": 1300
+    "aptInfo": {
+      "maxCallsPerRun": 300,
+      "budgetMs": 120000,
+      "timeoutMs": 10000
     },
     "presale": {
       "budgetMs": 120000

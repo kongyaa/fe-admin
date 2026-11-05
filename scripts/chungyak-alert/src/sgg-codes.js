@@ -50,7 +50,7 @@ export function resolveAddress(address, fallbackRegion = null) {
   const region = sido ?? fallbackRegion;
   const rest = sido ? tokens.slice(1) : tokens;
   const table = CODES[region];
-  if (!table || rest.length === 0) return { region, code: null, umd: null, areaText: null };
+  if (!table || rest.length === 0) return { region, code: null, umd: null };
 
   const twoTokens = `${rest[0]} ${rest[1]}`;
   let code = null;
@@ -64,7 +64,5 @@ export function resolveAddress(address, fallbackRegion = null) {
     used = 1;
   }
   const umd = code ? rest.slice(used).find((token) => /^[가-힣0-9]+(동|읍|면|가)$/.test(token)) ?? null : null;
-  // 지역이 같은 비교 단지의 주소 검색어 앞부분이다.
-  const areaText = code ? [...(sido ? [tokens[0]] : [region]), ...rest.slice(0, used)].join(' ') : null;
-  return { region, code, umd, areaText };
+  return { region, code, umd };
 }

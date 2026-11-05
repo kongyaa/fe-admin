@@ -23,6 +23,7 @@ const P = {
   margin: '안전 마진',
   marginRate: '마진율',
   confidence: '시세 신뢰도',
+  walkMinutes: '역 도보(분)',
   lotto: '로또 여부',
   reason: '판별 근거',
   link: '공고 링크',
@@ -57,6 +58,7 @@ const DB_SCHEMA = {
   [P.margin]: { number: { format: 'number' } },
   [P.marginRate]: { number: { format: 'percent' } },
   [P.confidence]: { select: { options: [{ name: '상' }, { name: '중' }, { name: '하' }] } },
+  [P.walkMinutes]: { number: { format: 'number' } },
   [P.lotto]: {
     select: {
       options: [{ name: '로또' }, { name: '아님' }, { name: '판별 불가' }, { name: '대상 외' }],
@@ -77,7 +79,7 @@ const numberProp = (value) => (Number.isFinite(value) ? { number: value } : unde
 const selectProp = (value) => (value ? { select: { name: String(value).replace(/,/g, ' ').slice(0, 100) } } : undefined);
 const textProp = (value) => (value ? { rich_text: text(value) } : undefined);
 
-// 값이 없는 속성은 보내지 않아 기존 값을 지우지 않는다. 긴급 알림 발송일과 사용자가 체크하는 관심은 여기서 쓰지 않는다.
+// 값이 없는 속성은 보내지 않아 기존 값을 지우지 않는다. 긴급 알림 발송일과 사용자가 입력하는 관심, 역 도보(분)은 여기서 쓰지 않는다.
 // 제한 유형은 clearMarket으로 저장된 추정 값을 명시적으로 지운다.
 export function buildProperties(notice, evaluation, today, columns = DEFAULT_COLUMNS) {
   const url = safeHttpUrl(notice.url);
@@ -110,6 +112,8 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
 
 export function parseExistingPage(page) {
   const props = page.properties ?? {};
+  // 같은 이름의 다른 타입 속성은 빈 값으로 본다.
+  const walk = props[P.walkMinutes]?.number;
   return {
     id: page.id,
     key: (props[P.key]?.rich_text ?? []).map((part) => part.plain_text).join(''),
@@ -122,6 +126,7 @@ export function parseExistingPage(page) {
     interest: props[P.interest]?.checkbox === true,
     name: (props[P.name]?.title ?? []).map((part) => part.plain_text).join(''),
     link: props[P.link]?.url ?? null,
+    walkMinutes: Number.isFinite(walk) && walk >= 0 ? walk : null,
   };
 }
 
@@ -263,6 +268,12 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     return added ? P.confidence : null;
   }
 
+  // 사용자가 입력하는 열이다. 없을 때만 추가하고, 같은 이름의 다른 타입 속성은 건드리지 않는다.
+  async function ensureWalkProperty(properties) {
+    if (properties[P.walkMinutes]) return;
+    await patchSchema({ [P.walkMinutes]: DB_SCHEMA[P.walkMinutes] }, 'notion_property_add_failed');
+  }
+
   // 스키마는 한 번만 읽는다. 읽기나 변경이 실패해도 수집과 알림을 막지 않는다.
   async function ensureProperties() {
     let properties;
@@ -279,6 +290,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       marginRate: await ensureNumberColumn(properties, P.marginRate, LEGACY.marginRate),
       confidence: await ensureConfidenceColumn(properties),
     };
+    await ensureWalkProperty(properties);
     await ensureSequenceProperty(properties);
     await ensureInterestProperty(properties);
   }

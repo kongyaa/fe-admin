@@ -4,7 +4,6 @@ import { median } from './util.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAYS_PER_MONTH = 30.4375;
-const EARTH_RADIUS_M = 6371000;
 // 부동소수 누적 합이 경계값 바로 아래에 머무는 경우를 막는다.
 const EPSILON = 1e-9;
 
@@ -47,14 +46,6 @@ export function spreadOf(values) {
   return (quantile(values, 0.75) - quantile(values, 0.25)) / middle;
 }
 
-export function haversineMeters(a, b) {
-  const rad = (degree) => (degree * Math.PI) / 180;
-  const dLat = rad(b.y - a.y);
-  const dLon = rad(b.x - a.x);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.y)) * Math.cos(rad(b.y)) * Math.sin(dLon / 2) ** 2;
-  return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
-}
-
 // 1주택 유상취득, 감면 없음을 가정한다. 6억 원과 9억 원 사이는 세율이 직선으로 오른다.
 export function acquisitionTax(price, tax) {
   let rate;
@@ -67,9 +58,20 @@ export function acquisitionTax(price, tax) {
   return Math.round(price * rate * (1 + tax.educationRatio));
 }
 
-export function stationFactor(distanceM, station) {
-  if (!Number.isFinite(distanceM)) return station.otherFactor;
-  return station.bands.find((band) => distanceM <= band.maxM)?.factor ?? station.otherFactor;
+export function stationFactor(minutes, station) {
+  if (!Number.isFinite(minutes)) return station.otherFactor;
+  return station.bands.find((band) => minutes <= band.maxMinutes)?.factor ?? station.otherFactor;
+}
+
+// 공동주택 상세 정보의 지하철역 거리를 분으로 바꾼다. 구간 값은 윗값으로, `20분초과`는 21로 본다. 읽지 못하면 null이다.
+export function parseWalkMinutes(value) {
+  const text = compact(value);
+  const range = /^\d+~(\d+)분?(이내|이하|미만)?$/.exec(text);
+  if (range) return Number(range[1]);
+  const within = /^(\d+)분?(이내|이하|미만)?$/.exec(text);
+  if (within) return Number(within[1]);
+  const over = /^(\d+)분?초과$/.exec(text);
+  return over ? Number(over[1]) + 1 : null;
 }
 
 const tierOf = (text, tiers) => {
@@ -230,18 +232,19 @@ function candidateTotals(model, market, unitMiddle, unitLow) {
 
 const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : CONFIDENCE.LOW);
 
-export function comparableConfidence({ samples, comparables, spread, looError, locationUsed, presaleOk, keywordLocated = false }, confidence) {
+// 역 보정 상태. used: 적용, noInput: 공고 단지 입력 없음, noData: 입력은 있지만 비교 단지 값이 부족함
+export const STATION = { USED: 'used', NO_INPUT: 'noInput', NO_DATA: 'noData' };
+
+export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
-  if (locationUsed) {
-    if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
-      level = CONFIDENCE.HIGH;
-    } else if (samples >= mid.samples && comparables >= mid.comparables && spread <= mid.spread && (looError === null || looError <= mid.looError)) {
-      level = CONFIDENCE.MID;
-    }
+  if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
+    level = CONFIDENCE.HIGH;
+  } else if (samples >= mid.samples && comparables >= mid.comparables && spread <= mid.spread && (looError === null || looError <= mid.looError)) {
+    level = CONFIDENCE.MID;
   }
-  // 단지명 검색으로 찾은 위치는 주소 검색보다 믿기 어렵다.
-  if (keywordLocated && level === CONFIDENCE.HIGH) level = CONFIDENCE.MID;
+  if (stationState === STATION.NO_INPUT && level === CONFIDENCE.HIGH) level = CONFIDENCE.MID;
+  if (stationState === STATION.NO_DATA) level = lowerOneLevel(level);
   return presaleOk ? level : lowerOneLevel(level);
 }
 
@@ -262,10 +265,12 @@ function estimateFromSameComplex(model, rows, { market, presaleOk }, context) {
   };
 }
 
-// 단지의 조건 계수. subjectAge는 건축년도를 모르는 단지가 공고 단지와 같은 연식으로 계산되게 한다.
-function conditionFactors(complex, adjustment, { useStation, subjectAge }) {
+const hasWalk = (complex) => Number.isFinite(complex.walkMinutes);
+
+// 단지의 조건 계수. 값을 모르는 항목은 공고 단지와 같게 두어 그 항목의 보정이 생기지 않게 한다.
+function conditionFactors(complex, adjustment, { useStation, subjectStation, subjectAge }) {
   return {
-    station: useStation ? stationFactor(complex.stationM, adjustment.station) : 1,
+    station: useStation && hasWalk(complex) ? stationFactor(complex.walkMinutes, adjustment.station) : subjectStation,
     brand: adjustment.brand.factors[complex.brandTier] ?? adjustment.brand.factors.other,
     age: ageFactor(complex.ageYears ?? subjectAge, adjustment.age),
   };
@@ -291,17 +296,6 @@ export function leaveOneOutError(complexes, adjustment, options) {
   return median(errors);
 }
 
-// 가까운 순으로 고른다. 비교 범위 안 표본이 부족하면 null이고, 호출한 쪽이 위치 없는 범위로 넓힌다.
-function nearbyComparables(complexes, locations, { market, lotto }) {
-  const located = complexes
-    .map((complex) => ({ ...complex, ...locations.get(complex.key) }))
-    .filter((complex) => complex.distanceM <= market.comparables.maxDistanceM)
-    .sort((a, b) => a.distanceM - b.distanceM)
-    .slice(0, market.comparables.maxComparables);
-  const samples = located.reduce((sum, complex) => sum + complex.samples, 0);
-  return samples >= lotto.minSamples ? located : null;
-}
-
 function scopedComparables(complexes, subject, { market, lotto }) {
   const total = (list) => list.reduce((sum, complex) => sum + complex.samples, 0);
   const sameDong = subject.umd ? complexes.filter((complex) => complex.umd === subject.umd) : [];
@@ -322,14 +316,17 @@ function scopedComparables(complexes, subject, { market, lotto }) {
 
 function estimateFromComparables(model, rows, subject, inputs, context) {
   const { market } = context;
-  const complexes = groupComplexes(rows, model.area, context);
-  const near = inputs.locationOk ? nearbyComparables(complexes, inputs.locations, context) : null;
-  const scoped = near ? null : scopedComparables(complexes, subject, context);
-  if (!near && !scoped) return null;
-  const picked = near ?? scoped.picked;
-  const useStation = Boolean(near);
-  const { adjustment, comparables: comparableConfig } = market;
-  const options = { useStation, subjectAge: subject.ageYears };
+  const scoped = scopedComparables(groupComplexes(rows, model.area, context), subject, context);
+  if (!scoped) return null;
+  const picked = scoped.picked.map((complex) => ({ ...complex, ...inputs.stations.get(complex.key) }));
+  const { adjustment } = market;
+  const coverage = picked.filter(hasWalk).length / picked.length;
+  // 값이 있는 단지만 보정하고 나머지는 그대로 두면 섞이므로, 값이 적으면 전체에서 역 보정을 뺀다.
+  let stationState = STATION.USED;
+  if (!hasWalk(subject)) stationState = STATION.NO_INPUT;
+  else if (coverage < market.comparables.minStationShare) stationState = STATION.NO_DATA;
+  const useStation = stationState === STATION.USED;
+  const options = { useStation, subjectStation: useStation ? stationFactor(subject.walkMinutes, adjustment.station) : 1, subjectAge: subject.ageYears };
   const subjectFactors = conditionFactors(subject, adjustment, options);
   const adjusted = picked.map((complex) => {
     const factors = conditionFactors(complex, adjustment, options);
@@ -337,46 +334,65 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
     return {
       ...complex,
       adjustedUnit: complex.unit * ratio,
-      // 근거에 쓰는 값이다. 카카오 응답에서 나온 역 계수는 넣지 않는다.
       brandRatio: subjectFactors.brand / factors.brand,
       ageRatio: subjectFactors.age / factors.age,
     };
   });
-  const weighted = adjusted.map((complex) => ({
-    value: complex.adjustedUnit,
-    weight: useStation ? 1 / (1 + complex.distanceM / comparableConfig.distanceDecayM) : 1,
-  }));
+  const values = adjusted.map((complex) => complex.adjustedUnit);
+  const equal = values.map((value) => ({ value, weight: 1 }));
   const samples = adjusted.reduce((sum, complex) => sum + complex.samples, 0);
-  const totals = candidateTotals(model, market, weightedQuantile(weighted, 0.5), weightedQuantile(weighted, 0.25));
-  const spread = spreadOf(adjusted.map((complex) => complex.adjustedUnit));
-  const looError = leaveOneOutError(picked, adjustment, options);
+  const totals = candidateTotals(model, market, weightedQuantile(equal, 0.5), weightedQuantile(equal, 0.25));
   return {
     ...totals,
     confidence: comparableConfidence({
       samples,
       comparables: adjusted.length,
-      spread,
-      looError,
-      locationUsed: useStation,
+      spread: spreadOf(values),
+      looError: leaveOneOutError(picked, adjustment, options),
+      stationState,
       presaleOk: inputs.presaleOk,
-      keywordLocated: inputs.keywordLocated,
     }, market.confidence),
     basis: {
       kind: 'comparables',
-      scope: near ? null : scoped.scope,
-      stationUsed: useStation,
+      scope: scoped.scope,
+      stationState,
+      walkMinutes: subject.walkMinutes,
       samples,
       comparables: adjusted.map((complex) => ({
         name: complex.aptName,
         samples: complex.samples,
         brandRatio: complex.brandRatio,
         ageRatio: complex.ageRatio,
+        walkBand: useStation ? complex.walkBand ?? null : null,
       })),
     },
   };
 }
 
-// 위치를 조회할 단지 목록. 같은 단지 거래로 값이 정해지는 주택형은 조회가 필요 없다.
+// 공동주택 목록에서 비교 단지를 찾는다. 같은 법정동은 이름이 같거나 고유한 이름을 포함할 때,
+// 시군구 전체는 이름이 같을 때만 받는다. 브랜드만 있는 이름은 받지 않고, 후보가 여럿이면 고르지 않는다.
+export function matchApartment(complex, directory, market) {
+  const name = normalizeComplexName(complex.aptName);
+  const brand = market.adjustment.brand;
+  if (!name || distinctiveLength(name, brand) === 0) return null;
+  const target = compact(complex.umd);
+  const inDong = directory.filter((entry) => {
+    const dong = compact(entry.dong);
+    return Boolean(target) && (dong === target || compact(entry.ri) === target || `${dong}${compact(entry.ri)}` === target);
+  });
+  const named = (list, allowSubstring) => list.filter((entry) => sameName(complex.aptName, entry.name, {
+    allowSubstring,
+    minLength: market.sameComplex.minNameLength,
+    minDistinctive: market.sameComplex.minDistinctiveLength,
+    brand,
+  }));
+  const exactInDong = named(inDong, false);
+  const hits = exactInDong.length > 0 ? exactInDong : named(inDong, true);
+  const found = hits.length > 0 ? hits : named(directory, false);
+  return found.length === 1 ? found[0] : null;
+}
+
+// 역 정보를 조회할 단지 목록. 실제 비교에 쓸 단지만 고르고, 같은 단지 거래로 값이 정해지는 주택형은 뺀다.
 export function lookupCandidates({ models, rows, subject, lotto, market, today }) {
   const context = { market, lotto, today };
   const seen = new Map();
@@ -384,30 +400,18 @@ export function lookupCandidates({ models, rows, subject, lotto, market, today }
     if (!(model.area > 0) || !(model.price > 0)) continue;
     const same = sameComplexRows(rows, subject, model.area, context);
     if (unitsOf(same, context).length >= market.sameComplex.minSamples) continue;
-    for (const complex of groupComplexes(rows, model.area, context)) {
+    const scoped = scopedComparables(groupComplexes(rows, model.area, context), subject, context);
+    for (const complex of scoped?.picked ?? []) {
       const known = seen.get(complex.key);
       if (!known || complex.samples > known.samples) seen.set(complex.key, complex);
     }
   }
   return [...seen.values()]
-    .filter((complex) => complex.jibun)
-    .sort((a, b) => Number(b.umd === subject.umd) - Number(a.umd === subject.umd) || b.samples - a.samples)
+    .sort((a, b) => b.samples - a.samples)
     .slice(0, market.comparables.maxLookupsPerNotice);
 }
 
-// 역 거리를 조회할 단지. 주택형별로 실제로 쓰일 가까운 단지만 고른다.
-export function stationLookupKeys({ models, rows, locations, lotto, market, today }) {
-  const context = { market, lotto, today };
-  const keys = new Set();
-  for (const model of models) {
-    if (!(model.area > 0) || !(model.price > 0)) continue;
-    const near = nearbyComparables(groupComplexes(rows, model.area, context), locations, context);
-    for (const complex of near ?? []) keys.add(complex.key);
-  }
-  return keys;
-}
-
-export function buildSubject({ name, builder, umd, jibun, market }) {
+export function buildSubject({ name, builder, umd, jibun, walkMinutes = null, market }) {
   return {
     name,
     builder,
@@ -416,16 +420,17 @@ export function buildSubject({ name, builder, umd, jibun, market }) {
     brandTier: brandTier({ name, builder }, market.adjustment.brand),
     // 공고 단지는 입주 전이므로 신축으로 본다.
     ageYears: 0,
-    stationM: null,
+    // 사용자가 Notion에 입력한 값이다.
+    walkMinutes,
   };
 }
 
 export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon || candidate.marginRate >= lotto.minMarginRate;
 
 // 기준을 넘는 주택형 중 마진이 가장 큰 것을, 없으면 전체에서 마진이 가장 큰 것을 돌려준다.
-export function estimateBestMargin({ models, rows, subject, locations = new Map(), locationOk = false, presaleOk = true, keywordLocated = false, lotto, market, today }) {
+export function estimateBestMargin({ models, rows, subject, stations = new Map(), presaleOk = true, lotto, market, today }) {
   const context = { market, lotto, today };
-  const inputs = { locations, locationOk, presaleOk, keywordLocated };
+  const inputs = { stations, presaleOk };
   let best = null;
   let bestQualifying = null;
   for (const model of models) {
