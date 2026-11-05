@@ -9,7 +9,7 @@ import {
   restrictedType,
 } from './market-estimate.js';
 import { resolveAddress } from './sgg-codes.js';
-import { completeMonths, safeError } from './util.js';
+import { AppError, completeMonths, safeError } from './util.js';
 
 export const STATUS = {
   LOTTO: '로또',
@@ -43,7 +43,10 @@ function flagTrigger(notice, lotto) {
 
 function stationText(basis) {
   if (basis.stationState === STATION.USED) return `역 도보 ${basis.walkMinutes}분(입력)`;
-  if (basis.stationState === STATION.NO_DATA) return `역 도보 ${basis.walkMinutes}분(입력), 비교 단지 역 정보 부족으로 역 보정 없음`;
+  if (basis.stationState === STATION.NO_DATA) {
+    const why = basis.stationLookupFailed ? '역 정보 조회를 못 해' : '비교 단지 역 정보 부족으로';
+    return `역 도보 ${basis.walkMinutes}분(입력), ${why} 역 보정 없음`;
+  }
   return '역 도보 미입력, 역 보정 없음';
 }
 
@@ -74,11 +77,12 @@ function subjectJibun(address, umd) {
 }
 
 // 공고 단지 입력이 있을 때만 비교 단지의 역 정보를 조회한다. 조회 실패는 클라이언트가 한 번만 로그에 남긴다.
+// 코드 오류는 조회 실패로 숨기지 않고 호출한 쪽의 오류 처리로 올린다.
 async function resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft }) {
   const stations = new Map();
-  if (!aptInfo || !Number.isFinite(subject.walkMinutes)) return stations;
+  if (!aptInfo || !Number.isFinite(subject.walkMinutes)) return { stations, failed: false };
   const candidates = lookupCandidates({ models, rows, subject, lotto, market, today });
-  if (candidates.length === 0) return stations;
+  if (candidates.length === 0) return { stations, failed: false };
   try {
     const directory = await aptInfo.getDirectory(code);
     for (const complex of candidates) {
@@ -90,9 +94,10 @@ async function resolveStations({ aptInfo, code, subject, models, rows, lotto, ma
       const station = await aptInfo.getStation(apartment.code);
       if (station) stations.set(complex.key, station);
     }
-    return stations;
-  } catch {
-    return new Map();
+    return { stations, failed: false };
+  } catch (error) {
+    if (!(error instanceof AppError)) throw error;
+    return { stations: new Map(), failed: true };
   }
 }
 
@@ -161,12 +166,13 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
           walkMinutes,
           market,
         });
-        const stations = await resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft });
+        const lookup = await resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft });
         best = estimateBestMargin({
           models,
           rows,
           subject,
-          stations,
+          stations: lookup.stations,
+          stationLookupFailed: lookup.failed,
           presaleOk: presale.ok,
           lotto,
           market,

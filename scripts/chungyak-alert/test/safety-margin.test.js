@@ -7,6 +7,7 @@ import { buildKakaoText } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 import { normalizeDetail, ENDPOINTS } from '../src/sources/applyhome.js';
 import { createAptInfoClient } from '../src/sources/apt-info.js';
+import { AppError } from '../src/util.js';
 import { createMolitClient, createPresaleClient, fetchMonth, fetchPresaleMonth, parseMolitXml, parsePresaleXml } from '../src/sources/molit.js';
 
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
@@ -197,9 +198,9 @@ test('the apartment client uses the operations and parameters in the official sp
 });
 
 test('the apartment client reads wrapped envelopes, item lists and every page', async () => {
-  const wrapped = aptClient(() => Response.json({ response: listBody({ item: [listItem('가단지', 'A1'), listItem('나단지', 'A2')] }) }));
+  const wrapped = aptClient(() => Response.json({ response: listBody({ item: [listItem('가단지', 'A1'), listItem('나단지', 'A2')] }, 2) }));
   assert.equal((await wrapped.client.getDirectory('1')).length, 2);
-  const single = aptClient(() => Response.json({ response: listBody({ item: listItem('가단지') }) }));
+  const single = aptClient(() => Response.json({ response: listBody({ item: listItem('가단지') }, 1) }));
   assert.equal((await single.client.getDirectory('1')).length, 1);
 
   const pages = aptClient((url) => {
@@ -230,8 +231,92 @@ test('missing or unreadable station values are counted and treated as no value',
   const { client, soft } = aptClient((url) => Response.json(detailBody(items[url.searchParams.get('kaptCode')])));
   for (const code of ['A1', 'A2', 'A3', 'A4', 'A5']) assert.equal(await client.getStation(code), null, code);
   assert.deepEqual(await client.getStation('A6'), { walkMinutes: 21, walkBand: '20분초과' });
-  assert.deepEqual(client.tags(), { listRows: 0, listNoCode: 0, listNoDong: 0, details: 6, noItem: 1, noField: 1, emptyWalk: 2, badWalk: 1 });
+  assert.deepEqual(client.tags(), { listRows: 0, listNoCode: 0, listNoDong: 0, listNoTotal: 0, details: 6, noItem: 1, noData: 0, noField: 1, emptyWalk: 2, badWalk: 1 });
   assert.deepEqual(soft, []);
+});
+
+test('walk bands are counted without any complex details', async () => {
+  const values = { A1: '5~10분이내', A2: '5~10분이내', A3: ' 20분초과 ', A4: '역삼역 앞 비밀단지', A5: '' };
+  const { client } = aptClient((url) => {
+    const code = url.searchParams.get('kaptCode');
+    return Response.json(detailBody({ kaptCode: code, kaptName: `비밀${code}`, subwayStation: '비밀역', kaptdWtimesub: values[code] }));
+  });
+  assert.equal(client.bandCounts(), 'none');
+  for (const code of Object.keys(values)) await client.getStation(code);
+  // 읽지 못한 값은 그대로 남기지 않고 badWalk로만 센다.
+  assert.equal(client.bandCounts(), '5~10분이내:2,20분초과:1');
+  assert.equal(client.tags().badWalk, 1);
+});
+
+const noDataBody = { header: { resultCode: '03', resultMsg: 'NODATA_ERROR' }, body: {} };
+
+test('a no-data result is that complex or district only and does not stop the client', async () => {
+  const { client, calls, soft } = aptClient((url) => {
+    if (url.pathname.endsWith('/getSigunguAptList4')) {
+      return Response.json(url.searchParams.get('sigunguCode') === '99999' ? noDataBody : listBody([listItem('가단지')]));
+    }
+    const code = url.searchParams.get('kaptCode');
+    if (code === 'NONE') return Response.json(noDataBody);
+    if (code === 'EMPTY') return Response.json({ header: { resultCode: '00' }, body: {} });
+    return Response.json(detailBody({ kaptdWtimesub: '5분이내' }));
+  });
+  assert.deepEqual(await client.getDirectory('99999'), []);
+  assert.equal(await client.getStation('NONE'), null);
+  assert.equal(await client.getStation('EMPTY'), null);
+  assert.equal((await client.getDirectory('11680')).length, 1);
+  assert.equal((await client.getStation('A1')).walkMinutes, 5);
+  assert.equal(calls.length, 5);
+  assert.deepEqual(soft, []);
+  assert.equal(client.tags().noData, 2);
+  assert.equal(client.tags().noItem, 1);
+});
+
+test('a later notice still gets values after a no-data complex', async () => {
+  const soft = [];
+  const client = createAptInfoClient({
+    key: 'k',
+    limits: config.market.aptInfo,
+    sleep: noSleep,
+    onSoft: (kind) => soft.push(kind),
+    fetch: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith('/getSigunguAptList4')) return Response.json(listBody([listItem('역삼푸른숲', 'NONE'), listItem('역삼큰나무', 'A2')]));
+      return Response.json(parsed.searchParams.get('kaptCode') === 'NONE' ? noDataBody : detailBody({ kaptdWtimesub: '5분이내' }));
+    },
+  });
+  const first = await evaluate(apt(), { trades: saleRows(5, 1000, { aptName: '역삼푸른숲', jibun: '11' }), aptInfo: client, walkMinutes: 5 });
+  assert.equal(first.stationState, 'noData');
+  assert.ok(first.reason.includes('비교 단지 역 정보 부족으로'));
+  const second = await evaluate(apt({ address: '서울특별시 강남구 역삼동 2' }), { trades: saleRows(5, 1000, { aptName: '역삼큰나무', jibun: '12' }), aptInfo: client, walkMinutes: 5 });
+  assert.equal(second.stationState, 'used');
+  assert.deepEqual(soft, []);
+});
+
+test('list paging reads by received rows, handles a missing totalCount and stops at the page limit', async () => {
+  // 서버가 numOfRows를 줄여도 전체를 읽는다.
+  const capped = aptClient((url) => {
+    const pageNo = Number(url.searchParams.get('pageNo'));
+    return Response.json(listBody(pageNo <= 3 ? [listItem(`단지${pageNo}`, `A${pageNo}`)] : [], 3));
+  });
+  assert.equal((await capped.client.getDirectory('1')).length, 3);
+  assert.equal(capped.calls.length, 3);
+
+  // 전체 건수가 없으면 첫 페이지에서 멈추지 않고 빈 페이지까지 읽고 건수를 남긴다.
+  const noTotal = aptClient((url) => {
+    const pageNo = Number(url.searchParams.get('pageNo'));
+    return Response.json({ header: { resultCode: '00' }, body: { items: pageNo <= 2 ? [listItem(`단지${pageNo}`, `A${pageNo}`)] : [] } });
+  });
+  assert.equal((await noTotal.client.getDirectory('1')).length, 2);
+  assert.equal(noTotal.calls.length, 3);
+  assert.equal(noTotal.client.tags().listNoTotal, 3);
+  assert.deepEqual(noTotal.soft, []);
+
+  const endless = aptClient(() => Response.json(listBody([listItem('가단지')], 999999)));
+  await assert.rejects(endless.client.getDirectory('1'), { kind: 'aptlist_page_limit' });
+  assert.equal(endless.calls.length, 20);
+  assert.deepEqual(endless.soft, ['aptlist_page_limit']);
+  await assert.rejects(endless.client.getStation('A1'), { kind: 'aptlist_page_limit' });
+  assert.equal(endless.calls.length, 20);
 });
 
 test('every apartment API failure is soft, reported once and stops further calls', async () => {
@@ -245,6 +330,7 @@ test('every apartment API failure is soft, reported once and stops further calls
     [() => new Response('<OpenAPI_ServiceResponse/>'), 'aptlist_parse', 1],
     [() => Response.json({ other: 1 }), 'aptlist_parse', 1],
     [() => Response.json({ header: { resultCode: '30' }, body: {} }), 'aptlist_result_30', 1],
+    [() => Response.json({ header: { resultCode: '22' }, body: {} }), 'aptlist_result_22', 1],
     [() => Response.json(listBody([{ wrongTag: 1 }])), 'aptlist_parse', 1],
   ]) {
     const { client, calls, soft } = aptClient(handler);
@@ -369,24 +455,25 @@ test('apartment failures and name mismatches skip the station adjustment, lower 
   const direct = await evaluate(apt(), { trades, walkMinutes: 15 });
   assert.equal(direct.stationState, 'noData');
   const cases = [
-    fakeAptInfo({ async getDirectory() { throw new Error('quota'); } }),
+    fakeAptInfo({ async getDirectory() { throw new AppError('aptlist_http_403'); } }),
     fakeAptInfo({ async getDirectory() { return [{ code: 'Z', name: '전혀다른이름', dong: '역삼동', ri: '' }]; } }),
     fakeAptInfo({
       async getDirectory() { return ['가', '나', '다', '라'].map((name) => ({ code: name, name: `${name}단지`, dong: '역삼동', ri: '' })); },
-      async getStation() { throw new Error('stall'); },
+      async getStation() { throw new AppError('aptinfo_timeout'); },
     }),
     fakeAptInfo({
       async getDirectory() { return ['가', '나', '다', '라'].map((name) => ({ code: name, name: `${name}단지`, dong: '역삼동', ri: '' })); },
       async getStation() { return null; },
     }),
   ];
-  for (const aptInfo of cases) {
+  const reasons = ['역 정보 조회를 못 해', '비교 단지 역 정보 부족으로', '역 정보 조회를 못 해', '비교 단지 역 정보 부족으로'];
+  for (const [index, aptInfo] of cases.entries()) {
     const result = await evaluate(apt(), { trades, aptInfo, walkMinutes: 15 });
     assert.equal(result.estimate, 2000 * 84);
     assert.equal(result.stationState, 'noData');
     // 표본은 상 기준을 넘고, 값 부족으로 한 단계 내린다.
     assert.equal(result.confidence, '중');
-    assert.ok(result.reason.includes('역 도보 15분(입력), 비교 단지 역 정보 부족으로 역 보정 없음'));
+    assert.ok(result.reason.includes(`역 도보 15분(입력), ${reasons[index]} 역 보정 없음`), result.reason);
   }
   // 조회가 중간에 멈추면 받아 둔 값도 쓰지 않는다. 일부만으로 보정하지 않으려는 것이다.
   const three = trades.filter((row) => row.aptName !== '라단지');
@@ -398,7 +485,7 @@ test('apartment failures and name mismatches skip the station adjustment, lower 
       async getDirectory() { return ['가', '나', '다'].map((name) => ({ code: name, name: `${name}단지`, dong: '역삼동', ri: '' })); },
       async getStation() {
         station += 1;
-        if (station === 3) throw new Error('stall');
+        if (station === 3) throw new AppError('aptinfo_timeout');
         return { walkMinutes: 5, walkBand: '5분이내' };
       },
     }),
@@ -445,6 +532,45 @@ test('a presale outage lowers each confidence level by one', async () => {
   const same = saleRows(5, 1200, { aptName: '공고단지', jibun: '1' });
   assert.equal((await evaluate(apt(), { trades: same, presale: { rows: [], ok: true } })).confidence, '상');
   assert.equal((await evaluate(apt(), { trades: same, presale: { rows: [], ok: false } })).confidence, '중');
+});
+
+test('a programming error in the station lookup is reported, not treated as an API failure', async () => {
+  const errors = [];
+  const soft = [];
+  const result = await evaluate(apt(), {
+    trades: saleRows(5, 2000, { aptName: '래미안역세권' }),
+    walkMinutes: 15,
+    errors,
+    soft,
+    aptInfo: fakeAptInfo({ async getStation() { throw new TypeError('x is not a function'); } }),
+  });
+  assert.deepEqual(errors, ['unexpected_error']);
+  assert.deepEqual(soft, []);
+  assert.equal(result.status, STATUS.UNDETERMINED);
+  assert.equal(result.estimate, null);
+});
+
+test('disjoint house types each look up their own comparables, so neither loses coverage', async () => {
+  const large = Array.from({ length: 8 }, (_, index) => saleRows(3, 1000, { aptName: `대형단지${index}호`, jibun: `L${index}`, area: 84, amount: 84000 })).flat();
+  const small = Array.from({ length: 8 }, (_, index) => saleRows(2, 1000, { aptName: `소형단지${index}호`, jibun: `S${index}`, area: 59, amount: 59000 })).flat();
+  const directory = [...large, ...small].map((row) => ({ code: row.jibun, name: row.aptName, dong: '역삼동', ri: '' }));
+  const looked = new Set();
+  const result = await evaluate(apt(), {
+    trades: [...large, ...small],
+    walkMinutes: 5,
+    // 59㎡이 마진이 더 커서 판별에 쓰인다. 표본이 적어 묶음 상한이 있으면 값을 먼저 잃는 쪽이다.
+    models: [{ houseType: '084A', area: 84, price: 90000 }, { houseType: '059A', area: 59, price: 30000 }],
+    aptInfo: fakeAptInfo({
+      async getDirectory() { return [...new Map(directory.map((item) => [item.code, item])).values()]; },
+      async getStation(code) {
+        looked.add(code);
+        return { walkMinutes: 5, walkBand: '5분이내' };
+      },
+    }),
+  });
+  assert.equal(looked.size, 16);
+  assert.ok(result.reason.includes('059A'));
+  assert.equal(result.stationState, 'used');
 });
 
 test('same-complex models make no apartment calls even with a subject value', async () => {
@@ -931,7 +1057,7 @@ test('a normal run reads the manual value, looks up comparables, stores the marg
   // 목록 1회, 상세 1회
   assert.equal(world.calls.apt.length, 2);
   assert.ok(h.logs.includes('market apt_calls=2 station_used=1 station_no_input=0 station_no_data=0 confidence_high=0 confidence_mid=0 confidence_low=1 soft=none'));
-  assert.ok(h.logs.includes('apt_tags listRows=1 listNoCode=0 listNoDong=0 details=1 noItem=0 noField=0 emptyWalk=0 badWalk=0'));
+  assert.ok(h.logs.includes('apt_tags listRows=1 listNoCode=0 listNoDong=0 listNoTotal=0 details=1 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:1'));
   assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=5 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=5')));
   assert.ok(h.written.includes(`::add-mask::${DATA_SECRET}`));
 
@@ -941,15 +1067,30 @@ test('a normal run reads the manual value, looks up comparables, stores the marg
   assert.ok(!JSON.stringify(h.mails).includes(DATA_SECRET));
 });
 
-test('the batch no longer uses the Kakao Local API or its key', async () => {
+test('a full run sends nothing to the Kakao Local API and does not use its key', async () => {
   const world = worldFetch();
   const h = harness({ store: fakeStore(withWalk(15)), fetch: world.fetch, env: { GITHUB_ACTIONS: 'true' } });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(world.calls.apt.length > 0);
   assert.deepEqual(world.calls.kakao, []);
   assert.ok(!h.written.some((line) => line.includes(KAKAO_SECRET)));
   assert.equal(Object.hasOwn(config.market, 'location'), false);
-  const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.ok(!main.includes('KAKAO_REST_KEY'));
+});
+
+test('changing the manual value between runs changes the estimate', async () => {
+  const runWith = async (walkMinutes) => {
+    const h = harness({ store: fakeStore(withWalk(walkMinutes)), fetch: worldFetch().fetch });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    return h.store.state.upserts[0];
+  };
+  // 비교 단지는 5분이내(1.06), 상위 브랜드(1.05). 입력 15분: 2000 × 1.02 / 1.113 × 84
+  assert.equal((await runWith(15)).evaluation.estimate, 153962);
+  // 입력 5분: 역 차이가 없어 2000 / 1.05 × 84
+  assert.equal((await runWith(5)).evaluation.estimate, 160000);
+  // 입력을 지우면 역 보정이 빠진다. 값은 같아도 근거가 달라진다.
+  const cleared = await runWith(null);
+  assert.equal(cleared.evaluation.estimate, 160000);
+  assert.equal(cleared.evaluation.stationState, 'noInput');
 });
 
 test('a row without the manual value makes no apartment calls and caps confidence', async () => {

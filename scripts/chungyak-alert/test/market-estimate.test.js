@@ -484,7 +484,7 @@ test('confidence flows through the estimate: presale failure lowers it, and same
   assert.equal(estimate(same, { presaleOk: false }).confidence, CONFIDENCE.MID);
 });
 
-test('lookup candidates are the comparables that will be used, capped, and same-complex models need none', () => {
+test('lookup candidates are the comparables each model will use, and same-complex models need none', () => {
   const others = Array.from({ length: 30 }, (_, index) => rows(2, 1000, { aptName: `단지${index}`, umd: '삼성동', jibun: String(100 + index) })).flat();
   const big = rows(3, 1000, { aptName: '많은단지', umd: '삼성동', jibun: '900' });
   const oneModel = lookupCandidates({ models: [model], rows: [...others, ...big], subject: subject(), lotto, market, today });
@@ -493,7 +493,7 @@ test('lookup candidates are the comparables that will be used, capped, and same-
 
   const small = Array.from({ length: 30 }, (_, index) => rows(2, 1000, { aptName: `소형${index}`, umd: '삼성동', jibun: String(300 + index), area: 59 })).flat();
   const twoModels = lookupCandidates({ models: [model, { houseType: '059A', area: 59, price: 50000 }], rows: [...others, ...small], subject: subject(), lotto, market, today });
-  assert.equal(twoModels.length, market.comparables.maxLookupsPerNotice);
+  assert.equal(twoModels.length, market.comparables.maxComparables * 2);
 
   const sameRows = [...others, ...rows(5, 1500, { aptName: '공고단지', jibun: '9' })];
   assert.deepEqual(lookupCandidates({ models: [model], rows: sameRows, subject: subject(), lotto, market, today }), []);

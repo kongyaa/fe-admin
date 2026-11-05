@@ -47,8 +47,7 @@
     "comparables": {
       "maxComparables": 8,
       "minComplexSamples": 2,
-      "minStationShare": 0.6,
-      "maxLookupsPerNotice": 12
+      "minStationShare": 0.6
     },
     "adjustment": {
       "minFactor": 0.7,

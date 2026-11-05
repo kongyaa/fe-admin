@@ -527,7 +527,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
-  log(`apt_tags ${tagCounts(aptInfo.tags())}`);
+  log(`apt_tags ${tagCounts(aptInfo.tags())} bands=${aptInfo.bandCounts()}`);
 
   let summaryFailed = false;
   if (errors.size > 0 && !flags.dryRun) {

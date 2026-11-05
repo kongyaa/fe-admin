@@ -357,6 +357,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       scope: scoped.scope,
       stationState,
       walkMinutes: subject.walkMinutes,
+      stationLookupFailed: inputs.stationLookupFailed,
       samples,
       comparables: adjusted.map((complex) => ({
         name: complex.aptName,
@@ -406,9 +407,8 @@ export function lookupCandidates({ models, rows, subject, lotto, market, today }
       if (!known || complex.samples > known.samples) seen.set(complex.key, complex);
     }
   }
-  return [...seen.values()]
-    .sort((a, b) => b.samples - a.samples)
-    .slice(0, market.comparables.maxLookupsPerNotice);
+  // 주택형마다 쓸 단지를 모두 조회한다. 여기서 줄이면 한 주택형만 값이 모자랄 수 있어 상한은 실행당 호출 수로 둔다.
+  return [...seen.values()].sort((a, b) => b.samples - a.samples);
 }
 
 export function buildSubject({ name, builder, umd, jibun, walkMinutes = null, market }) {
@@ -428,9 +428,9 @@ export function buildSubject({ name, builder, umd, jibun, walkMinutes = null, ma
 export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon || candidate.marginRate >= lotto.minMarginRate;
 
 // 기준을 넘는 주택형 중 마진이 가장 큰 것을, 없으면 전체에서 마진이 가장 큰 것을 돌려준다.
-export function estimateBestMargin({ models, rows, subject, stations = new Map(), presaleOk = true, lotto, market, today }) {
+export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, lotto, market, today }) {
   const context = { market, lotto, today };
-  const inputs = { stations, presaleOk };
+  const inputs = { stations, stationLookupFailed, presaleOk };
   let best = null;
   let bestQualifying = null;
   for (const model of models) {
