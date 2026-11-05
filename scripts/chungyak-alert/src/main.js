@@ -4,7 +4,7 @@ import { collectApplyhome, createModelLookup } from './sources/applyhome.js';
 import { collectLh } from './sources/lh.js';
 import { createMolitClient } from './sources/molit.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
-import { createNotionStore } from './notion-store.js';
+import { computeSequenceNumbers, createNotionStore } from './notion-store.js';
 import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } from './notify-gmail.js';
 import { buildKakaoText, sendKakaoMemo } from './notify-kakao.js';
 import {
@@ -160,6 +160,30 @@ async function archivePages(store, pages, onFailure = () => {}) {
   return { archived, failed };
 }
 
+// 번호가 바뀐 행만 고친다. 한 행이 실패해도 나머지는 계속한다.
+async function applySequenceNumbers(store, onFailure) {
+  let updated = 0;
+  let failed = 0;
+  let rows;
+  try {
+    rows = computeSequenceNumbers([...(await store.loadExisting()).values()]);
+  } catch (error) {
+    onFailure(error);
+    return { updated, failed: 1 };
+  }
+  for (const row of rows) {
+    if (row.sequence === row.number) continue;
+    try {
+      await store.setSequenceNumber(row.id, row.number);
+      updated += 1;
+    } catch (error) {
+      failed += 1;
+      onFailure(error);
+    }
+  }
+  return { updated, failed };
+}
+
 // 수동 전용 정리 모드.
 async function runCleanupEnded({ store, today, dryRun, log }) {
   let pages;
@@ -288,7 +312,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, urgentMailFallback: 0, weekly: 0, archived: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, urgentMailFallback: 0, weekly: 0, archived: 0, sequenced: 0 };
   const records = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
@@ -392,6 +416,16 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       addError(safeError(error));
     });
     counts.archived = archived;
+    if (failed > 0) notionFailed = true;
+  }
+
+  // 순번은 모든 쓰기가 끝난 뒤 다시 읽어 매긴다. dry-run은 store가 null이라 여기 오지 않는다.
+  if (store && !notionFailed) {
+    const { updated, failed } = await applySequenceNumbers(store, (error) => {
+      addError('sequence_failed');
+      addError(safeError(error));
+    });
+    counts.sequenced = updated;
     if (failed > 0) notionFailed = true;
   }
 
