@@ -41,7 +41,8 @@
       "minSamples": 3,
       "highSamples": 5,
       "highSpread": 0.15,
-      "minNameLength": 5
+      "minNameLength": 5,
+      "minDistinctiveLength": 3
     },
     "comparables": {
       "maxDistanceM": 2000,
@@ -74,7 +75,7 @@
         }
       },
       "age": {
-        "ratePerYear": 0.01,
+        "ratePerYear": 0.005,
         "maxYears": 20
       }
     },

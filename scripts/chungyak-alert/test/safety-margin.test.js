@@ -135,6 +135,34 @@ test('the presale client stops at its time budget', async () => {
   assert.deepEqual(soft, ['presale_budget']);
 });
 
+test('months already cached are served after the presale budget has passed', async () => {
+  let current = 0;
+  let calls = 0;
+  const soft = [];
+  const client = createPresaleClient({
+    key: 'k',
+    sleep: noSleep,
+    budgetMs: 100,
+    now: () => new Date(current),
+    onSoft: (item) => soft.push(item),
+    fetch: async () => {
+      calls += 1;
+      return new Response(xml([tradeTags()]));
+    },
+  });
+  assert.equal((await client.getTrades('11680', ['202610'])).ok, true);
+  current = 1000;
+  const cached = await client.getTrades('11680', ['202610']);
+  assert.equal(cached.ok, true);
+  assert.equal(cached.rows.length, 1);
+  assert.equal(calls, 1);
+  assert.deepEqual(soft, []);
+  // 캐시에 없는 달은 시간이 지났으므로 호출하지 않는다.
+  assert.equal((await client.getTrades('11680', ['202609'])).ok, false);
+  assert.equal(calls, 1);
+  assert.deepEqual(soft, ['presale_budget']);
+});
+
 const kakaoResponse = (documents) => Response.json({ meta: { total_count: documents.length }, documents });
 
 function kakaoClient(handler, { locationConfig = fastLocation, key = 'k', now } = {}) {
@@ -187,19 +215,48 @@ test('Kakao station search handles none in range and a missing distance', async 
   assert.deepEqual(broken.errors, ['kakao_local_parse']);
 });
 
-test('the subject is located by address, then by name within its district only', async () => {
+test('the subject is located by address first', async () => {
   const byAddress = kakaoClient(() => kakaoResponse([{ x: '127', y: '37' }]));
   assert.deepEqual(await byAddress.client.locateSubject({ address: '서울특별시 강남구 역삼동 1 일원', name: 'A', areaText: '서울특별시 강남구' }), { x: 127, y: 37 });
   assert.equal(byAddress.calls[0].params.query, '서울특별시 강남구 역삼동 1');
   assert.equal(byAddress.calls.length, 1);
+});
 
-  const keyword = (documents) => kakaoClient((url) => (url.pathname.endsWith('/keyword.json') ? kakaoResponse(documents) : kakaoResponse([])));
-  const inDistrict = keyword([{ x: '1', y: '2', address_name: '부산 강서구 어딘가' }, { x: '127', y: '37', address_name: '서울 강남구 역삼동 1' }]);
-  assert.deepEqual(await inDistrict.client.locateSubject({ address: '서울특별시 강남구 A-3블록', name: '단지', areaText: '서울특별시 강남구' }), { x: 127, y: 37 });
-  assert.equal(inDistrict.calls[1].params.query, '강남구 단지');
+const keywordClient = (documents) => kakaoClient((url) => (url.pathname.endsWith('/keyword.json') ? kakaoResponse(documents) : kakaoResponse([])));
+const locateByName = (client, name = '역삼 푸른숲 단지') => client.locateSubject({ address: '서울특별시 강남구 A-3블록', name, areaText: '서울특별시 강남구' });
+const place = (placeName, x = '127', addressName = '서울 강남구 역삼동 1') => ({ x, y: '37', place_name: placeName, address_name: addressName });
 
-  const elsewhere = keyword([{ x: '1', y: '2', address_name: '부산 해운대구 어딘가' }]);
-  assert.equal(await elsewhere.client.locateSubject({ address: '서울 강남구 A-3블록', name: '단지', areaText: '서울 강남구' }), null);
+test('the keyword fallback takes a place in the district whose name contains the subject name', async () => {
+  const found = keywordClient([place('역삼푸른숲 아파트', '1', '부산 강서구 어딘가'), place('역삼 푸른숲 아파트 101동')]);
+  assert.deepEqual(await locateByName(found.client), { x: 127, y: 37, viaKeyword: true });
+  assert.equal(found.calls[1].params.query, '강남구 역삼 푸른숲 단지');
+  assert.equal(await locateByName(keywordClient([place('역삼푸른숲', '1', '부산 해운대구 어딘가')]).client), null);
+});
+
+test('the keyword fallback rejects sales facilities and other complexes', async () => {
+  for (const name of ['역삼푸른숲 견본주택', '역삼푸른숲 모델하우스', '역삼푸른숲 분양사무소', '역삼푸른숲 홍보관', '역삼 옛푸른 아파트', '푸른숲']) {
+    assert.equal(await locateByName(keywordClient([place(name)]).client), null, name);
+  }
+  // 앞의 결과가 분양 시설이어도 뒤의 단지를 찾는다.
+  const skipped = keywordClient([place('역삼푸른숲 견본주택', '1'), place('역삼푸른숲')]);
+  assert.deepEqual(await locateByName(skipped.client), { x: 127, y: 37, viaKeyword: true });
+  // 이름이 비면 검색하지 않는다.
+  const blank = keywordClient([place('아무 단지')]);
+  assert.equal(await locateByName(blank.client, ''), null);
+  assert.equal(blank.calls.length, 1);
+});
+
+test('a keyword-located subject caps a comparable estimate at 중 and leaves no trace in the result', async () => {
+  const trades = ['11', '12', '13', '14'].map((jibun, index) => saleRows(5, 2000, { aptName: `단지${'가나다라'[index]}`, jibun })).flat();
+  const byAddress = await evaluate(apt(), { trades, locator: fakeLocator() });
+  assert.equal(byAddress.confidence, '상');
+  const byKeyword = await evaluate(apt(), {
+    trades,
+    locator: fakeLocator({ async locateSubject() { return { x: 127, y: 37.5, viaKeyword: true }; } }),
+  });
+  assert.equal(byKeyword.confidence, '중');
+  assert.equal(byKeyword.estimate, byAddress.estimate);
+  assert.ok(!JSON.stringify(byKeyword).includes('viaKeyword'));
 });
 
 test('address cleaning keeps 동 names that contain the removed words', () => {
@@ -222,24 +279,66 @@ test('Kakao results are memoised, so repeat lookups make no calls', async () => 
   assert.equal(client.stats().calls, 2);
 });
 
-test('Kakao quota, auth, network and malformed failures all stop further calls after one attempt', async () => {
+test('Kakao quota, auth and malformed failures stop after one attempt and reach the error mail', async () => {
   for (const [handler, kind] of [
     [() => new Response('', { status: 429 }), 'kakao_local_http_429'],
     [() => new Response('', { status: 401 }), 'kakao_local_http_401'],
     [() => new Response('', { status: 403 }), 'kakao_local_http_403'],
-    [() => new Response('', { status: 500 }), 'kakao_local_http_500'],
-    [() => { throw new TypeError('fetch failed'); }, 'kakao_local_network'],
-    [() => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); }, 'kakao_local_timeout'],
     [() => new Response('not json'), 'kakao_local_parse'],
     [() => Response.json({ meta: {} }), 'kakao_local_parse'],
   ]) {
-    const { client, calls, errors } = kakaoClient(handler);
+    const { client, calls, errors, soft } = kakaoClient(handler);
     await assert.rejects(client.locateComplex('a'), { kind });
     await assert.rejects(client.locateComplex('b'), { kind });
     await assert.rejects(client.nearestStation({ x: 1, y: 2 }), { kind });
     assert.equal(calls.length, 1, kind);
     assert.deepEqual(errors, [kind]);
+    assert.deepEqual(soft, []);
   }
+});
+
+const transientFailures = [
+  [() => new Response('', { status: 500 }), 'kakao_local_http_500'],
+  [() => new Response('', { status: 503 }), 'kakao_local_http_503'],
+  [() => { throw new TypeError('fetch failed'); }, 'kakao_local_network'],
+  [() => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); }, 'kakao_local_timeout'],
+  [() => ({ ok: true, json: async () => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); } }), 'kakao_local_timeout'],
+];
+
+test('one transient Kakao failure is retried and the run continues', async () => {
+  for (const [handler, kind] of transientFailures) {
+    let count = 0;
+    const { client, calls, errors, soft } = kakaoClient((url) => {
+      count += 1;
+      return count === 1 ? handler(url) : kakaoResponse([{ x: '127', y: '37' }]);
+    });
+    assert.deepEqual(await client.locateComplex('a'), { x: 127, y: 37 }, kind);
+    assert.deepEqual(await client.locateComplex('b'), { x: 127, y: 37 }, kind);
+    assert.equal(calls.length, 3, kind);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(soft, []);
+    assert.equal(client.stats().calls, 3);
+  }
+});
+
+test('a transient Kakao failure that remains after the retry is soft and stops further calls', async () => {
+  for (const [handler, kind] of transientFailures) {
+    const { client, calls, errors, soft } = kakaoClient(handler);
+    await assert.rejects(client.locateComplex('a'), { kind });
+    await assert.rejects(client.locateComplex('b'), { kind });
+    assert.equal(calls.length, 2, kind);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(soft, [kind]);
+  }
+});
+
+test('the retry does not go past the call cap', async () => {
+  const { client, calls, soft } = kakaoClient(() => new Response('', { status: 500 }), {
+    locationConfig: { ...fastLocation, maxCallsPerRun: 1 },
+  });
+  await assert.rejects(client.locateComplex('a'), { kind: 'kakao_local_http_500' });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(soft, ['kakao_local_http_500']);
 });
 
 test('a Kakao 400 is one bad query and does not stop other lookups', async () => {
@@ -890,6 +989,47 @@ test('location can be switched off in config with no calls and no error', async 
   assert.equal(world.calls.kakao.length, 0);
   assert.equal(h.store.state.upserts[0].evaluation.confidence, '하');
   assert.equal(errorMail(h), undefined);
+});
+
+test('a remaining Kakao 5xx in a full run is log-only, while 401 reaches the error mail', async () => {
+  const server = worldFetch({ kakao: () => new Response('', { status: 503 }) });
+  const soft = harness({ fetch: server.fetch });
+  assert.equal(await run({ env: soft.env, deps: soft.deps }), 0);
+  assert.equal(server.calls.kakao.length, 2);
+  assert.equal(errorMail(soft), undefined);
+  assert.ok(marketLine(soft).endsWith('soft=kakao_local_http_503:1'));
+  assert.equal(soft.store.state.upserts[0].evaluation.confidence, '하');
+
+  const denied = worldFetch({ kakao: () => new Response('', { status: 401 }) });
+  const hard = harness({ fetch: denied.fetch });
+  assert.equal(await run({ env: hard.env, deps: hard.deps }), 0);
+  assert.equal(denied.calls.kakao.length, 1);
+  assert.ok(errorMail(hard).text.includes('kakao_local_http_401 x1'));
+});
+
+const summaryLine = (h) => h.logs.find((line) => line.startsWith('collected='));
+
+test('lotto_demoted counts rows that were 로또 and now compute 아님 or 대상 외, and only those', async () => {
+  const wasLotto = (extra = {}) => new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU, ...extra }]]);
+  const lowPrice = [tradeTags({ name: '가단지', jibun: '100', amount: '84,000' })];
+  const highPrice = [tradeTags({ name: '가단지', jibun: '100', amount: '300,000' })];
+  const count = async ({ store, trades, rows, kakaoSent = 0, argv }) => {
+    const world = worldFetch({ trades, rows });
+    const h = harness({ store, fetch: world.fetch });
+    await run({ argv, env: h.env, deps: h.deps });
+    assert.equal(h.kakao.length, kakaoSent);
+    assert.ok(!h.logs.join('\n').includes('비밀공고단지'));
+    return summaryLine(h);
+  };
+  assert.ok((await count({ store: fakeStore(wasLotto()), trades: lowPrice })).includes('lotto_demoted=1'));
+  assert.ok((await count({ store: fakeStore(wasLotto()), rows: [aptRow({ HOUSE_NM: '토지임대부 단지' })] })).includes('lotto_demoted=1'));
+  assert.ok((await count({ store: fakeStore(wasLotto()), trades: highPrice, kakaoSent: 1 })).includes('lotto_demoted=0'));
+  assert.ok((await count({ store: fakeStore(wasLotto({ lotto: '아님' })), trades: lowPrice })).includes('lotto_demoted=0'));
+  assert.ok((await count({ store: fakeStore(), trades: lowPrice })).includes('lotto_demoted=0'));
+  // 판별 불가로 이전 로또를 유지한 공고는 빠진 것이 아니다.
+  assert.ok((await count({ store: fakeStore(wasLotto()), trades: [], kakaoSent: 1 })).includes('lotto_demoted=0'));
+  // dry-run은 저장 없이 읽어 둔 행으로 센다.
+  assert.ok((await count({ store: fakeStore(wasLotto()), trades: lowPrice, argv: ['--dry-run'] })).includes('lotto_demoted=1'));
 });
 
 test('a presale API not yet approved sends no error mail and logs a count-only kind', async () => {

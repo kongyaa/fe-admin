@@ -93,7 +93,7 @@ export function ageFactor(ageYears, age) {
   return 1 - age.ratePerYear * years;
 }
 
-const normalizeComplexName = (name) => compact(name)
+export const normalizeComplexName = (name) => compact(name)
   .replace(/\([^)]*\)|\[[^\]]*\]/g, '')
   .replace(/[^0-9a-z가-힣]/g, '')
   .replace(/(아파트|단지)+$/, '');
@@ -174,23 +174,39 @@ export function groupComplexes(rows, area, context) {
   return complexes;
 }
 
-const sameName = (a, b, minLength) => {
+// 브랜드를 뺀 고유 부분의 길이. 브랜드만 같은 단지를 부분 일치로 묶지 않으려고 쓴다.
+function distinctiveLength(name, brand) {
+  let rest = name;
+  for (const keyword of [...brand.nameKeywords.top, ...brand.nameKeywords.mid]) {
+    rest = rest.replaceAll(normalizeComplexName(keyword), '');
+  }
+  return rest.length;
+}
+
+const sameName = (a, b, { allowSubstring, minLength, minDistinctive, brand }) => {
   const left = normalizeComplexName(a);
   const right = normalizeComplexName(b);
   if (!left || !right) return false;
   if (left === right) return true;
+  if (!allowSubstring) return false;
   const shorter = left.length < right.length ? left : right;
   const longer = shorter === left ? right : left;
-  return shorter.length >= minLength && longer.includes(shorter);
+  return shorter.length >= minLength && distinctiveLength(shorter, brand) >= minDistinctive && longer.includes(shorter);
 };
 
 // 공고 단지의 거래를 찾는다. 이름이 같거나, 같은 법정동의 같은 지번이면 같은 단지로 본다.
+// 법정동을 모르면 시군구 전체와 비교하게 되므로 부분 일치를 인정하지 않는다.
 function sameComplexRows(rows, subject, area, { market, lotto }) {
-  const minLength = market.sameComplex.minNameLength;
+  const nameRule = {
+    allowSubstring: Boolean(subject.umd),
+    minLength: market.sameComplex.minNameLength,
+    minDistinctive: market.sameComplex.minDistinctiveLength,
+    brand: market.adjustment.brand,
+  };
   return nearArea(rows, area, lotto).filter((row) => {
     if (subject.umd && row.umd && subject.umd !== row.umd) return false;
     if (subject.jibun && row.jibun && subject.jibun === row.jibun && subject.umd && subject.umd === row.umd) return true;
-    return sameName(subject.name, row.aptName, minLength);
+    return sameName(subject.name, row.aptName, nameRule);
   });
 }
 
@@ -214,7 +230,7 @@ function candidateTotals(model, market, unitMiddle, unitLow) {
 
 const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : CONFIDENCE.LOW);
 
-export function comparableConfidence({ samples, comparables, spread, looError, locationUsed, presaleOk }, confidence) {
+export function comparableConfidence({ samples, comparables, spread, looError, locationUsed, presaleOk, keywordLocated = false }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
   if (locationUsed) {
@@ -224,6 +240,8 @@ export function comparableConfidence({ samples, comparables, spread, looError, l
       level = CONFIDENCE.MID;
     }
   }
+  // 단지명 검색으로 찾은 위치는 주소 검색보다 믿기 어렵다.
+  if (keywordLocated && level === CONFIDENCE.HIGH) level = CONFIDENCE.MID;
   return presaleOk ? level : lowerOneLevel(level);
 }
 
@@ -341,6 +359,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       looError,
       locationUsed: useStation,
       presaleOk: inputs.presaleOk,
+      keywordLocated: inputs.keywordLocated,
     }, market.confidence),
     basis: {
       kind: 'comparables',
@@ -404,9 +423,9 @@ export function buildSubject({ name, builder, umd, jibun, market }) {
 export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon || candidate.marginRate >= lotto.minMarginRate;
 
 // 기준을 넘는 주택형 중 마진이 가장 큰 것을, 없으면 전체에서 마진이 가장 큰 것을 돌려준다.
-export function estimateBestMargin({ models, rows, subject, locations = new Map(), locationOk = false, presaleOk = true, lotto, market, today }) {
+export function estimateBestMargin({ models, rows, subject, locations = new Map(), locationOk = false, presaleOk = true, keywordLocated = false, lotto, market, today }) {
   const context = { market, lotto, today };
-  const inputs = { locations, locationOk, presaleOk };
+  const inputs = { locations, locationOk, presaleOk, keywordLocated };
   let best = null;
   let bestQualifying = null;
   for (const model of models) {

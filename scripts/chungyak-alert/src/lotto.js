@@ -88,7 +88,7 @@ async function resolveLocations({ locator, notice, subject, areaText, models, ro
       const location = locations.get(key);
       location.stationM = await locator.nearestStation(location.coord);
     }
-    return { locationOk: true, locations };
+    return { locationOk: true, locations, keywordLocated: Boolean(origin.viaKeyword) };
   } catch {
     subject.stationM = null;
     return { locationOk: false, locations: new Map() };
@@ -169,6 +169,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
           locations: location.locations,
           locationOk,
           presaleOk: presale.ok,
+          keywordLocated: location.keywordLocated,
           lotto,
           market,
           today,

@@ -191,9 +191,9 @@ export function createPresaleClient({ fetch, key, sleep = defaultSleep, now = ()
       const rows = [];
       try {
         for (const dealYm of months) {
-          if (now().getTime() - startedAt >= budgetMs) return fail('presale_budget');
           const cacheKey = `${lawdCode}-${dealYm}`;
           if (!cache.has(cacheKey)) {
+            if (now().getTime() - startedAt >= budgetMs) return fail('presale_budget');
             const monthRows = await fetchPresaleMonth({ fetch, key, lawdCode, dealYm, sleep });
             tallyTags(stats, monthRows);
             cache.set(cacheKey, monthRows);

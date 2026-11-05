@@ -166,6 +166,31 @@ test('same-complex matches by lot in the same 법정동, and needs enough sample
   assert.equal(shortName.basis.kind, 'comparables');
 });
 
+test('without a known 법정동 only an exact name counts as the same complex', () => {
+  const noDong = { umd: null, jibun: null };
+  const phase2 = estimate(rows(5, 1500, { aptName: '힐스테이트동탄' }), { locationOk: false, subjectExtra: { ...noDong, name: '힐스테이트 동탄 2차' } });
+  assert.equal(phase2.basis.kind, 'comparables');
+  const longerRow = estimate(rows(5, 1500, { aptName: '힐스테이트 동탄 2차' }), { locationOk: false, subjectExtra: { ...noDong, name: '힐스테이트동탄' } });
+  assert.equal(longerRow.basis.kind, 'comparables');
+  const distinct = estimate(rows(5, 1500, { aptName: '화성동탄 자연앤 푸른마을 2차' }), { locationOk: false, subjectExtra: { ...noDong, name: '화성동탄 자연앤 푸른마을' } });
+  assert.equal(distinct.basis.kind, 'comparables');
+  const exact = estimate(rows(5, 1500, { aptName: '힐스테이트 동탄' }), { locationOk: false, subjectExtra: { ...noDong, name: '힐스테이트동탄' } });
+  assert.equal(exact.basis.kind, 'same');
+});
+
+test('a brand-only or brand-prefix name cannot match by substring', () => {
+  const kind = (aptName, name) => estimate(rows(5, 1500, { aptName }), { locationOk: false, subjectExtra: { name } }).basis.kind;
+  assert.equal(kind('힐스테이트', '힐스테이트 수원'), 'comparables');
+  assert.equal(kind('힐스테이트 광교', '힐스테이트'), 'comparables');
+  assert.equal(kind('e편한세상', 'e편한세상 시흥'), 'comparables');
+  assert.equal(kind('e편한세상 거모', 'e편한세상'), 'comparables');
+  assert.equal(kind('힐스테이트1차', '힐스테이트1차 수원'), 'comparables');
+  assert.equal(kind('e편한세상 시흥 2차', 'e편한세상 시흥'), 'comparables');
+  // 브랜드 말고 고유한 이름이 충분하면 같은 법정동 안에서는 그대로 묶는다.
+  assert.equal(kind('광교자연앤센트레빌 1단지', '광교 자연앤 센트레빌'), 'same');
+  assert.equal(kind('힐스테이트 원베일리 2차', '힐스테이트 원베일리'), 'same');
+});
+
 test('station bands and factors', () => {
   const { station } = adjustment;
   const cases = [[0, 1.06], [300, 1.06], [301, 1.04], [500, 1.04], [501, 1.02], [800, 1.02], [801, 1], [1200, 1], [1201, 0.97], [null, 0.97]];
@@ -197,8 +222,8 @@ test('age factor falls with age and is bounded', () => {
   const { age } = adjustment;
   assert.equal(ageFactor(0, age), 1);
   assert.equal(ageFactor(-1, age), 1);
-  assert.ok(Math.abs(ageFactor(10, age) - 0.9) < 1e-9);
-  assert.ok(Math.abs(ageFactor(20, age) - 0.8) < 1e-9);
+  assert.ok(Math.abs(ageFactor(10, age) - 0.95) < 1e-9);
+  assert.ok(Math.abs(ageFactor(20, age) - 0.9) < 1e-9);
   assert.equal(ageFactor(60, age), ageFactor(20, age));
 });
 
@@ -220,6 +245,15 @@ test('subject farther from a station and of a lower brand tier is valued below a
   assert.equal(same.estimate, 2000 * 84);
 });
 
+test('a 10-year-old top-brand complex 200m from a station stays above a new unbranded subject 900m out', () => {
+  const allRows = rows(5, 2000, { aptName: '래미안역세권', jibun: '50', buildYear: 2016 });
+  const locations = locate(allRows, 84, { 래미안역세권: { distanceM: 300, stationM: 200 } });
+  const result = estimate(allRows, { locations, subjectExtra: { stationM: 900, brandTier: 'other', ageYears: 0 } });
+  // 2000 / (1.06 × 1.05 × 0.95) = 1891.5, × 84 = 158888. 비교 단지 자체 단가보다 약 5.4% 낮다.
+  assert.equal(result.estimate, 158888);
+  assert.ok(result.estimate < 2000 * 84 * 0.96);
+});
+
 test('each adjustment moves the estimate the right way', () => {
   const run = (complex, location, subjectExtra) => {
     const allRows = rows(5, 2000, { jibun: '50', ...complex });
@@ -234,7 +268,7 @@ test('each adjustment moves the estimate the right way', () => {
   assert.ok(run({ aptName: '가단지' }, { distanceM: 100, stationM: 1000 }, { stationM: 1000, brandTier: 'top' }) > base);
   // 낡은 비교 단지는 신축인 공고 단지 기준으로 올린다.
   assert.ok(run({ aptName: '가단지', buildYear: 2006 }, { distanceM: 100, stationM: 1000 }, { stationM: 1000 }) > base);
-  assert.equal(run({ aptName: '가단지', buildYear: 2006 }, { distanceM: 100, stationM: 1000 }, { stationM: 1000 }), Math.round((2000 / 0.8) * 84));
+  assert.equal(run({ aptName: '가단지', buildYear: 2006 }, { distanceM: 100, stationM: 1000 }, { stationM: 1000 }), Math.round((2000 / 0.9) * 84));
   // 건축년도를 모르면 연식 보정을 하지 않고, 분양권만 있는 단지는 신축으로 본다.
   assert.equal(run({ aptName: '가단지', buildYear: null }, { distanceM: 100, stationM: 1000 }, { stationM: 1000 }), base);
   assert.equal(run({ aptName: '가단지', buildYear: null, presale: true }, { distanceM: 100, stationM: 1000 }, { stationM: 1000 }), base);
@@ -243,9 +277,10 @@ test('each adjustment moves the estimate the right way', () => {
 test('the total adjustment is bounded', () => {
   const allRows = rows(5, 1000, { aptName: '나단지', buildYear: 1960, jibun: '50' });
   const locations = locate(allRows, 84, { 나단지: { distanceM: 100, stationM: 5000 } });
-  const result = estimate(allRows, { locations, subjectExtra: { stationM: 100, brandTier: 'top' } });
-  // 1.06 × 1.05 / (0.97 × 0.8)는 1.43이지만 상한 1.35에서 멈춘다.
-  assert.equal(result.estimate, Math.round(1000 * 1.35 * 84));
+  const overrides = { ...market, adjustment: { ...adjustment, maxFactor: 1.2 } };
+  const result = estimate(allRows, { locations, overrides, subjectExtra: { stationM: 100, brandTier: 'top' } });
+  // 1.06 × 1.05 / (0.97 × 0.9)는 1.275지만 상한으로 둔 1.2에서 멈춘다.
+  assert.equal(result.estimate, Math.round(1000 * 1.2 * 84));
 });
 
 test('comparables are chosen by distance within the limit and weighted toward the nearest', () => {
@@ -348,6 +383,10 @@ test('confidence levels', () => {
   assert.equal(level({ looError: 0.21 }), CONFIDENCE.LOW);
   // 위치 조회가 실패하면 표본과 무관하게 하다.
   assert.equal(level({ locationUsed: false }), CONFIDENCE.LOW);
+  // 단지명으로 찾은 위치는 중까지만 오르고, 더 낮은 등급은 그대로다.
+  assert.equal(level({ keywordLocated: true }), CONFIDENCE.MID);
+  assert.equal(level({ samples: 4, keywordLocated: true }), CONFIDENCE.LOW);
+  assert.equal(level({ keywordLocated: true, presaleOk: false }), CONFIDENCE.LOW);
   // 분양권 조회가 실패하면 한 단계 내린다.
   assert.equal(level({ presaleOk: false }), CONFIDENCE.MID);
   assert.equal(level({ samples: 19, presaleOk: false }), CONFIDENCE.LOW);
