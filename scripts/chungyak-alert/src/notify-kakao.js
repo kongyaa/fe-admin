@@ -8,10 +8,10 @@ const TAIL = '추정치이며 자격은 미판별. 공고문 확인 필수';
 const cut = (value, length) => Array.from(String(value ?? '')).slice(0, length).join('');
 const size = (value) => Array.from(value).length;
 
-export function buildKakaoText({ notice, stage, reason }) {
+export function buildKakaoText({ notice, stage, reason, prefix = '[로또 청약]' }) {
   const name = cut(notice.name, 50);
   const period = stage.end && stage.end !== stage.start ? `${stage.start}~${stage.end}` : stage.start;
-  const head = `[로또 청약] ${name}\n${cut(stage.name, 12)} 오늘 시작 ${period}`;
+  const head = `${prefix} ${name}\n${cut(stage.name, 12)} 오늘 시작 ${period}`;
   const room = MAX_TEXT - size(head) - size(TAIL) - 2;
   const reasonLine = reason && room > 0 ? `\n${cut(reason, room)}` : '';
   return cut(`${head}${reasonLine}\n${TAIL}`, MAX_TEXT);
