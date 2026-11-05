@@ -4,7 +4,7 @@ import { collectApplyhome, createModelLookup } from './sources/applyhome.js';
 import { collectLh } from './sources/lh.js';
 import { createMolitClient } from './sources/molit.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
-import { createNotionStore } from './notion-store.js';
+import { computeSequenceNumbers, createNotionStore } from './notion-store.js';
 import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } from './notify-gmail.js';
 import { buildKakaoText, sendKakaoMemo } from './notify-kakao.js';
 import {
@@ -25,6 +25,9 @@ const MODES = {
   'test-send': ['--test-send'],
   'cleanup-ended': ['--cleanup-ended'],
 };
+
+// 잡 제한 시간은 15분이다.
+const SEQUENCE_BUDGET_MS = 10 * 60 * 1000;
 
 export const SOURCES = [
   '청약홈 분양정보 조회 서비스 (data.go.kr 15098547): 사용',
@@ -160,6 +163,31 @@ async function archivePages(store, pages, onFailure = () => {}) {
   return { archived, failed };
 }
 
+// 번호가 바뀐 행만 고친다. 표시용 열이므로 첫 실패나 시간 초과에서 멈추고 다음 실행에 맡긴다.
+async function applySequenceNumbers(store, { deadline, now, onFailure }) {
+  let changed;
+  try {
+    store.checkSequenceProperty();
+    changed = computeSequenceNumbers([...(await store.loadExisting()).values()])
+      .filter((row) => row.sequence !== row.number);
+  } catch (error) {
+    onFailure(error);
+    return { updated: 0, skipped: 0 };
+  }
+  let updated = 0;
+  for (const row of changed) {
+    if (now().getTime() >= deadline) return { updated, skipped: changed.length - updated };
+    try {
+      await store.setSequenceNumber(row.id, row.number);
+      updated += 1;
+    } catch (error) {
+      onFailure(error);
+      break;
+    }
+  }
+  return { updated, skipped: 0 };
+}
+
 // 수동 전용 정리 모드.
 async function runCleanupEnded({ store, today, dryRun, log }) {
   let pages;
@@ -187,7 +215,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const log = deps.log ?? ((line) => console.log(line));
   const write = deps.write;
   const config = deps.config ?? loadConfig();
-  const today = kstToday(deps.now ? deps.now() : new Date());
+  const now = deps.now ?? (() => new Date());
+  const startedAt = now();
+  const today = kstToday(startedAt);
 
   const flags = parseFlags(argv, env);
   if (!flags) {
@@ -288,7 +318,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, urgentMailFallback: 0, weekly: 0, archived: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, urgentMailFallback: 0, weekly: 0, archived: 0, sequenced: 0 };
   const records = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
@@ -393,6 +423,21 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     });
     counts.archived = archived;
     if (failed > 0) notionFailed = true;
+  }
+
+  // 순번은 모든 쓰기가 끝난 뒤 다시 읽어 매긴다. dry-run은 store가 null이라 여기 오지 않는다.
+  // 표시용 열이라 실패해도 오류 메일만 보내고 잡을 실패시키지 않는다.
+  if (store && !notionFailed) {
+    const { updated, skipped } = await applySequenceNumbers(store, {
+      deadline: startedAt.getTime() + SEQUENCE_BUDGET_MS,
+      now,
+      onFailure: (error) => {
+        addError('sequence_failed');
+        addError(safeError(error));
+      },
+    });
+    counts.sequenced = updated;
+    if (skipped > 0) log(`sequence_skipped=${skipped}`);
   }
 
   if (flags.dryRun) {

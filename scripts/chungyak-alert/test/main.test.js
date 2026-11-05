@@ -204,7 +204,7 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
       '접수 종료일': { date: null },
     },
   });
-  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null });
+  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, sequence: null });
 });
 
 function notionFake(children = []) {
@@ -212,6 +212,7 @@ function notionFake(children = []) {
   const fetch = async (url, init) => {
     const path = new URL(url).pathname.replace('/v1', '');
     calls.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : null, headers: init.headers });
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { 순번: { type: 'number' } } });
     if (init.method === 'GET') return Response.json({ results: children, has_more: false });
     if (path === '/databases') return Response.json({ id: 'db' });
     if (path.endsWith('/query')) return Response.json({ results: [], has_more: false });
@@ -358,6 +359,8 @@ function fakeStore(existing = new Map(), weekly = null) {
     getWeeklyState: async () => state.weekly,
     setWeeklyState: async (monday) => { state.weekly = monday; },
     archivePage: async (id) => { state.archived.push(id); },
+    checkSequenceProperty: () => {},
+    setSequenceNumber: async () => {},
   };
 }
 
@@ -543,6 +546,7 @@ function stalledNotionHarness({ rows = stalledNotionRows, pages = [], stall, fai
     const path = new URL(url).pathname.replace('/v1', '');
     notionCalls.push(`${init.method} ${path}`);
     if (stall(init.method, path)) throw failure;
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { 순번: { type: 'number' } } });
     if (init.method === 'GET') {
       return Response.json({
         has_more: false,
@@ -857,6 +861,7 @@ function cleanupHarness({ pages = cleanupPages, patch, children } = {}) {
     }
     const path = new URL(url).pathname.replace('/v1', '');
     calls.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : null });
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { 순번: { type: 'number' } } });
     if (init.method === 'GET') {
       return Response.json({
         has_more: false,

@@ -28,6 +28,7 @@ const P = {
   source: '소스',
   collected: '마지막 수집일',
   urgent: '긴급 알림 발송일',
+  sequence: '순번',
 };
 
 const DB_SCHEMA = {
@@ -57,6 +58,7 @@ const DB_SCHEMA = {
   [P.source]: { select: {} },
   [P.collected]: { date: {} },
   [P.urgent]: { date: {} },
+  [P.sequence]: { number: { format: 'number' } },
 };
 
 const text = (value) => [{ type: 'text', text: { content: String(value).slice(0, 2000) } }];
@@ -102,7 +104,22 @@ export function parseExistingPage(page) {
     lotto: props[P.lotto]?.select?.name ?? null,
     urgentDate: props[P.urgent]?.date?.start?.slice(0, 10) ?? null,
     end: props[P.end]?.date?.start?.slice(0, 10) ?? null,
+    start: props[P.start]?.date?.start?.slice(0, 10) ?? null,
+    sequence: props[P.sequence]?.number ?? null,
   };
+}
+
+const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+// 접수 시작일 오름차순, 날짜 없는 행은 맨 뒤, 같으면 고유 키 순이다. 실행 환경과 무관하도록 로캘 비교를 쓰지 않는다.
+export function computeSequenceNumbers(rows) {
+  return [...rows]
+    .sort((a, b) => {
+      if (a.start && b.start) return compareText(a.start, b.start) || compareText(a.key, b.key);
+      if (a.start || b.start) return a.start ? -1 : 1;
+      return compareText(a.key, b.key);
+    })
+    .map((row, index) => ({ ...row, number: index + 1 }));
 }
 
 export function createNotionStore({ key, parentPageId, config, sources, fetch, sleep = defaultSleep, minIntervalMs = MIN_INTERVAL_MS }) {
@@ -111,6 +128,9 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   let lastCall = 0;
   // 스토어는 실행마다 하나다. 응답 없는 Notion이 잡 제한 시간을 다 쓰지 않도록 첫 장애 뒤에는 호출하지 않는다.
   let outage = null;
+  // 휴지통으로 옮긴 직후의 조회에 남아 있어도 이번 실행에서는 세지 않는다.
+  const archivedIds = new Set();
+  let sequenceConflict = false;
 
   async function request(method, path, body, { idempotent = true } = {}) {
     if (outage) throw outage;
@@ -165,6 +185,24 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     { idempotent: false },
   );
 
+  // 기존 DB에 순번 속성이 없을 때만 추가한다. 순번은 표시용이라 실패해도 수집과 알림을 막지 않는다.
+  // 장애면 다음 호출이 같은 오류로 멈추고, 속성이 계속 없으면 순번 갱신이 sequence_failed로 드러난다.
+  async function ensureSequenceProperty() {
+    try {
+      const database = await request('GET', `/databases/${databaseId}`);
+      const property = database.properties?.[P.sequence];
+      if (property?.type === 'number') return;
+      // 같은 이름의 다른 타입 속성은 사용자의 것일 수 있어 바꾸지 않고, 이번 실행의 순번 갱신만 건너뛴다.
+      if (property) {
+        sequenceConflict = true;
+        return;
+      }
+      await request('PATCH', `/databases/${databaseId}`, { properties: { [P.sequence]: DB_SCHEMA[P.sequence] } });
+    } catch {
+      // 위 주석 참고
+    }
+  }
+
   return {
     async init({ createMissing = true } = {}) {
       children = await listChildren();
@@ -177,6 +215,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       }
       if (database) {
         databaseId = database.id;
+        await ensureSequenceProperty();
       } else {
         const created = await request(
           'POST',
@@ -208,6 +247,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
           ...(cursor ? { start_cursor: cursor } : {}),
         });
         for (const row of page.results) {
+          if (row.archived || row.in_trash || archivedIds.has(row.id)) continue;
           const parsed = parseExistingPage(row);
           if (parsed.key) existing.set(parsed.key, parsed);
         }
@@ -234,10 +274,19 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     // Notion 휴지통으로 옮긴다. 영구 삭제가 아니다.
     async archivePage(pageId) {
       await request('PATCH', `/pages/${pageId}`, { archived: true });
+      archivedIds.add(pageId);
     },
 
     async stampUrgent(pageId, date) {
       await request('PATCH', `/pages/${pageId}`, { properties: { [P.urgent]: { date: { start: date } } } });
+    },
+
+    checkSequenceProperty() {
+      if (sequenceConflict) throw new AppError('sequence_property_conflict');
+    },
+
+    async setSequenceNumber(pageId, number) {
+      await request('PATCH', `/pages/${pageId}`, { properties: { [P.sequence]: { number } } });
     },
 
     async getWeeklyState() {
