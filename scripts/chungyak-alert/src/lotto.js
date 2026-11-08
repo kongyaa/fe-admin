@@ -83,12 +83,14 @@ const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 $
 const priceText = (best) => `${shortPriceText(best)}; `
   + `${basisText(best.basis)}; ${safeText(best)}에서 분양가 ${eok(best.price)}, 옵션 ${best.optionCost}만 원, 취득세 ${best.tax}만 원 차감`;
 
-// 주택형별 최고 분양가를 공급 세대수로 가중 평균한다(만원). 세대수를 모르는 주택형이 하나라도 있으면 단순 평균이다.
+// 주택형별 최고 분양가를 공급 세대수로 가중 평균한다(만원). 0세대인 주택형은 가중치 0이다.
+// 세대수를 모르는 주택형이 하나라도 있거나 세대수 합이 0이면 단순 평균이다.
 export function averagePriceOf(models) {
   const priced = (models ?? []).filter((model) => model.price > 0);
   if (priced.length === 0) return null;
-  const weighted = priced.every((model) => model.households > 0);
-  const weightOf = (model) => (weighted ? model.households : 1);
+  const known = priced.every((model) => Number.isFinite(model.households) && model.households >= 0);
+  const households = known ? priced.reduce((sum, model) => sum + model.households, 0) : 0;
+  const weightOf = (model) => (households > 0 ? model.households : 1);
   const total = priced.reduce((sum, model) => sum + weightOf(model), 0);
   return Math.round(priced.reduce((sum, model) => sum + model.price * weightOf(model), 0) / total);
 }
@@ -142,7 +144,7 @@ async function readPresale(getPresale, code, months) {
 }
 
 // getModels/getTrades 실패는 판정을 막지 않고 onError로 모은다. getPresale과 aptInfo는 실패해도 신뢰도만 낮춘다.
-export async function evaluateLotto(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {} }) {
+export async function evaluateLotto(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {}, onSoftOnce = onSoft }) {
   const { lotto, market } = config;
   const result = (status, reason, extra = {}) => ({
     status, reason, topPrice: null, estimate: null, margin: null, marginRate: null, confidence: null, ...extra,
@@ -159,11 +161,12 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
   const restricted = restrictedType(notice, market);
   if (restricted) {
     // 평균 분양가는 공고의 사실이라 제한 유형에도 적는다. 실거래는 조회하지 않는다.
+    // 표시용 값이라 실패해도 오류 메일 없이 실행당 한 번만 건수로 남긴다.
     let restrictedModels = null;
     try {
       restrictedModels = await getModels(notice);
-    } catch (error) {
-      onError(safeError(error));
+    } catch {
+      onSoftOnce('average_price_lookup_failed');
     }
     return result(STATUS.OUT_OF_SCOPE, `제한 유형(${restricted})은 로또 판별과 안전 마진 대상이 아님`, {
       clearMarket: true,

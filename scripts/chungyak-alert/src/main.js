@@ -306,6 +306,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   // 오류 메일 없이 로그에만 건수를 남기는 항목이다. 분양권·공동주택 API 미승인, 태그나 단지명 불일치 등이다.
   const softErrors = new Map();
   const addSoftError = (kind) => softErrors.set(kind, (softErrors.get(kind) ?? 0) + 1);
+  // 같은 장애가 공고마다 반복되어도 한 번만 센다.
+  const addSoftErrorOnce = (kind) => {
+    if (!softErrors.has(kind)) addSoftError(kind);
+  };
   let notionFailed = false;
   let applyhomeResult = { notices: [], errors: [], failedAll: true };
   let lhNotices = [];
@@ -422,6 +426,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
           walkMinutes: (previous ?? dryRunRows?.get(notice.key))?.walkMinutes ?? null,
           onError: addError,
           onSoft: addSoftError,
+          onSoftOnce: addSoftErrorOnce,
         });
       } catch (error) {
         addError(safeError(error));

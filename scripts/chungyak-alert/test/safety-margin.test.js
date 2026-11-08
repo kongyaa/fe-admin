@@ -607,7 +607,7 @@ test('a real client with a small cap degrades later notices without further call
   assert.deepEqual(soft, ['apt_call_cap']);
 });
 
-test('restricted types are 대상 외 with empty margin, before triggers and before any lookup', async () => {
+test('restricted types are 대상 외 with empty margin before triggers, reading only model rows for the average price', async () => {
   for (const name of ['고덕강일 3단지 토지임대부', '광교 자연앤 센트레빌 59㎡ 지분적립형', '하남교산 신혼희망타운']) {
     for (const flags of [{ priceCap: false, publicDistrict: false }, { priceCap: true, publicDistrict: true }]) {
       let models = 0;
@@ -804,13 +804,57 @@ test('the average price is weighted by supply households, or a simple mean when 
   assert.equal(averagePriceOf([model(50000, 100), model(70000, 300)]), 65000);
   // 세대수를 모르는 주택형이 있으면 단순 평균
   assert.equal(averagePriceOf([model(50000, 100), model(70000, null)]), 60000);
-  assert.equal(averagePriceOf([model(50000, 0), model(70000, 300)]), 60000);
+  // 0세대인 주택형은 가중치가 0이다: [059A 0세대 4.0억, 084A 300세대 7.0억] → 7.0억
+  assert.equal(averagePriceOf([{ ...model(40000, 0), houseType: '059A' }, { ...model(70000, 300), houseType: '084A' }]), 70000);
+  // 세대수 합이 0이면 단순 평균
+  assert.equal(averagePriceOf([model(40000, 0), model(70000, 0)]), 55000);
   // 가격이 없는 주택형은 뺀다.
   assert.equal(averagePriceOf([model(50000, 100), model(null, 900), model(0, 900)]), 50000);
   assert.equal(averagePriceOf([]), null);
   assert.equal(averagePriceOf(null), null);
   assert.equal(averagePriceOf([model(null, 10)]), null);
   assert.equal(averagePriceOf([model(50001, 1), model(50002, 2)]), 50002);
+});
+
+test('a failed model lookup on a restricted notice is soft, not an error', async () => {
+  const errors = [];
+  const soft = [];
+  const once = [];
+  const result = await evaluateLotto(apt({ name: '하남교산 신혼희망타운' }), {
+    config,
+    today,
+    getModels: async () => { throw new TypeError('fetch failed'); },
+    getTrades: async () => [],
+    onError: (kind) => errors.push(kind),
+    onSoft: (kind) => soft.push(kind),
+    onSoftOnce: (kind) => once.push(kind),
+  });
+  assert.equal(result.status, STATUS.OUT_OF_SCOPE);
+  assert.equal(result.averagePrice, null);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(soft, []);
+  assert.deepEqual(once, ['average_price_lookup_failed']);
+});
+
+test('a model outage across restricted notices is logged once per run and sends no error mail', async () => {
+  const rows = ['하남교산 신혼희망타운', '고덕강일 3단지 토지임대부', '광교 지분적립형'].map((name, index) => aptRow({ HOUSE_MANAGE_NO: String(20 + index), HOUSE_NM: name }));
+  const base = worldFetch({ rows });
+  let modelCalls = 0;
+  const fetch = async (url) => {
+    if (String(url).includes('getAPTLttotPblancMdl')) {
+      modelCalls += 1;
+      throw new TypeError('fetch failed');
+    }
+    return base.fetch(url);
+  };
+  const h = harness({ fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // 첫 공고에서 재시도 한 주기 뒤 장애로 보고 이후 공고는 호출하지 않는다.
+  assert.equal(modelCalls, 3);
+  assert.equal(errorMail(h), undefined);
+  assert.ok(marketLine(h).endsWith('soft=average_price_lookup_failed:1'), marketLine(h));
+  assert.equal(h.store.state.upserts.length, 3);
+  assert.ok(h.store.state.upserts.every((item) => !Object.hasOwn(item.properties, '평균 분양가')));
 });
 
 test('the average price is recorded for triggered, priced and undetermined notices alike', async () => {
