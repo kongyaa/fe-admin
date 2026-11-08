@@ -8,8 +8,7 @@ const DAYS_PER_MONTH = 30.4375;
 const EPSILON = 1e-9;
 
 export const CONFIDENCE = { HIGH: '상', MID: '중', LOW: '하' };
-// 판별 근거에서 단지끼리 비교하기 쉽게 보정 단가를 84㎡ 기준 금액으로 보여 준다.
-export const REFERENCE_AREA_M2 = 84;
+
 
 const compact = (value) => String(value ?? '').replace(/\s+/g, '').toLowerCase();
 
@@ -215,16 +214,51 @@ const sameName = (a, b, { allowSubstring, minLength, minDistinctive, brand }) =>
 
 // 공고 단지의 거래를 찾는다. 이름이 같거나, 같은 법정동의 같은 지번이면 같은 단지로 본다.
 // 법정동을 모르면 시군구 전체와 비교하게 되므로 부분 일치를 인정하지 않는다.
+// 국토부 법정동 이름(umdNm)은 '역삼동', '화도읍 마석우리', '마석우리'처럼 올 수 있다. 실응답의 형식은 확인하지 못해 모두 받는다.
+export function parseLocality(text) {
+  const tokens = String(text ?? '').trim().split(/\s+/).filter(Boolean);
+  return {
+    town: tokens.find((token) => /(읍|면)$/.test(token)) ?? null,
+    village: tokens.find((token) => /리$/.test(token)) ?? null,
+    dong: tokens.find((token) => /(동|가)$/.test(token)) ?? null,
+  };
+}
+
+// 공고 단지의 위치. umd가 읍·면이면 village(리)를 함께 쓴다. 테스트가 umd를 바꿔 넣을 수 있어 매번 계산한다.
+export function subjectLocality(subject) {
+  const umd = subject.umd ?? '';
+  return {
+    town: /(읍|면)$/.test(umd) ? umd : null,
+    village: subject.village ?? null,
+    dong: /(동|가)$/.test(umd) ? umd : null,
+  };
+}
+
+const localityKind = (place) => (place.dong ? 'dong' : place.town || place.village ? 'town' : null);
+const finestPlace = (place) => place.village ?? place.dong ?? place.town;
+
+// 두 위치가 서로 다른 곳임이 확실한지 본다. 한쪽에 없는 단위는 판단에 쓰지 않는다.
+export function localityConflict(a, b) {
+  const kindA = localityKind(a);
+  const kindB = localityKind(b);
+  if (kindA && kindB && kindA !== kindB) return true;
+  return ['town', 'village', 'dong'].some((part) => a[part] && b[part] && a[part] !== b[part]);
+}
+
+const sameFinestPlace = (a, b) => !localityConflict(a, b) && Boolean(finestPlace(a)) && finestPlace(a) === finestPlace(b);
+
 function sameComplexRows(rows, subject, area, { market, lotto }) {
+  const place = subjectLocality(subject);
   const nameRule = {
-    allowSubstring: Boolean(subject.umd),
+    allowSubstring: Boolean(finestPlace(place)),
     minLength: market.sameComplex.minNameLength,
     minDistinctive: market.sameComplex.minDistinctiveLength,
     brand: market.adjustment.brand,
   };
   return nearArea(rows, area, lotto).filter((row) => {
-    if (subject.umd && row.umd && subject.umd !== row.umd) return false;
-    if (subject.jibun && row.jibun && subject.jibun === row.jibun && subject.umd && subject.umd === row.umd) return true;
+    const rowPlace = parseLocality(row.umd);
+    if (localityConflict(place, rowPlace)) return false;
+    if (subject.jibun && row.jibun && subject.jibun === row.jibun && sameFinestPlace(place, rowPlace)) return true;
     return sameName(subject.name, row.aptName, nameRule);
   });
 }
@@ -264,7 +298,7 @@ const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : C
 // 역 보정 상태. used: 적용, noInput: 공고 단지 입력 없음, noData: 입력은 있지만 비교 단지 값이 부족함
 export const STATION = { USED: 'used', NO_INPUT: 'noInput', NO_DATA: 'noData' };
 
-export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false, lastStepMinComplexes = Infinity }, confidence) {
+export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false, lastStepMinComplexes = Infinity, forceLow = false }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
   if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
@@ -284,6 +318,8 @@ export function comparableConfidence({ samples, comparables, spread, looError, s
   }
   // 같은 법정동에 거래가 충분했는데 연식 때문에 시군구로 넓혔으면 위치가 다른 만큼 한 단계 내린다.
   if (scopePenalty) level = lowerOneLevel(level);
+  // 읍·면 공고 단지를 시군구 전체 단지로 쟀으면 다른 시장일 수 있어 하다.
+  if (forceLow) level = CONFIDENCE.LOW;
   return presaleOk ? level : lowerOneLevel(level);
 }
 
@@ -346,8 +382,21 @@ export function selectComparables(complexes, subject, { market, lotto }) {
   const { preferMaxAgeYears, ageWidenSteps, minComplexes, maxComparables } = market.comparables;
   const steps = [preferMaxAgeYears, ...ageWidenSteps];
   const total = (list) => list.reduce((sum, complex) => sum + complex.samples, 0);
-  const sameDong = subject.umd ? complexes.filter((complex) => complex.umd === subject.umd) : [];
-  const scopes = [['법정동', sameDong], ['시군구', complexes]];
+  const place = subjectLocality(subject);
+  const within = (test) => complexes.filter((complex) => {
+    const other = parseLocality(complex.umd);
+    return !localityConflict(place, other) && test(other);
+  });
+  // 동 주소는 법정동, 시군구 순이다. 읍·면 주소는 리, 같은 읍·면, 시군구 순이다. 큰 시군구 안의 다른 생활권을 먼저 쓰지 않게 한다.
+  const scopes = place.town
+    ? [
+      ...(place.village ? [['리', within((other) => other.village === place.village)]] : []),
+      // 같은 읍·면 안의 다른 리는 다른 곳이 아니라 넓힌 범위다. 리가 달라도 받는다.
+      ['읍·면', complexes.filter((complex) => parseLocality(complex.umd).town === place.town)],
+      ['시군구', complexes],
+    ]
+    : [['법정동', place.dong ? within((other) => other.dong === place.dong) : []], ['시군구', complexes]];
+  const firstPool = scopes[0][1];
   for (const [ageStep, maxAge] of steps.entries()) {
     const anyAge = maxAge === null;
     for (const [scope, pool] of scopes) {
@@ -357,8 +406,10 @@ export function selectComparables(complexes, subject, { market, lotto }) {
       if (total(eligible) < lotto.minSamples) continue;
       if (!anyAge && eligible.length < minComplexes) continue;
       const picked = [...eligible].sort((a, b) => b.samples - a.samples).slice(0, maxComparables);
-      const scopePenalty = scope === '시군구' && total(sameDong) >= lotto.minSamples;
-      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge, scopePenalty };
+      // 가장 좁은 범위에 거래가 충분했는데 연식 때문에 넓혔으면 한 단계 내린다.
+      const scopePenalty = scope !== scopes[0][0] && total(firstPool) >= lotto.minSamples;
+      const townWide = Boolean(place.town) && scope === '시군구';
+      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge, scopePenalty, townWide };
     }
   }
   return null;
@@ -428,11 +479,15 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       lastAgeStep: scoped.lastAgeStep,
       scopePenalty: scoped.scopePenalty,
       lastStepMinComplexes: market.safeValue.minComplexesForLoo,
+      forceLow: scoped.townWide,
     }, market.confidence),
     basis: {
       kind: 'comparables',
       scope: scoped.scope,
       maxAge: scoped.maxAge,
+      townWide: scoped.townWide,
+      // 근거의 금액은 공고 주택형 면적 기준이다. 작은 주택형의 ㎡당 가격을 84㎡로 늘리면 실제보다 비싸 보인다.
+      area: model.area,
       outliers,
       stationState,
       walkMinutes: subject.walkMinutes,
@@ -444,7 +499,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
         brandRatio: complex.brandRatio,
         ageRatio: complex.ageRatio,
         // 근거 표시용 84㎡ 환산 보정 단가(만원)
-        reference: Math.round(complex.adjustedUnit * REFERENCE_AREA_M2),
+        reference: Math.round(complex.adjustedUnit * model.area),
         walkBand: useStation ? complex.walkBand ?? null : null,
       })),
     },
@@ -492,11 +547,12 @@ export function lookupCandidates({ models, rows, subject, lotto, market, today }
   return [...seen.values()].sort((a, b) => b.samples - a.samples);
 }
 
-export function buildSubject({ name, builder, umd, jibun, walkMinutes = null, market }) {
+export function buildSubject({ name, builder, umd, village = null, jibun, walkMinutes = null, market }) {
   return {
     name,
     builder,
     umd: umd ?? null,
+    village,
     jibun: jibun ?? null,
     brandTier: brandTier({ name, builder }, market.adjustment.brand),
     // 공고 단지는 입주 전이므로 신축으로 본다.

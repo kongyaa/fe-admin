@@ -15,7 +15,9 @@ import {
   groupComplexes,
   leadBuilder,
   leaveOneOutError,
+  localityConflict,
   lookupCandidates,
+  parseLocality,
   normalizeComplexName,
   matchApartment,
   parseWalkMinutes,
@@ -382,6 +384,56 @@ test('widening to the 시군구 while the 법정동 had enough trades lowers con
   assert.equal(result.confidence, CONFIDENCE.LOW);
 });
 
+test('읍·면·리 and 동 names are parsed and compared by their parts', () => {
+  assert.deepEqual(parseLocality('화도읍 마석우리'), { town: '화도읍', village: '마석우리', dong: null });
+  assert.deepEqual(parseLocality('마석우리'), { town: null, village: '마석우리', dong: null });
+  assert.deepEqual(parseLocality('다산동'), { town: null, village: null, dong: '다산동' });
+  assert.deepEqual(parseLocality('청평면'), { town: '청평면', village: null, dong: null });
+  const subjectPlace = { town: '화도읍', village: '마석우리', dong: null };
+  assert.equal(localityConflict(subjectPlace, parseLocality('화도읍 마석우리')), false);
+  assert.equal(localityConflict(subjectPlace, parseLocality('마석우리')), false);
+  assert.equal(localityConflict(subjectPlace, parseLocality('화도읍')), false);
+  assert.equal(localityConflict(subjectPlace, parseLocality('')), false);
+  assert.equal(localityConflict(subjectPlace, parseLocality('화도읍 가곡리')), true);
+  assert.equal(localityConflict(subjectPlace, parseLocality('오남읍 양지리')), true);
+  assert.equal(localityConflict(subjectPlace, parseLocality('다산동')), true);
+  assert.equal(localityConflict({ town: null, village: null, dong: '역삼동' }, parseLocality('삼성동')), true);
+});
+
+const namyangju = (umd, village) => ({ umd, village });
+
+test('읍·면 subjects look in the same 리, then the same 읍·면, before the whole 시군구', () => {
+  const pick = (allRows, place) => selectComparables(groupComplexes(allRows, 84, context), subject(place), context);
+  const dasan = ['다산가', '다산나', '다산다'].flatMap((name, index) => rows(20, 1230, { aptName: name, umd: '다산동', jibun: `d${index}`, buildYear: 2019 }));
+  const oNamVillage = [...rows(3, 700, { aptName: '오남가', umd: '오남읍 양지리', jibun: 'o1', buildYear: 2016 }), ...rows(3, 720, { aptName: '오남나', umd: '오남읍 양지리', jibun: 'o2', buildYear: 2018 })];
+  const village = pick([...dasan, ...oNamVillage], namyangju('오남읍', '양지리'));
+  assert.equal(village.scope, '리');
+  assert.equal(village.townWide, false);
+  assert.ok(village.picked.every((item) => item.umd.startsWith('오남읍')));
+
+  const oNamTown = [...rows(3, 700, { aptName: '오남가', umd: '오남읍 오남리', jibun: 'o1', buildYear: 2016 }), ...rows(3, 720, { aptName: '오남나', umd: '오남읍 신정리', jibun: 'o2', buildYear: 2018 })];
+  const town = pick([...dasan, ...oNamTown], namyangju('오남읍', '양지리'));
+  assert.equal(town.scope, '읍·면');
+  assert.equal(town.townWide, false);
+
+  const none = pick(dasan, namyangju('오남읍', '양지리'));
+  assert.equal(none.scope, '시군구');
+  assert.equal(none.townWide, true);
+  // 동 주소는 예전처럼 법정동, 시군구 순이고 시군구여도 하로 묶지 않는다.
+  const dong = pick(dasan, namyangju('별내동', null));
+  assert.equal(dong.scope, '시군구');
+  assert.equal(dong.townWide, false);
+});
+
+test('a 읍·면 subject valued from the whole 시군구 is 하 and its reason says so', () => {
+  const dasan = ['다산가', '다산나', '다산다', '다산라'].flatMap((name, index) => rows(20, 1230, { aptName: name, umd: '다산동', jibun: `d${index}`, buildYear: 2019 }));
+  const result = estimate(dasan, { subjectExtra: namyangju('오남읍', '양지리') });
+  assert.equal(result.basis.townWide, true);
+  assert.equal(result.confidence, CONFIDENCE.LOW);
+  // 같은 단지 4곳, 표본 80건이면 동 주소에서는 역 도보 입력이 없어 중이다.
+  assert.equal(estimate(dasan, { subjectExtra: namyangju('별내동', null) }).confidence, CONFIDENCE.MID);
+});
+
 test('brand spellings are only replaced at a word start, not inside other words', () => {
   assert.equal(normalizeComplexName('BUS클래스'), 'bus클래스');
   assert.equal(normalizeComplexName('SKIPARK'), 'skipark');
@@ -468,9 +520,10 @@ test('regression: a new-town subject is valued from new-town complexes, not the 
   assert.equal(result.safeValue, GWANGGYO_EXPECTED.safeValue);
   assert.equal(result.margin, GWANGGYO_EXPECTED.margin);
   assert.equal(result.confidence, GWANGGYO_EXPECTED.confidence);
-  // 근거의 금액은 공고 주택형 면적이 아니라 84㎡ 기준 보정 금액이다.
+  // 근거의 금액은 공고 주택형 면적(84.6192㎡) 기준 보정 금액이다.
+  assert.equal(result.basis.area, 84.6192);
   assert.deepEqual(result.basis.comparables.map((item) => [item.name, item.reference]), [
-    ['광교호반베르디움', 140929], ['광교중흥에스클래스', 185206], ['광교아이파크', 150709], ['힐스테이트광교', 189909],
+    ['광교호반베르디움', 141968], ['광교중흥에스클래스', 186571], ['광교아이파크', 151820], ['힐스테이트광교', 191309],
   ]);
 });
 

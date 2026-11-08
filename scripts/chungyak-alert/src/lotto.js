@@ -51,6 +51,8 @@ function stationText(basis) {
   return '역 도보 미입력, 역 보정 없음';
 }
 
+const areaText = (area) => String(Number(area.toFixed(1)));
+
 const ageScope = (maxAge) => (maxAge === null ? '연식 무관' : `${maxAge}년 이내`);
 
 // 판별 근거에는 쓴 비교 단지를 모두 적는다. 단지명은 국토부 공개 자료다. Notion 한도 2000자 안에 든다.
@@ -62,7 +64,8 @@ function basisText(basis) {
     .map((item) => `${item.name || '이름 없음'} ${eok(item.reference)}(${item.walkBand ? `${item.walkBand}, ` : ''}브랜드 ${percent(item.brandRatio)}, 연식 ${percent(item.ageRatio)})`)
     .join(', ');
   const outliers = basis.outliers > 0 ? `, 이상치 ${basis.outliers}곳 제외` : '';
-  return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${basis.scope}, ${ageScope(basis.maxAge)}${outliers}), 보정 후 84㎡ 환산: ${names}`;
+  const scope = basis.townWide ? '시군구, 같은 읍·면 표본 부족으로 신뢰도 하' : basis.scope;
+  return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${scope}, ${ageScope(basis.maxAge)}${outliers}), 보정 후 ${areaText(basis.area)}㎡ 기준: ${names}`;
 }
 
 function safeText(best) {
@@ -84,10 +87,12 @@ const topPriceOf = (models) => {
   return prices.length > 0 ? Math.max(...prices) : null;
 };
 
-function subjectJibun(address, umd) {
-  if (!umd) return null;
+// 지번은 가장 작은 지역 단위(리가 있으면 리, 없으면 동·읍·면) 바로 뒤의 숫자다.
+function subjectJibun(address, umd, village) {
+  const place = village ?? umd;
+  if (!place) return null;
   const tokens = String(address ?? '').replace(/[(),]/g, ' ').trim().split(/\s+/);
-  const next = tokens[tokens.indexOf(umd) + 1] ?? '';
+  const next = tokens[tokens.indexOf(place) + 1] ?? '';
   return /^\d+(-\d+)?$/.test(next) ? next : null;
 }
 
@@ -164,7 +169,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
   let best = null;
   let undetermined = models ? null : '주택형 정보 조회 실패';
   if (models) {
-    const { code, umd } = resolveAddress(notice.address, notice.region);
+    const { code, umd, village } = resolveAddress(notice.address, notice.region);
     if (!code) {
       undetermined = '시군구 코드 미매핑';
     } else {
@@ -177,7 +182,8 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
           name: notice.name,
           builder: notice.builder,
           umd,
-          jibun: subjectJibun(notice.address, umd),
+          village,
+          jibun: subjectJibun(notice.address, umd, village),
           walkMinutes,
           market,
         });

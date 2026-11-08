@@ -7,6 +7,7 @@ import { buildKakaoText } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 import { normalizeDetail, ENDPOINTS } from '../src/sources/applyhome.js';
 import { createAptInfoClient } from '../src/sources/apt-info.js';
+import { resolveAddress } from '../src/sgg-codes.js';
 import { AppError } from '../src/util.js';
 import { collectTagNames, createMolitClient, createPresaleClient, fetchMonth, fetchPresaleMonth, formatTagNames, parseMolitXml, parsePresaleXml } from '../src/sources/molit.js';
 
@@ -700,6 +701,77 @@ test('the reason says when the measured error exceeds the discount cap or could 
   assert.ok(few.reason.includes('비교 단지가 적어 추정 시세에서 상한 20% 차감'), few.reason);
 });
 
+// 2026-11-08 실제 실행에서 빌리브센트하이(2차)가 자기 분양권 거래를 찾지 못하고 다산 신도시 단지로 계산됐다.
+// 공고 주소의 법정동이 '화도읍'으로만 읽혀, 국토부의 '화도읍 마석우리'나 '마석우리'와 글자가 달라 모두 걸러졌다.
+const BILLIVE = {
+  key: 'billive', kind: 'remainder', houseSecd: '04', region: '경기', name: '빌리브센트하이(2차)', builder: '',
+  address: '경기 남양주시 화도읍 마석우리 295-32', flags: { priceCap: false, publicDistrict: false }, stages: [],
+};
+const billivePresale = (umd) => [59000, 63000, 66000, 68000, 70000].map((amount) => ({
+  aptName: '빌리브센트하이', umd, jibun: '295-32', amount, area: 84.97, floor: 10, dealingGbn: '중개거래', dealDate: '2026-09-15', presale: true, buildYear: null,
+}));
+const dasanTrades = ['다산롯데캐슬', '다산 이편한세상자이', '다산반도유보라'].flatMap((aptName, index) => Array.from({ length: 8 }, () => ({
+  aptName, umd: '다산동', jibun: String(6000 + index), amount: 103000, area: 84.97, floor: 10, dealingGbn: '중개거래', dealDate: '2026-09-15', buildYear: 2019,
+})));
+const evaluateBillive = (presaleRows) => evaluateLotto(BILLIVE, {
+  config,
+  today,
+  getModels: async () => [{ houseType: '084.9760B', area: 84.976, price: 67700 }],
+  getTrades: async () => dasanTrades,
+  getPresale: async () => ({ rows: presaleRows, ok: true }),
+});
+
+test('빌리브센트하이(2차) in 화도읍 마석우리 is valued from its own presale trades', async () => {
+  for (const umd of ['화도읍 마석우리', '마석우리']) {
+    const result = await evaluateBillive(billivePresale(umd));
+    assert.ok(result.reason.includes('같은 단지 거래 5건(분양권 5건), 보정 없음'), `${umd}: ${result.reason}`);
+    // 분양권 5.9~7.0억의 최근 거래 가중 중위값
+    assert.ok(result.estimate >= 59000 && result.estimate <= 70000, String(result.estimate));
+    assert.ok(!result.reason.includes('다산'));
+  }
+});
+
+test('읍·면 addresses keep their 리 for the subject and its lot number', () => {
+  assert.deepEqual(resolveAddress('경기 남양주시 화도읍 마석우리 295-32', '경기'), { region: '경기', code: '41360', umd: '화도읍', village: '마석우리' });
+  assert.deepEqual(resolveAddress('경기도 가평군 청평면 청평리 1', '경기'), { region: '경기', code: '41820', umd: '청평면', village: '청평리' });
+  assert.deepEqual(resolveAddress('경기도 남양주시 오남읍 양지로 12', '경기'), { region: '경기', code: '41360', umd: '오남읍', village: null });
+  assert.deepEqual(resolveAddress('서울특별시 강남구 역삼동 1'), { region: '서울', code: '11680', umd: '역삼동', village: null });
+});
+
+test('a same-lot presale row in the same 리 counts as the same complex even under another name', async () => {
+  const sameLot = await evaluateBillive(billivePresale('화도읍 마석우리').map((row) => ({ ...row, aptName: '마석 신축 분양권' })));
+  assert.ok(sameLot.reason.includes('같은 단지 거래 5건'), sameLot.reason);
+  // 같은 지번이라도 다른 리면 같은 단지가 아니다.
+  const other = await evaluateBillive(billivePresale('화도읍 가곡리').map((row) => ({ ...row, aptName: '마석 신축 분양권' })));
+  assert.ok(!other.reason.includes('같은 단지 거래'), other.reason);
+  // 지역을 모르는 행이나 읍만 있는 행은 지번이 같아도 같은 단지로 보지 않는다.
+  for (const umd of ['', '화도읍']) {
+    const unknown = await evaluateBillive(billivePresale(umd).map((row) => ({ ...row, aptName: '마석 신축 분양권' })));
+    assert.ok(!unknown.reason.includes('같은 단지 거래'), `${umd}: ${unknown.reason}`);
+  }
+});
+
+test('오남읍 valued only from other parts of 남양주시 is 하 and the reason says why', async () => {
+  const notice = { ...BILLIVE, key: 'onam', name: '오남역 서희스타힐스', address: '경기 남양주시 오남읍 양지리 1' };
+  const result = await evaluateLotto(notice, {
+    config,
+    today,
+    getModels: async () => [{ houseType: '084.9000A', area: 84.97, price: 50000 }],
+    getTrades: async () => dasanTrades,
+    getPresale: async () => ({ rows: [], ok: true }),
+  });
+  assert.equal(result.confidence, '하');
+  assert.ok(result.reason.includes('(시군구, 같은 읍·면 표본 부족으로 신뢰도 하,'), result.reason);
+});
+
+test('a small house type shows comparables at its own area, not scaled to 84㎡', async () => {
+  const small = [...saleRows(5, 3000, { aptName: '사가정센트럴아이파크', jibun: '41', area: 59, amount: 177000 }), ...saleRows(5, 3000, { aptName: '면목동신축', jibun: '42', area: 59, amount: 177000 })];
+  const result = await evaluate(apt(), { trades: small, models: [{ houseType: '058.9900A', area: 58.99, price: 90000 }] });
+  // 59㎡ 단가 3000만 원을 브랜드 보정(÷1.05)해 58.99㎡로 곱하면 16.9억이다. 84㎡로 늘렸다면 24.0억으로 보였다.
+  assert.ok(result.reason.includes('보정 후 59㎡ 기준: 사가정센트럴아이파크 16.9억'), result.reason);
+  assert.ok(!result.reason.includes('24.0억'));
+});
+
 test('the Applyhome constructor field becomes the subject builder', () => {
   const endpoint = ENDPOINTS.find((item) => item.kind === 'apt');
   const notice = normalizeDetail(endpoint, { HOUSE_MANAGE_NO: '1', PBLANC_NO: '1', CNSTRCT_ENTRPS_NM: 'GS건설(주)', BSNS_MBY_NM: '시행사' });
@@ -1300,7 +1372,7 @@ test('the reason lists every comparable within the Notion limit and Kakao gets t
   assert.ok(reason.length <= 2000);
   assert.equal(value.reason.length, reason.length);
   for (const letter of '가나다라마바사아') assert.ok(reason.includes(`비교 단지 ${letter}`), letter);
-  assert.ok(reason.includes('보정 후 84㎡ 환산'));
+  assert.ok(reason.includes('보정 후 84㎡ 기준'));
   assert.ok(/아주 긴 이름의 비교 단지 가.* \d+\.\d억\(브랜드/.test(reason));
   assert.equal(h.kakao.length, 1);
   const text = h.kakao[0].text;
