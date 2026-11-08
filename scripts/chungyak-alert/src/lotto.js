@@ -77,7 +77,8 @@ function safeText(best) {
 }
 
 // 카카오톡용 짧은 근거. 메시지 200자 안에 들도록 마진과 신뢰도만 적는다.
-const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${Math.round(best.marginRate * 100)}% (${best.houseType}, 신뢰도 ${best.confidence})`;
+const rateText = (rate) => (Number.isFinite(rate) ? `${Math.round(rate * 100)}%(분양가 대비)` : '없음');
+const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${rateText(best.marginRate)} (${best.houseType}, 신뢰도 ${best.confidence})`;
 
 const priceText = (best) => `${shortPriceText(best)}; `
   + `${basisText(best.basis)}; ${safeText(best)}에서 분양가 ${eok(best.price)}, 옵션 ${best.optionCost}만 원, 취득세 ${best.tax}만 원 차감`;

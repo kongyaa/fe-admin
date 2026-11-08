@@ -840,6 +840,35 @@ test('평균 분양가 is written for every row that has it, kept on restricted 
   }
 });
 
+// 2026-11-08 실제 행: 의정부역 펠리스타워 양우내안애 59.98㎡, 최고 분양가 6.37억, 추정 시세 4.86억.
+// 보수 시세 대비로는 -70%였고 분양가 대비로는 -43%다.
+test('the margin rate is shown against the price (의정부 59.98㎡ example)', async () => {
+  const notice = apt({ name: '의정부역 펠리스타워 양우내안애', address: '경기 의정부시 의정부동 1', region: '경기' });
+  const trades = saleRows(5, 48600 / 59.98, { aptName: '의정부비교', umd: '의정부동', jibun: '9', area: 59.98, amount: 48600 });
+  const result = await evaluate(notice, { trades, models: [{ houseType: '059.9800A', area: 59.98, price: 63700 }] });
+  assert.equal(result.estimate, 48600);
+  // 보수 시세 48600 × 0.8 = 38880, 취득세 874만, 마진 38880 - 63700 - 1500 - 874 = -27194
+  assert.equal(result.margin, -27194);
+  assert.ok(Math.abs(result.marginRate - -27194 / 63700) < 1e-12);
+  assert.ok(result.reason.includes('마진율 -43%(분양가 대비)'), result.reason);
+  assert.ok(result.shortReason.includes('마진율 -43%(분양가 대비)'));
+  assert.ok(!result.reason.includes('-70%'));
+});
+
+test('a margin that is 20% of the price passes the rate rule even below 20% of the safety value', async () => {
+  // 보수 시세 80000(추정 100000의 80%), 마진 80000 - 63700 - 1500 - 874 = 13926.
+  // 분양가 대비 21.9%라 기준을 넘는다. 보수 시세 대비라면 17.4%였다.
+  const trades = [
+    ...saleRows(5, 100000 / 59.98, { aptName: '가비교', jibun: 'a1', area: 59.98, amount: 100000 }),
+    ...saleRows(5, 100000 / 59.98, { aptName: '나비교', jibun: 'a2', area: 59.98, amount: 100000 }),
+  ];
+  const result = await evaluate(apt(), { trades, models: [{ houseType: '059.9800A', area: 59.98, price: 63700 }] });
+  assert.equal(result.margin, 13926);
+  assert.equal(result.confidence, '중');
+  assert.equal(result.status, STATUS.LOTTO);
+  assert.ok(result.reason.includes('마진율 22%(분양가 대비)'), result.reason);
+});
+
 test('the Applyhome constructor field becomes the subject builder', () => {
   const endpoint = ENDPOINTS.find((item) => item.kind === 'apt');
   const notice = normalizeDetail(endpoint, { HOUSE_MANAGE_NO: '1', PBLANC_NO: '1', CNSTRCT_ENTRPS_NM: 'GS건설(주)', BSNS_MBY_NM: '시행사' });

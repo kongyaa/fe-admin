@@ -292,6 +292,12 @@ export function safeDiscount({ looError, spread, comparables, outliers = 0 }, sa
   return { discount: Math.min(Math.max(raw, floor), safe.maxDiscount), measured: true, exceeded: raw > safe.maxDiscount, raw };
 }
 
+// 마진율은 안전 마진을 고른 주택형의 최고 분양가(마진 계산에 쓴 가격)로 나눈 비율이다.
+// 보수 시세로 나누면 시세가 낮을수록 음수가 크게 부풀어, 분양가 대비로 바꿨다. 가격이 없거나 0이면 비율도 없다.
+export function marginRateOf(margin, price) {
+  return Number.isFinite(margin) && Number.isFinite(price) && price > 0 ? margin / price : null;
+}
+
 function candidateTotals(model, market, unitMiddle, unitLow) {
   const estimate = Math.round(unitMiddle * model.area);
   const safeValue = Math.round(unitLow * model.area);
@@ -306,7 +312,7 @@ function candidateTotals(model, market, unitMiddle, unitLow) {
     optionCost,
     tax,
     margin,
-    marginRate: margin / safeValue,
+    marginRate: marginRateOf(margin, model.price),
   };
 }
 
@@ -579,7 +585,9 @@ export function buildSubject({ name, builder, umd, village = null, jibun, walkMi
   };
 }
 
-export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon || candidate.marginRate >= lotto.minMarginRate;
+// 마진이 3억 원 이상이거나, 마진율(분양가 대비)이 20% 이상이면 가격 기준을 넘는다. 마진율이 없으면 금액만 본다.
+export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon
+  || (Number.isFinite(candidate.marginRate) && candidate.marginRate >= lotto.minMarginRate);
 
 // 가격 기준으로 로또가 되려면 신뢰도가 중 이상이어야 한다. 주택형을 고를 때도 같은 조건을 써서
 // 신뢰도 하인 주택형의 큰 마진이 기준을 넘는 다른 주택형을 가리지 않게 한다.

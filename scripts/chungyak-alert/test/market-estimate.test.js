@@ -16,6 +16,8 @@ import {
   leadBuilder,
   leaveOneOutError,
   localityConflict,
+  marginRateOf,
+  meetsPriceRule,
   lookupCandidates,
   parseLocality,
   normalizeComplexName,
@@ -509,7 +511,8 @@ const GWANGGYO = [
 const gwanggyoRows = (list) => list.flatMap(([aptName, buildYear, amount, count], index) => rows(count, amount / 84.6, { aptName, buildYear, umd: '원천동', jibun: String(100 + index), area: 84.6 }));
 // 이 커밋의 계산으로 낸 값이다. 추정 시세 15.2억, 보수 시세 12.1억(검증 오차가 상한 20%를 넘어 20% 차감), 안전 마진 2.3억.
 // 신도시 단지끼리도 13억~19억으로 퍼져 서로를 맞힌 오차가 커서 신뢰도는 하다.
-const GWANGGYO_EXPECTED = { estimate: 151820, safeValue: 121456, margin: 22999, confidence: CONFIDENCE.LOW };
+// 마진율은 분양가 대비 22999 / 93860 = 24.5%다. 보수 시세 대비였을 때는 18.9%였다.
+const GWANGGYO_EXPECTED = { estimate: 151820, safeValue: 121456, margin: 22999, marginRate: 22999 / 93860, confidence: CONFIDENCE.LOW };
 const gwanggyoModel = { houseType: '084.6192C', area: 84.6192, price: 93860 };
 const gwanggyo = (list) => estimateBestMargin({
   models: [gwanggyoModel],
@@ -535,6 +538,7 @@ test('regression: a new-town subject is valued from new-town complexes, not the 
   assert.equal(result.estimate, GWANGGYO_EXPECTED.estimate);
   assert.equal(result.safeValue, GWANGGYO_EXPECTED.safeValue);
   assert.equal(result.margin, GWANGGYO_EXPECTED.margin);
+  assert.ok(Math.abs(result.marginRate - GWANGGYO_EXPECTED.marginRate) < 1e-12);
   assert.equal(result.confidence, GWANGGYO_EXPECTED.confidence);
   // 근거의 금액은 공고 주택형 면적(84.6192㎡) 기준 보정 금액이다.
   assert.equal(result.basis.area, 84.6192);
@@ -627,7 +631,20 @@ test('margin takes the estimate less the leave-one-out error and subtracts price
   assert.equal(result.tax, 2053);
   assert.equal(result.optionCost, 1500);
   assert.equal(result.margin, 96538 - 80000 - 1500 - 2053);
-  assert.ok(Math.abs(result.marginRate - 12985 / 96538) < 1e-9);
+  // 마진율은 분양가 대비다.
+  assert.ok(Math.abs(result.marginRate - 12985 / 80000) < 1e-9);
+});
+
+test('the margin rate is the margin over the price, and missing or zero prices give no rate', () => {
+  assert.equal(marginRateOf(-27194, 63700), -27194 / 63700);
+  for (const price of [0, -1, null, undefined, Number.NaN]) assert.equal(marginRateOf(1000, price), null, String(price));
+  assert.equal(marginRateOf(Number.NaN, 63700), null);
+  // 비율이 없으면 3억 원 기준만 본다.
+  assert.equal(meetsPriceRule({ margin: 30000, marginRate: null }, lotto), true);
+  assert.equal(meetsPriceRule({ margin: 29999, marginRate: null }, lotto), false);
+  for (const marginRate of [undefined, Number.NaN]) assert.equal(meetsPriceRule({ margin: 1, marginRate }, lotto), false, String(marginRate));
+  assert.equal(meetsPriceRule({ margin: 1, marginRate: 0.2 }, lotto), true);
+  assert.equal(meetsPriceRule({ margin: 1, marginRate: 0.1999 }, lotto), false);
 });
 
 test('the safety discount trusts the measured error only with four or more complexes', () => {
