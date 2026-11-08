@@ -10,6 +10,7 @@ import { createNotionStore } from './notion-store.js';
 import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } from './notify-gmail.js';
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
 import { parseProfile } from './recommend.js';
+import { isRental } from './rental.js';
 import {
   decodeServiceKey,
   defaultSleep,
@@ -336,7 +337,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   } else {
     addError('data_key_missing');
   }
-  const notices = dedupeNotices([...applyhomeResult.notices, ...lhNotices]);
+  const collected = dedupeNotices([...applyhomeResult.notices, ...lhNotices]);
+  // 임대 공고는 판별과 저장 전에 뺀다(config.excludeRental). 건수만 남긴다.
+  const notices = collected.filter((notice) => !isRental(notice, config));
+  const rentalSkipped = collected.length - notices.length;
 
   if (!flags.dryRun && !accessToken) addError('kakao_access_token_missing');
   if (env.KAKAO_SECRET_WRITE_OUTCOME === 'failure') addError('kakao_secret_write_failed');
@@ -382,8 +386,16 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       addError(safeError(error));
     }
   }
+  // 이미 저장된 임대 행은 이번 실행에서 다루지 않고 알림 뒤에 휴지통으로 옮긴다. 관심 체크도 예외가 아니다.
+  // 이번 실행에 임대로 빠진 공고의 행은 저장된 유형과 관계없이 옮긴다.
+  const rentalKeys = new Set(collected.filter((notice) => isRental(notice, config)).map((notice) => notice.key));
+  const rentalRows = [...(dryRunRows ?? existing).values()].filter((row) => rentalKeys.has(row.key) || isRental(row, config));
+  for (const row of rentalRows) {
+    existing.delete(row.key);
+    dryRunRows?.delete(row.key);
+  }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0 };
   const records = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
@@ -508,6 +520,21 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     if (failed > 0) notionFailed = true;
   }
 
+  // 저장된 임대 행을 휴지통으로 옮긴다. 일반 실행마다 하고, 알림 뒤라 실패해도 발송을 막지 않는다.
+  if (store && rentalRows.length > 0) {
+    for (const row of rentalRows) {
+      try {
+        await store.archivePage(row.id);
+        counts.rental_archived += 1;
+        if (row.interest) counts.rental_archived_interest += 1;
+      } catch (error) {
+        notionFailed = true;
+        addError('rental_archive_failed');
+        addError(safeError(error));
+      }
+    }
+  }
+
   if (flags.dryRun) {
     const lotto = records.filter((record) => record.status === STATUS.LOTTO).length;
     const urgent = selectUrgent(records, today, config.alertRegions);
@@ -516,6 +543,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       ? ` interest_candidates=${selectInterest([...interestRows.values()], today, new Set(urgent.map((record) => record.notice.key))).length}`
       : '';
     log(`dry-run lotto=${lotto} urgent_candidates=${urgent.length}${interest}`);
+    // 휴지통으로 옮길 저장된 임대 행 수. Notion을 읽지 못했으면 남기지 않는다.
+    if (dryRunRows) log(`dry-run rental_archive_candidates=${rentalRows.length}`);
   }
   if (flags.print) {
     for (const { notice, status } of records) {
@@ -523,7 +552,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
-  log(`collected=${notices.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
+  log(`collected=${collected.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
   log(`errors=${[...errors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} ${umdFormatCounts(molit.stats(), presale.stats())} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   // 추천 기능 상태와 건수만 남긴다. 프로필 내용은 남기지 않는다.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { run } from '../src/main.js';
 import { createNotionStore, parseExistingPage } from '../src/notion-store.js';
@@ -33,13 +34,14 @@ const remainderRow = {
   PBLANC_URL: 'https://www.applyhome.co.kr/a',
 };
 
-function apiFetch(rows) {
+function apiFetch(rows, { lhRows = [], pblrentRows = [] } = {}) {
   return async (url) => {
     const text = String(url);
     if (text.includes('getRemndrLttotPblancDetail')) return Response.json({ totalCount: rows.length, data: rows });
+    if (text.includes('getPblPvtRentLttotPblancDetail')) return Response.json({ totalCount: pblrentRows.length, data: pblrentRows });
     if (text.includes('api.odcloud.kr')) return Response.json({ totalCount: 0, data: [] });
     if (text.includes('apis.data.go.kr/1613000')) return new Response('<r><resultCode>000</resultCode><totalCount>0</totalCount></r>');
-    return Response.json([{ dsList: [] }]);
+    return Response.json([{ dsList: lhRows.map((row) => ({ ...row, ALL_CNT: lhRows.length })) }]);
   };
 }
 
@@ -138,8 +140,8 @@ function realStore(fake) {
   });
 }
 
-function harness(fake, { rows = [], nowIso = THU_NOW, env = {} } = {}) {
-  const base = apiFetch(rows);
+function harness(fake, { rows = [], lhRows, pblrentRows, nowIso = THU_NOW, env = {}, config } = {}) {
+  const base = apiFetch(rows, { lhRows, pblrentRows });
   const mails = [];
   const kakao = [];
   const logs = [];
@@ -157,6 +159,7 @@ function harness(fake, { rows = [], nowIso = THU_NOW, env = {} } = {}) {
       write: () => {},
       sendMail: async (mail) => { mails.push(mail); },
       sendKakao: async (message) => { kakao.push(message); },
+      ...(config ? { config } : {}),
     },
   };
 }
@@ -292,4 +295,97 @@ test('a cleanup failure still sets the exit code', async () => {
   const h = harness(fake, { nowIso: MON_NOW });
   assert.equal(await run({ env: h.env, deps: h.deps }), 1);
   assert.ok(errorMail(h).text.includes('cleanup_failed x1'));
+});
+
+
+// ---------- 임대 제외 ----------
+const lhRow = (id, upper, detail, name) => ({
+  PAN_ID: id, PAN_NM: name, UPP_AIS_TP_NM: upper, AIS_TP_CD_NM: detail, CNP_CD_NM: '서울특별시', PAN_NT_ST_DT: '2026.11.01', CLSG_DT: '2026.11.20', DTL_URL: 'https://apply.lh.or.kr/x',
+});
+const pblrentRow = {
+  HOUSE_MANAGE_NO: '9', PBLANC_NO: '9', HOUSE_NM: '민간임대 단지', HOUSE_SECD: '0303', SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 강남구 역삼동 9',
+  RCRIT_PBLANC_DE: '20261101', SUBSCRPT_RCEPT_BGNDE: '20261105', SUBSCRPT_RCEPT_ENDDE: '20261105', PBLANC_URL: 'https://www.applyhome.co.kr/r',
+};
+const stored = (key, typeLabel, name, { start = '2026-11-10', end = '2026-12-01', interest = false } = {}) => page(key, {
+  start,
+  end,
+  extra: { 유형: { select: typeLabel ? { name: typeLabel } : null }, 주택명: { title: [{ plain_text: name }] }, 관심: { checkbox: interest } },
+});
+const rentalWorld = (extra = {}) => notionFake({
+  pages: [
+    // 이번에 수집되지 않은 임대 행
+    stored('LH-old', '임대주택 행복주택', '행복주택 단지'),
+    // 이번에 공공지원민간임대로 수집된 행. 관심을 체크했고 오늘 접수라 그대로 두면 관심 알림이 간다.
+    stored('9-9', '공공지원민간임대', '민간임대 단지', { start: THU, end: THU, interest: true }),
+    // 저장된 유형은 정할 수 없지만 이번 실행에서 임대로 빠진 LH 공고
+    stored('LH-r1', null, '공고'),
+    // 이름에 임대 단어가 있는 분양 행은 남는다.
+    stored('sale', 'APT', '공공임대 부지 민영 단지'),
+    stored('7-7', '무순위', '무순위 단지', { start: THU, end: THU }),
+  ],
+  ...extra,
+});
+const rentalSources = {
+  rows: [remainderRow],
+  lhRows: [lhRow('r1', '임대주택', '국민임대', '공고'), lhRow('s1', '분양주택', '공공분양', '국민임대 단지 옆 공공분양')],
+  pblrentRows: [pblrentRow],
+};
+const archivedIds = (fake) => fake.calls.filter((call) => call.method === 'PATCH' && call.body?.archived === true).map((call) => call.path.replace('/pages/', '')).sort();
+const rowWrites = (fake) => fake.calls.filter((call) => (call.method === 'POST' && call.path === '/pages') || (call.method === 'PATCH' && call.path.startsWith('/pages/') && call.body?.properties));
+const writtenKeys = (fake) => rowWrites(fake).map((call) => (call.method === 'POST' ? call.body.properties['고유 키'].rich_text[0].text.content : call.path.replace('/pages/id-', '')));
+const summary = (h) => h.logs.find((line) => line.startsWith('collected='));
+
+test('rental notices are skipped before evaluation and stored rental rows go to the trash after the alerts', async () => {
+  const fake = rentalWorld();
+  const h = harness(fake, rentalSources);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(summary(h).includes(' rental_skipped=2 '), summary(h));
+  assert.ok(summary(h).includes(' rental_archived=3 rental_archived_interest=1'), summary(h));
+  assert.deepEqual(archivedIds(fake), ['id-9-9', 'id-LH-old', 'id-LH-r1']);
+  // 임대 공고는 저장하지 않고, 분양 공고(이름에 임대 단어가 있어도)는 저장한다.
+  const keys = writtenKeys(fake);
+  for (const key of ['LH-r1', '9-9', 'LH-old']) assert.ok(!keys.includes(key), key);
+  for (const key of ['LH-s1', '7-7']) assert.ok(keys.includes(key), key);
+  assert.ok(!archivedIds(fake).includes('id-sale'));
+  // 관심 체크된 임대 행으로는 알림을 보내지 않는다. 무순위 로또 알림 한 건만 간다.
+  assert.deepEqual(h.kakao.map((message) => message.text.slice(0, 7)), ['[로또 청약]']);
+  // 휴지통 이동은 알림과 발송 기록 뒤다.
+  const lastRowWrite = fake.calls.lastIndexOf(rowWrites(fake).at(-1));
+  const firstArchive = fake.calls.findIndex((call) => call.body?.archived === true);
+  assert.ok(lastRowWrite < firstArchive);
+  assert.equal(errorMail(h), undefined);
+  assert.ok(!h.logs.join('\n').includes('id-'));
+});
+
+test('dry-run counts rental candidates without any write', async () => {
+  const fake = rentalWorld();
+  const h = harness(fake, { ...rentalSources });
+  await run({ argv: ['--dry-run'], env: h.env, deps: h.deps });
+  assert.deepEqual(writes(fake), []);
+  assert.ok(h.logs.includes('dry-run rental_archive_candidates=3'), h.logs.join('|'));
+  assert.ok(summary(h).includes(' rental_skipped=2 '));
+  assert.ok(summary(h).includes(' rental_archived=0 rental_archived_interest=0'));
+  assert.equal(h.kakao.length, 0);
+});
+
+test('a failed rental archive reaches the error mail after the alerts and the rest are still moved', async () => {
+  const fake = rentalWorld({ intercept: (call) => (call.path === '/pages/id-LH-old' && call.body?.archived ? new Response('body-secret', { status: 403 }) : null) });
+  const h = harness(fake, rentalSources);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.equal(h.kakao.length, 1);
+  assert.ok(summary(h).includes(' rental_archived=2 rental_archived_interest=1'), summary(h));
+  const mail = errorMail(h);
+  assert.ok(mail.text.includes('rental_archive_failed x1'));
+  assert.ok(mail.text.includes('notion_http_403 x1'));
+  assert.ok(!mail.text.includes('body-secret') && !mail.text.includes('id-LH-old'));
+});
+
+test('with excludeRental off rental notices are stored as before and nothing is archived', async () => {
+  const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+  const fake = rentalWorld();
+  const h = harness(fake, { ...rentalSources, config: { ...fileConfig, excludeRental: false } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(archivedIds(fake), []);
+  for (const key of ['LH-r1', '9-9', 'LH-s1', '7-7']) assert.ok(writtenKeys(fake).includes(key), key);
+  assert.ok(summary(h).includes(' rental_skipped=0 '));
 });
