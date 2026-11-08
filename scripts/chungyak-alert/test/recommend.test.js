@@ -50,31 +50,38 @@ test('the special track with the most units wins, ties going 신생아, 신혼�
 });
 
 test('an APT notice with eligible special units recommends that special supply and mentions 일반 1순위', () => {
+  // 특별공급 전형마다 짧은 이름이다.
+  assert.equal(recommend(apt(), [model({ 신생아: 30 })]).track, '특별(신생아)');
+  assert.equal(recommend(apt(), [model({ 생애최초: 30 })]).track, '특별(생애최초)');
   const result = recommend(apt(), [model({ 신생아: 10, 신혼부부: 30, 생애최초: 20 })]);
-  assert.equal(result.track, '신혼부부 특별공급');
+  assert.equal(result.track, '특별(신혼부부)');
   assert.equal(result.date, '2026-11-09');
   assert.equal(result.end, '2026-11-09');
   assert.equal(result.text, '추천: 신혼부부 특별공급 11/9 (30세대, 1순위 해당지역 11/10도 가능; 세대주·청약통장 요건 확인)');
   // 특별공급 접수일이 없으면 일반 1순위로 간다.
   const noSpecialStage = recommend(apt({ stages: stages().filter((stage) => stage.name !== '특별공급') }), [model({ 신혼부부: 30 })]);
-  assert.equal(noSpecialStage.track, '1순위 해당지역');
+  assert.equal(noSpecialStage.track, '1순위');
 });
 
 test('without eligible special units the 일반 1순위 date follows the residence category', () => {
   const none = [model({ 신생아: 0, 신혼부부: 0, 생애최초: 0 })];
   const seoul = recommend(apt(), none);
-  assert.deepEqual([seoul.track, seoul.date], ['1순위 해당지역', '2026-11-10']);
+  assert.deepEqual([seoul.track, seoul.date], ['1순위', '2026-11-10']);
   assert.equal(seoul.text, '추천: 1순위 해당지역 11/10 (세대주·청약통장 요건 확인)');
   // 거주 기간이 짧으면 해당지역 대신 기타지역이다.
   const newcomer = recommend(apt(), none, { ...PROFILE, residenceYears: 1 });
-  assert.deepEqual([newcomer.track, newcomer.date], ['1순위 기타지역', '2026-11-11']);
+  // 추천 전형 열은 거주 구분과 관계없이 1순위이고, 구분은 판별 근거의 추천 줄에만 적는다.
+  assert.deepEqual([newcomer.track, newcomer.date, newcomer.text], ['1순위', '2026-11-11', '추천: 1순위 기타지역 11/11 (세대주·청약통장 요건 확인)']);
   // 인천 거주자의 경기·서울 공고는 기타지역이다.
-  assert.equal(recommend(apt({ region: '경기' }), none).track, '1순위 기타지역');
-  assert.equal(recommend(apt({ region: '서울' }), null).track, '1순위 기타지역');
+  for (const region of ['경기', '서울']) {
+    const other = recommend(apt({ region }), none);
+    assert.deepEqual([other.track, other.date], ['1순위', '2026-11-11'], region);
+    assert.ok(other.text.startsWith('추천: 1순위 기타지역 11/11'), other.text);
+  }
   // 경기 거주자의 경기 공고는 같은 시·군인지 알 수 없어 기타경기로 보고 안내한다.
   const gyeonggi = recommend(apt({ region: '경기' }), none, { ...PROFILE, residenceSido: '경기' });
-  assert.equal(gyeonggi.track, '1순위 기타경기');
-  assert.ok(gyeonggi.text.includes('같은 시·군 거주면 해당지역'));
+  assert.deepEqual([gyeonggi.track, gyeonggi.date], ['1순위', '2026-11-10']);
+  assert.equal(gyeonggi.text, '추천: 1순위 기타경기 11/10 (세대주·청약통장 요건 확인, 같은 시·군 거주면 해당지역)');
   // 고른 구분의 접수일이 없으면 추천하지 않는다.
   assert.equal(recommend(apt({ stages: [{ name: '1순위 기타', start: '2026-11-11', end: null }] }), none), null);
   assert.equal(recommend(apt({ stages: [{ name: '접수', start: '2026-11-11', end: null }] }), none), null);
@@ -88,20 +95,20 @@ test('a candidate whose 접수 has ended is skipped, and nothing is recommended 
   assert.equal(recommend(notice, units, PROFILE, '2026-11-09').text, '추천: 신혼부부 특별공급 11/9 (30세대, 1순위 해당지역 11/10도 가능; 세대주·청약통장 요건 확인)');
   // 다음 날에는 특별공급이 끝나 일반 1순위다.
   const next = recommend(notice, units, PROFILE, '2026-11-10');
-  assert.deepEqual([next.track, next.date, next.end, next.text], ['1순위 해당지역', '2026-11-10', '2026-11-10', '추천: 1순위 해당지역 11/10 (세대주·청약통장 요건 확인)']);
+  assert.deepEqual([next.track, next.date, next.end, next.text], ['1순위', '2026-11-10', '2026-11-10', '추천: 1순위 해당지역 11/10 (세대주·청약통장 요건 확인)']);
   assert.equal(recommend(notice, units, PROFILE, '2026-11-11'), null);
   // 여러 날 접수는 마감일까지, 마감일이 없으면 시작일까지 열려 있다.
   const multi = apt({ stages: [{ name: '특별공급', start: '2026-11-09', end: '2026-11-12' }, { name: '1순위 해당', start: '2026-11-13', end: null }] });
-  assert.equal(recommend(multi, units, PROFILE, '2026-11-12').track, '신혼부부 특별공급');
-  assert.equal(recommend(multi, units, PROFILE, '2026-11-13').track, '1순위 해당지역');
+  assert.equal(recommend(multi, units, PROFILE, '2026-11-12').track, '특별(신혼부부)');
+  assert.equal(recommend(multi, units, PROFILE, '2026-11-13').track, '1순위');
   assert.equal(recommend(multi, units, PROFILE, '2026-11-14'), null);
   // 일반 1순위가 이미 끝났으면 특별공급 근거에 '도 가능'을 적지 않는다.
   const generalFirst = apt({ stages: [{ name: '1순위 해당', start: '2026-11-10', end: '2026-11-10' }, { name: '특별공급', start: '2026-11-12', end: '2026-11-12' }] });
   assert.equal(recommend(generalFirst, units, PROFILE, '2026-11-11').text, '추천: 신혼부부 특별공급 11/12 (30세대; 세대주·청약통장 요건 확인)');
   // 마감일이 시작일보다 이르면 잘못된 자료라 시작일 하루 접수로 본다.
   const backwards = apt({ stages: [{ name: '특별공급', start: '2026-11-09', end: '2026-11-03' }, { name: '1순위 해당', start: '2026-11-10', end: '2026-11-10' }] });
-  assert.equal(recommend(backwards, units, PROFILE, '2026-11-09').track, '신혼부부 특별공급');
-  assert.equal(recommend(backwards, units, PROFILE, '2026-11-10').track, '1순위 해당지역');
+  assert.equal(recommend(backwards, units, PROFILE, '2026-11-09').track, '특별(신혼부부)');
+  assert.equal(recommend(backwards, units, PROFILE, '2026-11-10').track, '1순위');
   const backwardsOnly = apt({ kind: 'remainder', houseSecd: '04', stages: [{ name: '무순위 접수', start: '2026-11-12', end: '2026-11-01' }] });
   assert.equal(recommend(backwardsOnly, null, PROFILE, '2026-11-12').track, '무순위');
   assert.equal(recommend(backwardsOnly, null, PROFILE, '2026-11-13'), null);
@@ -114,8 +121,11 @@ test('a candidate whose 접수 has ended is skipped, and nothing is recommended 
 test('remainder, resupply and arbitrary notices recommend their own 접수일', () => {
   const stage = [{ name: '무순위 접수', start: '2026-11-12', end: '2026-11-13' }];
   assert.deepEqual(recommend(apt({ kind: 'remainder', houseSecd: '04', stages: stage }), null), { track: '무순위', date: '2026-11-12', end: '2026-11-13', text: '추천: 무순위 11/12' });
-  assert.equal(recommend(apt({ kind: 'remainder', houseSecd: '06', stages: stage }), null).track, '불법행위 재공급');
-  assert.equal(recommend(apt({ kind: 'arbitrary', houseSecd: '', stages: stage }), null).track, '임의공급');
+  // 열에는 짧은 이름, 판별 근거에는 원래 이름을 적는다.
+  const resupply = recommend(apt({ kind: 'remainder', houseSecd: '06', stages: stage }), null);
+  assert.deepEqual([resupply.track, resupply.text], ['재공급', '추천: 불법행위 재공급 11/12']);
+  const arbitrary = recommend(apt({ kind: 'arbitrary', houseSecd: '', stages: stage }), null);
+  assert.deepEqual([arbitrary.track, arbitrary.text], ['임의공급', '추천: 임의공급 11/12']);
   assert.equal(recommend(apt({ kind: 'remainder', houseSecd: '04', stages: [] }), null), null);
 });
 
@@ -124,7 +134,7 @@ test('out-of-region, restricted, LH and other kinds get no recommendation, nor d
   assert.equal(recommend(apt({ region: '부산' }), units), null);
   assert.equal(recommend(apt({ region: null }), units), null);
   // 같은 시도 거주자라면 수도권 밖 공고도 추천한다.
-  assert.equal(recommend(apt({ region: '부산' }), units, { ...PROFILE, residenceSido: '부산' }).track, '신혼부부 특별공급');
+  assert.equal(recommend(apt({ region: '부산' }), units, { ...PROFILE, residenceSido: '부산' }).track, '특별(신혼부부)');
   assert.equal(recommend(apt({ name: '하남교산 신혼희망타운' }), units), null);
   assert.equal(recommend(apt({ name: '고덕강일 3단지 토지임대부' }), units), null);
   for (const kind of ['lh', 'urbty', 'pblrent']) assert.equal(recommend(apt({ kind }), units), null, kind);
@@ -140,7 +150,7 @@ test('evaluation carries the recommendation in the stored reason only, never the
     getTrades: async () => [],
   });
   const withProfile = await evaluate(PROFILE);
-  assert.equal(withProfile.recommendation.track, '신혼부부 특별공급');
+  assert.equal(withProfile.recommendation.track, '특별(신혼부부)');
   assert.ok(withProfile.reason.endsWith('\n추천: 신혼부부 특별공급 11/9 (30세대, 1순위 해당지역 11/10도 가능; 세대주·청약통장 요건 확인)'), withProfile.reason);
   assert.ok(!JSON.stringify(withProfile).includes('residence'));
   const without = await evaluate(null);
@@ -151,7 +161,7 @@ test('evaluation carries the recommendation in the stored reason only, never the
   assert.equal(outside.recommendation, null);
   // 오늘 기준으로 접수가 끝난 단계는 추천하지 않는다.
   const later = await evaluateLotto(apt({ address: '서울특별시 강남구 역삼동 1' }), { config, today: '2026-11-10', profile: PROFILE, getModels: async () => [model({ 신혼부부: 30 })], getTrades: async () => [] });
-  assert.equal(later.recommendation.track, '1순위 해당지역');
+  assert.equal(later.recommendation.track, '1순위');
 });
 
 test('a failed APT model lookup keeps the stored recommendation instead of recomputing it', async () => {
@@ -171,16 +181,16 @@ test('a failed APT model lookup keeps the stored recommendation instead of recom
   const off = await evaluateLotto(notice, { config, today, profile: null, getModels: async () => { throw new Error('down'); }, getTrades: async () => [] });
   assert.ok(!off.reason.includes('추천'), off.reason);
   // 조회가 되면 다시 계산한다. 무순위는 주택형 자료를 쓰지 않아 조회 실패와 관계없이 계산한다.
-  assert.equal((await evaluate(async () => [model({ 신혼부부: 30 })])).recommendation.track, '신혼부부 특별공급');
+  assert.equal((await evaluate(async () => [model({ 신혼부부: 30 })])).recommendation.track, '특별(신혼부부)');
   const remainder = await evaluateLotto(apt({ kind: 'remainder', houseSecd: '04', stages: [{ name: '무순위 접수', start: '2026-11-12', end: null }] }), { config, today, profile: PROFILE, getModels: async () => { throw new Error('down'); }, getTrades: async () => [] });
   assert.equal(remainder.recommendation.track, '무순위');
 });
 
 test('추천 전형 and 추천 접수일 are written when on, cleared when there is no recommendation, untouched when off', () => {
   const notice = { key: '1-1', name: '공고단지', region: '인천', typeLabel: 'APT', stages: [] };
-  const recommendation = { track: '신혼부부 특별공급', date: '2026-11-09', end: '2026-11-10', text: '추천' };
+  const recommendation = { track: '특별(신혼부부)', date: '2026-11-09', end: '2026-11-10', text: '추천' };
   const on = buildProperties(notice, { status: '아님', recommendation }, today);
-  assert.deepEqual(on['추천 전형'], { select: { name: '신혼부부 특별공급' } });
+  assert.deepEqual(on['추천 전형'], { select: { name: '특별(신혼부부)' } });
   assert.deepEqual(on['추천 접수일'], { date: { start: '2026-11-09', end: '2026-11-10' } });
   const oneDay = buildProperties(notice, { status: '아님', recommendation: { ...recommendation, end: '2026-11-09' } }, today);
   assert.deepEqual(oneDay['추천 접수일'], { date: { start: '2026-11-09' } });
@@ -192,8 +202,8 @@ test('추천 전형 and 추천 접수일 are written when on, cleared when there
     assert.equal(Object.hasOwn(off, '추천 전형'), false);
     assert.equal(Object.hasOwn(off, '추천 접수일'), false);
   }
-  const parsed = parseExistingPage({ id: 'p', properties: { '고유 키': { rich_text: [{ plain_text: 'k' }] }, '추천 전형': { select: { name: '생애최초 특별공급' } }, '추천 접수일': { date: { start: '2026-11-09', end: '2026-11-10' } } } });
-  assert.deepEqual([parsed.recommendTrack, parsed.recommendDate, parsed.recommendEnd], ['생애최초 특별공급', '2026-11-09', '2026-11-10']);
+  const parsed = parseExistingPage({ id: 'p', properties: { '고유 키': { rich_text: [{ plain_text: 'k' }] }, '추천 전형': { select: { name: '특별(생애최초)' } }, '추천 접수일': { date: { start: '2026-11-09', end: '2026-11-10' } } } });
+  assert.deepEqual([parsed.recommendTrack, parsed.recommendDate, parsed.recommendEnd], ['특별(생애최초)', '2026-11-09', '2026-11-10']);
 });
 
 test('the workflow passes the profile secret only to the batch step', () => {
