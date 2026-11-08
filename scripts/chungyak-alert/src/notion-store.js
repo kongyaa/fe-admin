@@ -11,7 +11,6 @@ const P = {
   type: '유형',
   region: '공급지역',
   address: '주소',
-  announce: '모집공고일',
   start: '접수 시작일',
   end: '접수 종료일',
   special: '특별공급 접수일',
@@ -33,7 +32,6 @@ const P = {
   source: '소스',
   collected: '마지막 수집일',
   urgent: '긴급 알림 발송일',
-  sequence: '순번',
   interest: '관심',
 };
 
@@ -49,7 +47,6 @@ const DB_SCHEMA = {
   [P.type]: { select: {} },
   [P.region]: { select: {} },
   [P.address]: { rich_text: {} },
-  [P.announce]: { date: {} },
   [P.start]: { date: {} },
   [P.end]: { date: {} },
   [P.special]: { date: {} },
@@ -75,7 +72,6 @@ const DB_SCHEMA = {
   [P.source]: { select: {} },
   [P.collected]: { date: {} },
   [P.urgent]: { date: {} },
-  [P.sequence]: { number: { format: 'number' } },
   [P.interest]: { checkbox: {} },
 };
 
@@ -95,7 +91,6 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
     [P.type]: selectProp(notice.typeLabel),
     [P.region]: selectProp(notice.region),
     [P.address]: textProp(notice.address),
-    [P.announce]: dateProp(notice.announceDate),
     [P.start]: dateProp(notice.overallStart),
     [P.end]: dateProp(notice.overallEnd),
     [P.special]: dateProp(firstStageDate(notice.stages, '특별공급')),
@@ -139,29 +134,17 @@ export function parseExistingPage(page) {
     urgentDate: props[P.urgent]?.date?.start?.slice(0, 10) ?? null,
     end: props[P.end]?.date?.start?.slice(0, 10) ?? null,
     start: props[P.start]?.date?.start?.slice(0, 10) ?? null,
-    sequence: props[P.sequence]?.number ?? null,
     // 같은 이름의 다른 타입 속성은 체크로 보지 않는다.
     interest: props[P.interest]?.checkbox === true,
     name: (props[P.name]?.title ?? []).map((part) => part.plain_text).join(''),
+    // 임대 정리에 쓴다(src/rental.js).
+    typeLabel: props[P.type]?.select?.name ?? null,
     link: props[P.link]?.url ?? null,
     walkMinutes: Number.isFinite(walk) && walk >= 0 ? walk : null,
     recommendTrack: props[P.recommendTrack]?.select?.name ?? null,
     recommendDate: props[P.recommendDate]?.date?.start?.slice(0, 10) ?? null,
     recommendEnd: props[P.recommendDate]?.date?.end?.slice(0, 10) ?? null,
   };
-}
-
-const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-
-// 접수 시작일 오름차순, 날짜 없는 행은 맨 뒤, 같으면 고유 키 순이다. 실행 환경과 무관하도록 로캘 비교를 쓰지 않는다.
-export function computeSequenceNumbers(rows) {
-  return [...rows]
-    .sort((a, b) => {
-      if (a.start && b.start) return compareText(a.start, b.start) || compareText(a.key, b.key);
-      if (a.start || b.start) return a.start ? -1 : 1;
-      return compareText(a.key, b.key);
-    })
-    .map((row, index) => ({ ...row, number: index + 1 }));
 }
 
 export function createNotionStore({ key, parentPageId, config, sources, fetch, sleep = defaultSleep, minIntervalMs = MIN_INTERVAL_MS }) {
@@ -172,7 +155,6 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   let outage = null;
   // 휴지통으로 옮긴 직후의 조회에 남아 있어도 이번 실행에서는 세지 않는다.
   const archivedIds = new Set();
-  let sequenceConflict = false;
   // 이번 실행에서 쓸 속성 이름. 이름 변경이 실패하면 옛 이름으로 저장해 모든 행이 400으로 실패하지 않게 한다.
   let columns = DEFAULT_COLUMNS;
   const schemaIssues = [];
@@ -229,23 +211,6 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     },
     { idempotent: false },
   );
-
-  // 기존 DB에 순번 속성이 없을 때만 추가한다. 순번은 표시용이라 실패해도 수집과 알림을 막지 않는다.
-  // 장애면 다음 호출이 같은 오류로 멈추고, 속성이 계속 없으면 순번 갱신이 sequence_failed로 드러난다.
-  async function ensureSequenceProperty(properties) {
-    try {
-      const property = properties[P.sequence];
-      if (property?.type === 'number') return;
-      // 같은 이름의 다른 타입 속성은 사용자의 것일 수 있어 바꾸지 않고, 이번 실행의 순번 갱신만 건너뛴다.
-      if (property) {
-        sequenceConflict = true;
-        return;
-      }
-      await request('PATCH', `/databases/${databaseId}`, { properties: { [P.sequence]: DB_SCHEMA[P.sequence] } });
-    } catch {
-      // 위 주석 참고
-    }
-  }
 
   // 기존 DB에 관심 속성이 없을 때만 추가한다. 실패해도 수집과 알림을 막지 않고 다음 실행에서 다시 시도한다.
   // 같은 이름의 다른 타입 속성은 사용자의 것일 수 있어 바꾸지 않는다.
@@ -331,7 +296,6 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       recommendDate: await ensureTypedColumn(properties, P.recommendDate, 'date'),
     };
     await ensureWalkProperty(properties);
-    await ensureSequenceProperty(properties);
     await ensureInterestProperty(properties);
   }
 
@@ -415,14 +379,6 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
 
     // 오류 메일에 건수만 남길 고정 식별자 목록이다.
     schemaIssues: () => [...schemaIssues],
-
-    checkSequenceProperty() {
-      if (sequenceConflict) throw new AppError('sequence_property_conflict');
-    },
-
-    async setSequenceNumber(pageId, number) {
-      await request('PATCH', `/pages/${pageId}`, { properties: { [P.sequence]: { number } } });
-    },
 
     async getWeeklyState() {
       // 캐시만 읽지만, 장애 중에는 발송 기록을 남길 수 없으므로 주간 메일을 막는다.
