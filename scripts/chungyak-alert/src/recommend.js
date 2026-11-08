@@ -67,13 +67,16 @@ export function pickSpecialTrack(models, tracks) {
 }
 
 const stageOf = (notice, prefix) => notice.stages.find((stage) => stage.name.startsWith(prefix) && stage.start) ?? null;
+// 접수 마감일(없으면 시작일)이 오늘 이후면 아직 접수할 수 있다.
+const isOpen = (stage, today) => Boolean(stage) && (stage.end ?? stage.start) >= today;
 const remainderTrack = (notice) => {
   if (notice.kind === 'arbitrary') return '임의공급';
   return notice.houseSecd === '06' ? '불법행위 재공급' : '무순위';
 };
 
 // 추천이 없으면 null이다. 결과는 { track, date, end, text }이고 text는 판별 근거에 붙이는 한 줄이다.
-export function recommendTrack({ notice, models, profile, config }) {
+// 접수가 끝나지 않은 첫 후보(특별공급, 일반 1순위 순)를 고르고, 모두 끝났으면 추천하지 않는다.
+export function recommendTrack({ notice, models, profile, config, today }) {
   if (!profile) return null;
   if (!['apt', 'remainder', 'arbitrary'].includes(notice.kind)) return null;
   if (restrictedType(notice, config.market)) return null;
@@ -81,19 +84,20 @@ export function recommendTrack({ notice, models, profile, config }) {
 
   if (notice.kind !== 'apt') {
     const main = notice.stages.find((stage) => stage.start) ?? null;
-    if (!main) return null;
+    if (!isOpen(main, today)) return null;
     const track = remainderTrack(notice);
     return { track, date: main.start, end: main.end ?? null, text: `추천: ${track} ${shortDate(main.start)}` };
   }
 
   const category = residenceCategory(notice, profile, config.recommendation);
   const generalStage = stageOf(notice, GENERAL_STAGES[category]);
-  const general = generalStage ? { track: `1순위 ${category}`, stage: generalStage } : null;
+  const general = isOpen(generalStage, today) ? { track: `1순위 ${category}`, stage: generalStage } : null;
   const special = pickSpecialTrack(models, profile.specialTracks);
   const specialStage = stageOf(notice, '특별공급');
+  const specialOpen = isOpen(specialStage, today);
   const checks = '세대주·청약통장 요건 확인';
 
-  if (special && specialStage) {
+  if (special && specialOpen) {
     const alsoGeneral = general ? `, ${general.track} ${shortDate(general.stage.start)}도 가능` : '';
     return {
       track: `${special.track} 특별공급`,

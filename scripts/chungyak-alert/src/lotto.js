@@ -72,7 +72,7 @@ function basisText(basis) {
 function safeText(best) {
   if (best.basis.kind === 'same') return `하위 25% 시세 ${eok(best.safeValue)}`;
   const percentText = `${Math.round(best.discount * 100)}%`;
-  if (!best.discountMeasured) return `보수 시세 ${eok(best.safeValue)}(비교 단지가 적어 오차를 재지 못해 차감 없음, 신뢰도 하)`;
+  if (!best.discountMeasured) return `보수 시세 ${eok(best.safeValue)}(비교 단지가 적어 오차를 재지 못해 차감 없음)`;
   if (best.discountExceeded) return `보수 시세 ${eok(best.safeValue)}(검증 오차가 상한 ${percentText}를 넘어 ${percentText}만 차감, 실제 위험은 더 큼)`;
   return `보수 시세 ${eok(best.safeValue)}(추정 시세에서 검증 오차 ${percentText} 차감)`;
 }
@@ -149,13 +149,22 @@ async function readPresale(getPresale, code, months) {
 // 추천 문구는 저장되는 판별 근거에만 붙이고, 카카오톡의 짧은 근거에는 넣지 않는다. 프로필 내용은 어디에도 적지 않는다.
 export async function evaluateLotto(notice, options) {
   let models = null;
+  let modelsFailed = false;
   const getModels = async (target) => {
-    models = await options.getModels(target);
+    try {
+      models = await options.getModels(target);
+    } catch (error) {
+      modelsFailed = true;
+      throw error;
+    }
+    if (!models) modelsFailed = true;
     return models;
   };
   const evaluation = await evaluatePrice(notice, { ...options, getModels });
   if (!options.profile) return evaluation;
-  const recommendation = recommendTrack({ notice, models, profile: options.profile, config: options.config });
+  // APT 주택형 조회가 실패하면 특별공급 세대를 몰라 저장된 추천을 그대로 둔다. 실행마다 추천이 바뀌지 않게 한다.
+  if (notice.kind === 'apt' && modelsFailed) return evaluation;
+  const recommendation = recommendTrack({ notice, models, profile: options.profile, config: options.config, today: options.today });
   if (!recommendation) return { ...evaluation, recommendation: null };
   return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${recommendation.text}` : recommendation.text };
 }

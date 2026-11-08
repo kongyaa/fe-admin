@@ -703,9 +703,12 @@ test('the reason says when the measured error exceeds the discount cap or could 
   assert.ok(over.reason.includes('검증 오차가 상한 10%를 넘어 10%만 차감, 실제 위험은 더 큼'), over.reason);
   assert.ok(!over.reason.includes('20%'));
   assert.equal(over.confidence, '하');
+  // 서로 같은 단지 2곳은 오차를 재지 못해 차감하지 않지만 신뢰도는 중이라, 가격 기준으로 로또가 된다.
   const few = await evaluate(apt(), { trades: [...saleRows(5, 2500), ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })] });
-  assert.ok(few.reason.includes('비교 단지가 적어 오차를 재지 못해 차감 없음, 신뢰도 하'), few.reason);
-  assert.equal(few.confidence, '하');
+  assert.ok(few.reason.includes('(비교 단지가 적어 오차를 재지 못해 차감 없음)'), few.reason);
+  assert.ok(!few.reason.includes('신뢰도 하'), few.reason);
+  assert.equal(few.confidence, '중');
+  assert.equal(few.status, STATUS.LOTTO);
   assert.equal(few.estimate * 1, few.margin + 100000 + 1500 + 3300);
 });
 
@@ -1325,7 +1328,7 @@ function fakeStore(existing = new Map()) {
   };
 }
 
-function harness({ store = fakeStore(), fetch, env = {}, argv } = {}) {
+function harness({ store = fakeStore(), fetch, env = {}, argv, now = THU_NOW } = {}) {
   const mails = [];
   const kakao = [];
   const logs = [];
@@ -1343,7 +1346,7 @@ function harness({ store = fakeStore(), fetch, env = {}, argv } = {}) {
       store,
       accessToken: 'token',
       sleep: noSleep,
-      now: () => new Date(THU_NOW),
+      now: () => new Date(now),
       log: (line) => logs.push(line),
       write: (line) => written.push(line),
       sendMail: async (mail) => { mails.push(mail); },
@@ -1746,12 +1749,25 @@ test('tag name lines say none when an API returned no items', async () => {
 // 테스트용 가짜 신청자 정보다. 인천 거주자라 서울 공고의 일반 1순위는 기타지역이다.
 const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTracks":["생애최초"]}';
 const lowTrades = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount: '84,000' }));
-function recommendWorld({ specials = { NWWDS_HSHLDCO: '30', NWBB_HSHLDCO: '10', LFE_FRST_HSHLDCO: '20' } } = {}) {
-  const row = aptRow({ GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-06', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-06', GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-07', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-07' });
+function recommendWorld({ specials = { NWWDS_HSHLDCO: '30', NWBB_HSHLDCO: '10', LFE_FRST_HSHLDCO: '20' }, dates = {}, modelsDown = false } = {}) {
+  const row = aptRow({ GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-06', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-06', GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-07', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-07', ...dates });
   const base = worldFetch({ rows: [row], trades: lowTrades });
-  return async (url) => (String(url).includes('getAPTLttotPblancMdl')
-    ? Response.json({ totalCount: 1, data: [{ HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '100,000', SUPLY_HSHLDCO: '40', SPSPLY_HSHLDCO: '60', ...specials }] })
-    : base.fetch(url));
+  return async (url) => {
+    if (!String(url).includes('getAPTLttotPblancMdl')) return base.fetch(url);
+    if (modelsDown) return new Response('down', { status: 500 });
+    return Response.json({ totalCount: 1, data: [{ HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '100,000', SUPLY_HSHLDCO: '40', SPSPLY_HSHLDCO: '60', ...specials }] });
+  };
+}
+// 신청자 정보가 로그, 메일, Notion 속성 어디에도 없는지 본다. 키 이름뿐 아니라 가짜 값 자체도 찾는다.
+// 공고는 서울이라 '인천'이 나오면 신청자 정보에서 온 것이다.
+const PROFILE_VALUES = ['residenceSido', 'residenceYears', 'specialTracks', '인천', '거주 3년', '3년 거주'];
+function assertNoProfile(h, profileText) {
+  const everything = JSON.stringify([h.logs, h.mails, h.kakao, h.store.state.upserts.map((item) => item.properties), h.store.state.stamps]);
+  for (const secret of [profileText, ...profileText.split('\n').map((line) => line.trim()).filter((line) => line.length > 1), ...PROFILE_VALUES]) {
+    assert.ok(!everything.includes(secret), secret);
+  }
+  // 가리는 명령 말고는 값의 어느 줄도 로그로 쓰지 않는다.
+  for (const line of h.written.filter((item) => !item.startsWith('::add-mask::'))) assert.ok(!line.includes('인천'), line);
 }
 
 test('a run with a profile stores the recommended track and date and never the profile', async () => {
@@ -1764,8 +1780,28 @@ test('a run with a profile stores the recommended track and date and never the p
   assert.equal(value.status, '아님');
   assert.ok(h.logs.includes('recommend profile=ok recommended=1 none=0'));
   assert.ok(h.written.includes(`::add-mask::${PROFILE_JSON}`));
-  const everything = JSON.stringify([h.logs, h.mails, h.store.state.upserts.map((item) => item.properties)]);
-  for (const secret of [PROFILE_JSON, 'residenceSido', 'residenceYears', 'specialTracks']) assert.ok(!everything.includes(secret), secret);
+  assertNoProfile(h, PROFILE_JSON);
+});
+
+test('a multi-line profile is masked line by line, so no line reaches the log unmasked', async () => {
+  const pretty = JSON.stringify(JSON.parse(PROFILE_JSON), null, 2);
+  const h = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: pretty, GITHUB_ACTIONS: 'true' } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(h.logs.includes('recommend profile=ok recommended=1 none=0'));
+  const masks = h.written.filter((line) => line.startsWith('::add-mask::'));
+  // 한 줄에 하나씩이고, 줄바꿈이 든 가림 명령은 없다.
+  assert.ok(masks.every((line) => !line.includes('\n')), masks.join('|'));
+  for (const line of ['"residenceSido": "인천",', '"residenceYears": 3,', '"specialTracks": [', '"생애최초"']) {
+    assert.ok(masks.includes(`::add-mask::${line}`), line);
+  }
+  // 괄호만 있는 줄은 가리지 않는다.
+  assert.ok(!masks.includes('::add-mask::{') && !masks.includes('::add-mask::]') && !masks.includes('::add-mask::}'), masks.join('|'));
+  assertNoProfile(h, pretty);
+  // GitHub Actions 밖에서는 가림 명령을 쓰지 않는다.
+  const local = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: pretty } });
+  await run({ env: local.env, deps: local.deps });
+  assert.ok(!local.written.some((line) => line.includes('인천')));
+  assertNoProfile(local, pretty);
 });
 
 test('a missing or invalid profile turns the feature off without an error mail or Notion writes', async () => {
@@ -1807,6 +1843,44 @@ test('interest alerts go out on the freshly computed recommended date, overlayin
   assert.ok(h.kakao[0].text.startsWith('[관심 청약] '), h.kakao[0].text);
   assert.ok(h.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05'), h.kakao[0].text);
   assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
+});
+
+test('once the special supply has ended the next open 1순위 date is recommended and alerted on that day', async () => {
+  // 특별공급 11/9, 1순위(해당지역·기타지역) 11/10. 11/10 실행이다.
+  const dates = {
+    SPSPLY_RCEPT_BGNDE: '2026-11-09', SPSPLY_RCEPT_ENDDE: '2026-11-09',
+    GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-10', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-10',
+    GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-10', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-10',
+  };
+  const stored = interestRow({ start: '2026-11-09', end: '2026-11-10', recommendTrack: '생애최초 특별공급', recommendDate: '2026-11-09', recommendEnd: '2026-11-09' });
+  const h = harness({ store: fakeStore(stored), fetch: recommendWorld({ dates }), env: { CHUNGYAK_PROFILE: PROFILE_JSON }, now: '2026-11-09T22:30:00Z' });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ properties }] = h.store.state.upserts;
+  assert.deepEqual(properties['추천 전형'], { select: { name: '1순위 기타지역' } });
+  assert.deepEqual(properties['추천 접수일'], { date: { start: '2026-11-10' } });
+  assert.ok(properties['판별 근거'].rich_text[0].text.content.endsWith('\n추천: 1순위 기타지역 11/10 (세대주·청약통장 요건 확인)'));
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.includes('1순위 기타지역 오늘 접수 2026-11-10'), h.kakao[0].text);
+  assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: '2026-11-10' }]);
+});
+
+test('a failed model lookup keeps the stored recommendation between runs instead of flipping it', async () => {
+  // 첫 실행은 주택형 조회가 되어 생애최초 특별공급(THU)을 추천한다.
+  const first = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  await run({ env: first.env, deps: first.deps });
+  assert.deepEqual(first.store.state.upserts[0].properties['추천 전형'], { select: { name: '생애최초 특별공급' } });
+  // 다음 실행에서 조회가 실패하면 일반 1순위로 바꾸지 않고 저장된 추천을 그대로 둔다.
+  const stored = interestRow({ start: THU, recommendTrack: '생애최초 특별공급', recommendDate: THU, recommendEnd: THU });
+  const second = harness({ store: fakeStore(stored), fetch: recommendWorld({ modelsDown: true }), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  await run({ env: second.env, deps: second.deps });
+  const [{ properties }] = second.store.state.upserts;
+  assert.equal(Object.hasOwn(properties, '추천 전형'), false);
+  assert.equal(Object.hasOwn(properties, '추천 접수일'), false);
+  assert.ok(!properties['판별 근거'].rich_text[0].text.content.includes('추천:'));
+  assert.ok(second.logs.includes('recommend profile=ok recommended=0 none=0'));
+  // 관심 알림도 저장된 추천으로 간다.
+  assert.equal(second.kakao.length, 1);
+  assert.ok(second.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05'), second.kakao[0].text);
 });
 
 test('without a profile the stored recommended date is used, and without one the start date', async () => {

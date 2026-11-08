@@ -321,7 +321,7 @@ const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : C
 // 역 보정 상태. used: 적용, noInput: 공고 단지 입력 없음, noData: 입력은 있지만 비교 단지 값이 부족함
 export const STATION = { USED: 'used', NO_INPUT: 'noInput', NO_DATA: 'noData' };
 
-export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false, lastStepMinComplexes = Infinity, forceLow = false, discountMeasured = true, discountExceeded = false }, confidence) {
+export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false, lastStepMinComplexes = Infinity, forceLow = false, discountExceeded = false }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
   if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
@@ -343,8 +343,6 @@ export function comparableConfidence({ samples, comparables, spread, looError, s
   if (scopePenalty) level = lowerOneLevel(level);
   // 읍·면 공고 단지를 시군구 전체 단지로 쟀으면 다른 시장일 수 있어 하다.
   if (forceLow) level = CONFIDENCE.LOW;
-  // 오차를 측정하지 못해 할인하지 않은 추정은 하다. 가격 기준만으로 로또가 되지 못한다.
-  if (!discountMeasured) level = CONFIDENCE.LOW;
   // 측정한 오차가 할인 상한을 넘으면 보수 시세가 실제 위험을 다 담지 못하므로 하다.
   if (discountExceeded) level = CONFIDENCE.LOW;
   return presaleOk ? level : lowerOneLevel(level);
@@ -506,7 +504,6 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       lastAgeStep: scoped.lastAgeStep,
       scopePenalty: scoped.scopePenalty,
       lastStepMinComplexes: market.safeValue.minComplexesForLoo,
-      discountMeasured: safe.measured,
       discountExceeded: safe.exceeded,
       forceLow: scoped.townWide,
     }, market.confidence),

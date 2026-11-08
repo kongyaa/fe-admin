@@ -15,6 +15,7 @@ import {
   defaultSleep,
   kstToday,
   maskServiceKey,
+  maskLines,
   maskValue,
   safeError,
   safeHttpUrl,
@@ -312,7 +313,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const accessToken = deps.accessToken !== undefined ? deps.accessToken : readAccessToken(env);
   maskValue(accessToken, env, write);
   // 프로필은 공개 로그와 Notion 어디에도 적지 않는다.
-  maskValue(env.CHUNGYAK_PROFILE, env, write);
+  maskLines(env.CHUNGYAK_PROFILE, env, write);
   const { profile, status: profileStatus } = parseProfile(env.CHUNGYAK_PROFILE);
 
   const sendMail = deps.sendMail ?? createGmailSender({

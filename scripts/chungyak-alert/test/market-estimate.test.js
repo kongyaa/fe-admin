@@ -669,13 +669,25 @@ test('the safety discount is only the measured error, capped at 10%, and nothing
   assert.equal(discount({ looError: 0.1 }).exceeded, false);
 });
 
-test('three agreeing sibling complexes get no discount and confidence 하', () => {
+test('two or three agreeing complexes get no discount, and confidence follows the usual 중 rules', () => {
   const allRows = ['가', '나', '다'].flatMap((name, index) => rows(5, 1500, { aptName: `${name}단지`, jibun: `${index}a` }));
   const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
   assert.equal(result.discount, 0);
   assert.equal(result.discountMeasured, false);
   assert.equal(result.safeValue, result.estimate);
-  assert.equal(result.confidence, CONFIDENCE.LOW);
+  // 오차를 재지 못한 것만으로 하가 되지 않는다. 2~3곳이 서로 같으면 중이다.
+  assert.equal(result.confidence, CONFIDENCE.MID);
+  const pair = estimate(allRows.filter((row) => row.aptName !== '다단지'), { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  assert.equal(pair.discountMeasured, false);
+  assert.equal(pair.confidence, CONFIDENCE.MID);
+  // 퍼짐이 중 기준(30%)을 넘으면 그대로 하다.
+  const apart = ['가', '나'].flatMap((name, index) => rows(5, index === 0 ? 1000 : 1600, { aptName: `${name}단지`, jibun: `${index}a` }));
+  const wide = estimate(apart, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  assert.equal(wide.discountMeasured, false);
+  assert.equal(wide.confidence, CONFIDENCE.LOW);
+  // 측정한 오차가 상한을 넘으면 여전히 하다.
+  assert.equal(comparableConfidence({ samples: 40, comparables: 6, spread: 0.1, looError: 0.05, stationState: STATION.USED, presaleOk: true, discountExceeded: true }, config.market.confidence), CONFIDENCE.LOW);
+  assert.equal(comparableConfidence({ samples: 40, comparables: 6, spread: 0.1, looError: 0.05, stationState: STATION.USED, presaleOk: true }, config.market.confidence), CONFIDENCE.HIGH);
 });
 
 test('two cheap complexes among eight do not drag the safety value down', () => {
