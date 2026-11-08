@@ -99,14 +99,15 @@ export function ageFactor(ageYears, age) {
 }
 
 // 같은 단지가 영문과 한글 브랜드 표기로 섞여 두 단지로 세지지 않게 한글 표기로 맞춘다.
+// 앞이 영문자이면 다른 낱말의 일부(BUS클래스, SKIPARK)이므로 바꾸지 않는다.
 const BRAND_SPELLINGS = [
-  [/s클래스/g, '에스클래스'],
-  [/e편한세상/g, '이편한세상'],
-  [/sk뷰/g, '에스케이뷰'],
-  [/skview/g, '에스케이뷰'],
-  [/ipark/g, '아이파크'],
-  [/hillstate/g, '힐스테이트'],
-  [/thesharp/g, '더샵'],
+  [/(^|[^a-z])s클래스/g, '$1에스클래스'],
+  [/(^|[^a-z])e편한세상/g, '$1이편한세상'],
+  [/(^|[^a-z])sk뷰/g, '$1에스케이뷰'],
+  [/(^|[^a-z])skview/g, '$1에스케이뷰'],
+  [/(^|[^a-z])ipark/g, '$1아이파크'],
+  [/(^|[^a-z])hillstate/g, '$1힐스테이트'],
+  [/(^|[^a-z])thesharp/g, '$1더샵'],
 ];
 
 export const normalizeComplexName = (name) => BRAND_SPELLINGS.reduce(
@@ -228,8 +229,6 @@ function sameComplexRows(rows, subject, area, { market, lotto }) {
   });
 }
 
-// 보수 시세에 쓰는 할인율. 비교 단지끼리 서로를 맞혀 본 오차(leave-one-out)를 쓴다. 공고 단지도 같은 방식으로
-// 맞히는 것이므로 그 오차만큼 낮춰 잡는다. 검증할 수 없으면(단지 3곳 미만) 상한을 쓴다.
 // 보수 시세에 쓰는 할인율. 단지가 minComplexesForLoo(4곳) 이상이면 서로를 맞혀 본 오차와 퍼짐(사분위 범위/중위값)의 절반 중
 // 큰 값을 쓴다. 오차의 중위값은 다수가 서로 같으면 소수의 큰 차이를 보지 못해 퍼짐으로 보완한다.
 // 단지가 적으면 둘 다 믿기 어려워 상한을 쓴다. 이상치를 뺀 경우에는 하한을 올린다. exceeded는 계산값이 상한을 넘었다는 뜻이다.
@@ -265,7 +264,7 @@ const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : C
 // 역 보정 상태. used: 적용, noInput: 공고 단지 입력 없음, noData: 입력은 있지만 비교 단지 값이 부족함
 export const STATION = { USED: 'used', NO_INPUT: 'noInput', NO_DATA: 'noData' };
 
-export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false }, confidence) {
+export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false, lastStepMinComplexes = Infinity }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
   if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
@@ -275,8 +274,14 @@ export function comparableConfidence({ samples, comparables, spread, looError, s
   }
   if (stationState === STATION.NO_INPUT && level === CONFIDENCE.HIGH) level = CONFIDENCE.MID;
   if (stationState === STATION.NO_DATA) level = lowerOneLevel(level);
-  // 연식이 비슷한 단지가 부족해 넓혔으면 한 단계, 연식을 보지 않고 골랐으면 하다.
-  if (ageStep > 0) level = ageStep >= lastAgeStep ? CONFIDENCE.LOW : lowerOneLevel(level);
+  // 연식이 비슷한 단지가 부족해 넓혔으면 한 단계 내린다. 연식을 보지 않고 골랐으면 중까지만 오르고,
+  // 단지가 lastStepMinComplexes(4곳) 미만이거나 서로 맞혀 볼 수 없거나 중 기준에 못 미치면 하다.
+  // 신축 공고 단지를 구축으로 재면 시세가 낮게 잡히므로, 그래도 기준을 넘는 마진은 오히려 작게 잡힌 쪽이다.
+  if (ageStep > 0 && ageStep < lastAgeStep) level = lowerOneLevel(level);
+  if (ageStep > 0 && ageStep >= lastAgeStep) {
+    const agreed = comparables >= lastStepMinComplexes && looError !== null && level !== CONFIDENCE.LOW;
+    level = agreed ? CONFIDENCE.MID : CONFIDENCE.LOW;
+  }
   // 같은 법정동에 거래가 충분했는데 연식 때문에 시군구로 넓혔으면 위치가 다른 만큼 한 단계 내린다.
   if (scopePenalty) level = lowerOneLevel(level);
   return presaleOk ? level : lowerOneLevel(level);
@@ -288,9 +293,13 @@ function estimateFromSameComplex(model, rows, { market, presaleOk }, context) {
   const spread = spreadOf(kept.map((item) => item.value));
   const { highSamples, highSpread } = market.sameComplex;
   const level = kept.length >= highSamples && spread <= highSpread ? CONFIDENCE.HIGH : CONFIDENCE.MID;
+  // 분양권 조회가 실패해도 매매 거래만으로 같은 단지 기준을 채우면 중 아래로 내리지 않는다.
+  const saleOnly = kept.filter((item) => !item.row.presale).length;
+  let confidence = level;
+  if (!presaleOk) confidence = saleOnly >= market.sameComplex.minSamples ? CONFIDENCE.MID : lowerOneLevel(level);
   return {
     ...candidateTotals(model, market, weightedQuantile(kept, 0.5), weightedQuantile(kept, 0.25)),
-    confidence: presaleOk ? level : lowerOneLevel(level),
+    confidence,
     basis: {
       kind: 'same',
       samples: kept.length,
@@ -418,6 +427,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       ageStep: scoped.ageStep,
       lastAgeStep: scoped.lastAgeStep,
       scopePenalty: scoped.scopePenalty,
+      lastStepMinComplexes: market.safeValue.minComplexesForLoo,
     }, market.confidence),
     basis: {
       kind: 'comparables',
@@ -498,6 +508,10 @@ export function buildSubject({ name, builder, umd, jibun, walkMinutes = null, ma
 
 export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon || candidate.marginRate >= lotto.minMarginRate;
 
+// 가격 기준으로 로또가 되려면 신뢰도가 중 이상이어야 한다. 주택형을 고를 때도 같은 조건을 써서
+// 신뢰도 하인 주택형의 큰 마진이 기준을 넘는 다른 주택형을 가리지 않게 한다.
+export const qualifiesByPrice = (candidate, lotto) => meetsPriceRule(candidate, lotto) && candidate.confidence !== CONFIDENCE.LOW;
+
 // 기준을 넘는 주택형 중 마진이 가장 큰 것을, 없으면 전체에서 마진이 가장 큰 것을 돌려준다.
 export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, lotto, market, today }) {
   const context = { market, lotto, today };
@@ -511,7 +525,7 @@ export function estimateBestMargin({ models, rows, subject, stations = new Map()
       ?? estimateFromComparables(model, rows, subject, inputs, context);
     if (!candidate) continue;
     if (!best || candidate.margin > best.margin) best = candidate;
-    if (meetsPriceRule(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) {
+    if (qualifiesByPrice(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) {
       bestQualifying = candidate;
     }
   }

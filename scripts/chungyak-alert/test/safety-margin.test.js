@@ -1226,6 +1226,22 @@ test('complexes dropped as outliers are counted in the market log line', async (
   assert.ok(h.store.state.upserts[0].evaluation.reason.includes('이상치 1곳 제외'));
 });
 
+test('a notice with a 하 large type and a 중 small type that qualifies is 로또', async () => {
+  const large = saleRows(5, 3000, { aptName: '대형가', jibun: 'L1' });
+  const small = [...saleRows(5, 1000, { aptName: '소형가', jibun: 'S1', area: 59, amount: 59000 }), ...saleRows(5, 1000, { aptName: '소형나', jibun: 'S2', area: 59, amount: 59000 })];
+  const result = await evaluate(apt(), {
+    trades: [...large, ...small],
+    models: [{ houseType: '084A', area: 84, price: 100000 }, { houseType: '059A', area: 59, price: 30000 }],
+  });
+  assert.equal(result.status, STATUS.LOTTO);
+  assert.ok(result.reason.startsWith('안전 마진'), result.reason);
+  assert.ok(result.reason.includes('059A'));
+  // 아무 주택형도 기준을 넘지 못하면 하인 주택형의 안내가 그대로 나온다.
+  const none = await evaluate(apt(), { trades: large, models: [{ houseType: '084A', area: 84, price: 100000 }] });
+  assert.equal(none.status, STATUS.NOT);
+  assert.ok(none.reason.startsWith('가격 기준은 넘지만 추정 신뢰도가 하라 로또로 보지 않음'));
+});
+
 test('a weak estimate does not create a price-rule 로또 for a new row in a full run', async () => {
   const oneComplex = [tradeTags({ name: '가단지', jibun: '100', amount: '300,000' })];
   const h = harness({ fetch: worldFetch({ trades: oneComplex }).fetch });

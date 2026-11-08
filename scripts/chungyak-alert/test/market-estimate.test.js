@@ -16,6 +16,7 @@ import {
   leadBuilder,
   leaveOneOutError,
   lookupCandidates,
+  normalizeComplexName,
   matchApartment,
   parseWalkMinutes,
   restrictedType,
@@ -381,6 +382,16 @@ test('widening to the 시군구 while the 법정동 had enough trades lowers con
   assert.equal(result.confidence, CONFIDENCE.LOW);
 });
 
+test('brand spellings are only replaced at a word start, not inside other words', () => {
+  assert.equal(normalizeComplexName('BUS클래스'), 'bus클래스');
+  assert.equal(normalizeComplexName('SKIPARK'), 'skipark');
+  assert.equal(normalizeComplexName('TASK뷰'), 'task뷰');
+  assert.equal(normalizeComplexName('NICE편한세상'), 'nice편한세상');
+  assert.equal(normalizeComplexName('광교 S클래스'), '광교에스클래스');
+  assert.equal(normalizeComplexName('SK뷰 수원'), '에스케이뷰수원');
+  assert.equal(normalizeComplexName('광교I-PARK'), '광교아이파크');
+});
+
 test('romanised and Korean brand spellings of one complex are grouped together', () => {
   const pairs = [['광교중흥S클래스', '광교중흥에스클래스'], ['시흥e편한세상', '시흥이편한세상'], ['수원SK뷰', '수원에스케이뷰'], ['광교 I-PARK', '광교아이파크'], ['동탄 HILLSTATE', '동탄힐스테이트'], ['송도 The Sharp', '송도더샵']];
   for (const [roman, korean] of pairs) {
@@ -463,11 +474,29 @@ test('regression: a new-town subject is valued from new-town complexes, not the 
   ]);
 });
 
-test('regression: with only old complexes the estimate falls back to them at confidence 하', () => {
+test('regression: with only old complexes the estimate falls back to them at no more than 중', () => {
+  // 구축 4곳이 서로 잘 맞아 중이다. 신축 공고 단지를 구축으로 재면 시세가 낮게 잡혀 마진은 작게 나오는 쪽이다.
   const result = gwanggyo(GWANGGYO.filter(([name]) => name.startsWith('원천')));
   assert.equal(result.basis.maxAge, null);
-  assert.equal(result.confidence, CONFIDENCE.LOW);
+  assert.equal(result.confidence, CONFIDENCE.MID);
   assert.ok(result.margin < 0);
+  // 3곳뿐이면 하다.
+  const three = gwanggyo(GWANGGYO.filter(([name]) => name.startsWith('원천')).slice(0, 3));
+  assert.equal(three.basis.maxAge, null);
+  assert.equal(three.confidence, CONFIDENCE.LOW);
+});
+
+test('the 연식 무관 step caps at 중 only with enough agreeing complexes', () => {
+  const base = { samples: 20, comparables: 4, spread: 0.1, looError: 0.05, stationState: STATION.USED, presaleOk: true, ageStep: 2, lastAgeStep: 2, lastStepMinComplexes: 4 };
+  const level = (extra) => comparableConfidence({ ...base, ...extra }, market.confidence);
+  assert.equal(level({}), CONFIDENCE.MID);
+  assert.equal(level({ comparables: 3 }), CONFIDENCE.LOW);
+  assert.equal(level({ looError: null }), CONFIDENCE.LOW);
+  assert.equal(level({ spread: 0.31 }), CONFIDENCE.LOW);
+  assert.equal(level({ looError: 0.21 }), CONFIDENCE.LOW);
+  // 다른 감점은 그대로 적용된다.
+  assert.equal(level({ presaleOk: false }), CONFIDENCE.LOW);
+  assert.equal(level({ scopePenalty: true }), CONFIDENCE.LOW);
 });
 
 test('apartment matching is conservative', () => {
@@ -703,6 +732,31 @@ test('confidence flows through the estimate: presale failure lowers it, and same
   const same = rows(5, 1500, { aptName: '공고단지', jibun: '9' });
   assert.equal(estimate(same).confidence, CONFIDENCE.HIGH);
   assert.equal(estimate(same, { presaleOk: false }).confidence, CONFIDENCE.MID);
+});
+
+test('a presale failure keeps a same-complex estimate at 중 when sale trades alone meet the rule', () => {
+  // 매매 3건이면 기준(3건)을 채워 중이다. 예전에는 한 단계 내려 하였다.
+  const saleOnly = rows(3, 1500, { aptName: '공고단지', jibun: '9' });
+  assert.equal(estimate(saleOnly).confidence, CONFIDENCE.MID);
+  assert.equal(estimate(saleOnly, { presaleOk: false }).confidence, CONFIDENCE.MID);
+  // 매매가 기준에 못 미치면 한 단계 내린다.
+  const mixed = [...rows(1, 1500, { aptName: '공고단지', jibun: '9' }), ...rows(2, 1500, { aptName: '공고단지', jibun: '9', presale: true, buildYear: null })];
+  assert.equal(estimate(mixed, { presaleOk: false }).confidence, CONFIDENCE.LOW);
+});
+
+test('a 하 house type with a bigger margin does not hide a 중 house type that qualifies', () => {
+  // 84㎡은 단지 1곳뿐이라 하, 59㎡은 같은 값의 단지 2곳이라 중이다.
+  const large = rows(5, 3000, { aptName: '대형가', jibun: 'L1' });
+  const small = [...rows(5, 1000, { aptName: '소형가', jibun: 'S1', area: 59 }), ...rows(5, 1000, { aptName: '소형나', jibun: 'S2', area: 59 })];
+  const result = estimate([...large, ...small], {
+    models: [{ houseType: '084A', area: 84, price: 100000 }, { houseType: '059A', area: 59, price: 30000 }],
+  });
+  assert.equal(result.houseType, '059A');
+  assert.equal(result.confidence, CONFIDENCE.MID);
+  // 84㎡ 단독이면 마진은 더 크지만 하다.
+  const largeOnly = estimate(large, { models: [{ houseType: '084A', area: 84, price: 100000 }] });
+  assert.equal(largeOnly.confidence, CONFIDENCE.LOW);
+  assert.ok(largeOnly.margin > result.margin);
 });
 
 test('lookup candidates are the comparables each model will use, and same-complex models need none', () => {

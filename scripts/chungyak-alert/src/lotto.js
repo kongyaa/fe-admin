@@ -1,4 +1,5 @@
 import {
+  CONFIDENCE,
   STATION,
   buildSubject,
   cleanTrades,
@@ -9,8 +10,6 @@ import {
   restrictedType,
 } from './market-estimate.js';
 import { resolveAddress } from './sgg-codes.js';
-
-const CONFIDENCE_LOW = '하';
 import { AppError, completeMonths, safeError } from './util.js';
 
 export const STATUS = {
@@ -220,7 +219,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
   }
   if (!best) return result(STATUS.UNDETERMINED, undetermined, price);
   // 가격 기준만으로 로또가 되려면 신뢰도가 중 이상이어야 한다. 조건형 로또는 위에서 이미 정해졌다.
-  if (meetsPriceRule(best, lotto) && best.confidence === CONFIDENCE_LOW) {
+  if (meetsPriceRule(best, lotto) && best.confidence === CONFIDENCE.LOW) {
     const note = '가격 기준은 넘지만 추정 신뢰도가 하라 로또로 보지 않음';
     return result(STATUS.NOT, `${note}; ${priceText(best)}`, { ...price, shortReason: `${note}; ${shortPriceText(best)}` });
   }
@@ -231,7 +230,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
 // 약한 추정 하나로 알림이 조용히 사라지지 않게 하려는 것이다. 아님은 가격 기준에서만 나온다.
 export function keepPreviousLotto(evaluation, previousStatus) {
   if (previousStatus !== STATUS.LOTTO) return evaluation;
-  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE_LOW;
+  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE.LOW;
   if (evaluation.status !== STATUS.UNDETERMINED && !weak) return evaluation;
   const label = weak ? '이전 판별 유지(이번 추정 신뢰도 하)' : '이전 판별 유지';
   return {
