@@ -163,7 +163,10 @@ export async function evaluateLotto(notice, options) {
   const evaluation = await evaluatePrice(notice, { ...options, getModels });
   if (!options.profile) return evaluation;
   // APT 주택형 조회가 실패하면 특별공급 세대를 몰라 저장된 추천을 그대로 둔다. 실행마다 추천이 바뀌지 않게 한다.
-  if (notice.kind === 'apt' && modelsFailed) return evaluation;
+  if (notice.kind === 'apt' && modelsFailed) {
+    const kept = '(추천: 조회 실패로 이전 값 유지)';
+    return { ...evaluation, reason: evaluation.reason ? `${evaluation.reason}\n${kept}` : kept };
+  }
   const recommendation = recommendTrack({ notice, models, profile: options.profile, config: options.config, today: options.today });
   if (!recommendation) return { ...evaluation, recommendation: null };
   return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${recommendation.text}` : recommendation.text };

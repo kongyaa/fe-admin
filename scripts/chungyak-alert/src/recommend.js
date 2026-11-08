@@ -67,8 +67,12 @@ export function pickSpecialTrack(models, tracks) {
 }
 
 const stageOf = (notice, prefix) => notice.stages.find((stage) => stage.name.startsWith(prefix) && stage.start) ?? null;
-// 접수 마감일(없으면 시작일)이 오늘 이후면 아직 접수할 수 있다.
-const isOpen = (stage, today) => Boolean(stage) && (stage.end ?? stage.start) >= today;
+// 접수 마감일이 오늘 이후면 아직 접수할 수 있다. 마감일이 없거나 시작일보다 이르면(잘못된 자료) 시작일 하루로 본다.
+const isOpen = (stage, today) => {
+  if (!stage) return false;
+  const last = stage.end && stage.end >= stage.start ? stage.end : stage.start;
+  return last >= today;
+};
 const remainderTrack = (notice) => {
   if (notice.kind === 'arbitrary') return '임의공급';
   return notice.houseSecd === '06' ? '불법행위 재공급' : '무순위';

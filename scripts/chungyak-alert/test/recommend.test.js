@@ -98,6 +98,13 @@ test('a candidate whose 접수 has ended is skipped, and nothing is recommended 
   // 일반 1순위가 이미 끝났으면 특별공급 근거에 '도 가능'을 적지 않는다.
   const generalFirst = apt({ stages: [{ name: '1순위 해당', start: '2026-11-10', end: '2026-11-10' }, { name: '특별공급', start: '2026-11-12', end: '2026-11-12' }] });
   assert.equal(recommend(generalFirst, units, PROFILE, '2026-11-11').text, '추천: 신혼부부 특별공급 11/12 (30세대; 세대주·청약통장 요건 확인)');
+  // 마감일이 시작일보다 이르면 잘못된 자료라 시작일 하루 접수로 본다.
+  const backwards = apt({ stages: [{ name: '특별공급', start: '2026-11-09', end: '2026-11-03' }, { name: '1순위 해당', start: '2026-11-10', end: '2026-11-10' }] });
+  assert.equal(recommend(backwards, units, PROFILE, '2026-11-09').track, '신혼부부 특별공급');
+  assert.equal(recommend(backwards, units, PROFILE, '2026-11-10').track, '1순위 해당지역');
+  const backwardsOnly = apt({ kind: 'remainder', houseSecd: '04', stages: [{ name: '무순위 접수', start: '2026-11-12', end: '2026-11-01' }] });
+  assert.equal(recommend(backwardsOnly, null, PROFILE, '2026-11-12').track, '무순위');
+  assert.equal(recommend(backwardsOnly, null, PROFILE, '2026-11-13'), null);
   // 무순위도 접수가 끝나면 추천하지 않는다.
   const remainder = apt({ kind: 'remainder', houseSecd: '04', stages: [{ name: '무순위 접수', start: '2026-11-12', end: '2026-11-13' }] });
   assert.equal(recommend(remainder, null, PROFILE, '2026-11-13').track, '무순위');
@@ -153,10 +160,16 @@ test('a failed APT model lookup keeps the stored recommendation instead of recom
   const evaluate = (getModels, kind = 'apt') => evaluateLotto({ ...notice, kind }, { config, today, profile: PROFILE, getModels, getTrades: async () => [], onError: (error) => errors.push(error) });
   const failed = await evaluate(async () => { throw new Error('applyhome down'); });
   assert.equal(Object.hasOwn(failed, 'recommendation'), false);
-  assert.ok(!failed.reason.includes('추천'));
+  // 저장된 추천 열은 그대로 두고, 판별 근거에는 이전 값을 유지했다고 적는다.
+  assert.ok(failed.reason.endsWith('\n(추천: 조회 실패로 이전 값 유지)'), failed.reason);
+  assert.ok(!failed.reason.includes('추천: 신혼부부'));
   assert.equal(errors.length, 1);
   const empty = await evaluate(async () => null);
   assert.equal(Object.hasOwn(empty, 'recommendation'), false);
+  assert.ok(empty.reason.endsWith('(추천: 조회 실패로 이전 값 유지)'), empty.reason);
+  // 프로필이 없으면 추천 문구를 붙이지 않는다.
+  const off = await evaluateLotto(notice, { config, today, profile: null, getModels: async () => { throw new Error('down'); }, getTrades: async () => [] });
+  assert.ok(!off.reason.includes('추천'), off.reason);
   // 조회가 되면 다시 계산한다. 무순위는 주택형 자료를 쓰지 않아 조회 실패와 관계없이 계산한다.
   assert.equal((await evaluate(async () => [model({ 신혼부부: 30 })])).recommendation.track, '신혼부부 특별공급');
   const remainder = await evaluateLotto(apt({ kind: 'remainder', houseSecd: '04', stages: [{ name: '무순위 접수', start: '2026-11-12', end: null }] }), { config, today, profile: PROFILE, getModels: async () => { throw new Error('down'); }, getTrades: async () => [] });

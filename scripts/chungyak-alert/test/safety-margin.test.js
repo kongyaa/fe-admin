@@ -1876,7 +1876,9 @@ test('a failed model lookup keeps the stored recommendation between runs instead
   const [{ properties }] = second.store.state.upserts;
   assert.equal(Object.hasOwn(properties, '추천 전형'), false);
   assert.equal(Object.hasOwn(properties, '추천 접수일'), false);
-  assert.ok(!properties['판별 근거'].rich_text[0].text.content.includes('추천:'));
+  const reason = properties['판별 근거'].rich_text[0].text.content;
+  assert.ok(reason.endsWith('\n(추천: 조회 실패로 이전 값 유지)'), reason);
+  assert.ok(!reason.includes('추천: 1순위'), reason);
   assert.ok(second.logs.includes('recommend profile=ok recommended=0 none=0'));
   // 관심 알림도 저장된 추천으로 간다.
   assert.equal(second.kakao.length, 1);

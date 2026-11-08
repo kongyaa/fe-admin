@@ -282,7 +282,7 @@ function sameComplexRows(rows, subject, area, { market, lotto }) {
 
 // 보수 시세에 쓰는 할인율. 측정한 오차만 쓴다. 단지가 minComplexesForLoo(4곳) 이상이면 서로를 맞혀 본 오차와
 // 퍼짐(사분위 범위/중위값)의 절반 중 큰 값을 maxDiscount(10%)까지 쓴다. 오차의 중위값은 다수가 서로 같으면 소수의
-// 큰 차이를 보지 못해 퍼짐으로 보완한다. 측정할 수 없으면 할인하지 않고, 신뢰도 하로 알린다(measured: false).
+// 큰 차이를 보지 못해 퍼짐으로 보완한다. 측정할 수 없으면(measured: false) 할인하지 않고 판별 근거에 적는다. 신뢰도는 낮추지 않는다.
 // exceeded는 측정값이 상한을 넘었다는 뜻이다.
 export function safeDiscount({ looError, spread, comparables }, safe) {
   if (comparables < safe.minComplexesForLoo || looError === null || !Number.isFinite(looError)) {
