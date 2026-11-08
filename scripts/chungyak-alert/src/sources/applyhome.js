@@ -85,6 +85,8 @@ export function normalizeDetail(endpoint, row) {
     pblancNo: String(row.PBLANC_NO),
     typeLabel,
     name: row.HOUSE_NM ?? '',
+    // 건설업체명(시공사). 스웨거상 APT 상세에만 있다. 다른 유형은 단지명으로 브랜드를 본다.
+    builder: row.CNSTRCT_ENTRPS_NM ?? '',
     region: normalizeRegion(row.SUBSCRPT_AREA_CODE_NM ?? row.HSSPLY_ADRES),
     address: row.HSSPLY_ADRES ?? '',
     announceDate: normalizeDate(row.RCRIT_PBLANC_DE),

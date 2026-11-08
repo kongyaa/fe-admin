@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { AppError, escapeHtml, safeHttpUrl } from './util.js';
 
-export const DISCLAIMER = '로또 여부와 시세는 실거래가 기반 추정치이며, 지원 자격은 판별하지 않습니다. 반드시 공고문을 확인하세요.';
+export const DISCLAIMER = '로또 여부, 시세, 안전 마진은 실거래가 기반 추정치이며, 지원 자격은 판별하지 않습니다. 반드시 공고문을 확인하세요.';
 
 export function createGmailSender({ user, password, to, createTransport = nodemailer.createTransport }) {
   return async ({ subject, text, html }) => {
@@ -47,13 +47,14 @@ export function buildWeeklyMail({ items, monday, sunday, warning = null, testMar
   return { subject, text, html };
 }
 
-export function buildUrgentMail({ notice, text, url }) {
+export function buildUrgentMail({ notice, text, url, reason = null }) {
   const safeUrl = safeHttpUrl(url);
-  const body = safeUrl ? `${text}\n${safeUrl}` : text;
+  const detail = reason ? `\n\n판별 근거: ${reason}` : '';
+  const body = `${text}${detail}${safeUrl ? `\n${safeUrl}` : ''}`;
   return {
     subject: `[청약 긴급] ${notice.name}`,
     text: body,
-    html: `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>${safeUrl ? `<p><a href="${escapeHtml(safeUrl)}">공고 보기</a></p>` : ''}`,
+    html: `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>${reason ? `<p>판별 근거: ${escapeHtml(reason)}</p>` : ''}${safeUrl ? `<p><a href="${escapeHtml(safeUrl)}">공고 보기</a></p>` : ''}`,
   };
 }
 

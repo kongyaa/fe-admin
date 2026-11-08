@@ -10,6 +10,7 @@ import { buildKakaoText, sendKakaoMemo } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 
 const THU = '2026-11-05';
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} } };
 const notice = (extra = {}) => ({
   key: '1-1',
   name: '테스트',
@@ -191,9 +192,9 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
   assert.deepEqual(props['1순위 접수일'], { date: { start: THU } });
   assert.deepEqual(props['마지막 수집일'], { date: { start: THU } });
 
-  const select = buildProperties(notice({ typeLabel: 'a,b' }), { status: '로또', rate: 0.25 }, THU);
+  const select = buildProperties(notice({ typeLabel: 'a,b' }), { status: '로또', marginRate: 0.25 }, THU);
   assert.equal(select['유형'].select.name, 'a b');
-  assert.equal(select['차익률'].number, 0.25);
+  assert.equal(select['마진율'].number, 0.25);
 
   const parsed = parseExistingPage({
     id: 'p',
@@ -204,7 +205,7 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
       '접수 종료일': { date: null },
     },
   });
-  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, sequence: null, interest: false, name: '', link: null });
+  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, sequence: null, interest: false, name: '', link: null, walkMinutes: null });
 });
 
 function notionFake(children = []) {
@@ -212,7 +213,7 @@ function notionFake(children = []) {
   const fetch = async (url, init) => {
     const path = new URL(url).pathname.replace('/v1', '');
     calls.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : null, headers: init.headers });
-    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { 순번: { type: 'number' }, 관심: { type: 'checkbox' } } });
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { ...MARKET_SCHEMA, 순번: { type: 'number' }, 관심: { type: 'checkbox' } } });
     if (init.method === 'GET') return Response.json({ results: children, has_more: false });
     if (path === '/databases') return Response.json({ id: 'db' });
     if (path.endsWith('/query')) return Response.json({ results: [], has_more: false });
@@ -546,7 +547,7 @@ function stalledNotionHarness({ rows = stalledNotionRows, pages = [], stall, fai
     const path = new URL(url).pathname.replace('/v1', '');
     notionCalls.push(`${init.method} ${path}`);
     if (stall(init.method, path)) throw failure;
-    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { 순번: { type: 'number' }, 관심: { type: 'checkbox' } } });
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { ...MARKET_SCHEMA, 순번: { type: 'number' }, 관심: { type: 'checkbox' } } });
     if (init.method === 'GET') {
       return Response.json({
         has_more: false,

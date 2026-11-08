@@ -50,7 +50,7 @@ export function resolveAddress(address, fallbackRegion = null) {
   const region = sido ?? fallbackRegion;
   const rest = sido ? tokens.slice(1) : tokens;
   const table = CODES[region];
-  if (!table || rest.length === 0) return { region, code: null, umd: null };
+  if (!table || rest.length === 0) return { region, code: null, umd: null, village: null };
 
   const twoTokens = `${rest[0]} ${rest[1]}`;
   let code = null;
@@ -63,6 +63,12 @@ export function resolveAddress(address, fallbackRegion = null) {
     code = table[rest[0]];
     used = 1;
   }
-  const umd = code ? rest.slice(used).find((token) => /^[가-힣0-9]+(동|읍|면|가)$/.test(token)) ?? null : null;
-  return { region, code, umd };
+  const tail = code ? rest.slice(used) : [];
+  const umdIndex = tail.findIndex((token) => /^[가-힣0-9]+(동|읍|면|가)$/.test(token));
+  const umd = umdIndex >= 0 ? tail[umdIndex] : null;
+  // 읍·면 주소는 그 아래 리까지 읽는다. 국토부 자료의 법정동 이름이 리 단위로 오기 때문이다.
+  // 리는 읍·면 바로 뒤에 올 때만 받는다. 도로명 주소 뒤의 건물명((오남센트럴밸리) 등)을 리로 읽지 않게 한다.
+  const next = umdIndex >= 0 ? tail[umdIndex + 1] ?? '' : '';
+  const village = umd && /(읍|면)$/.test(umd) && /^[가-힣0-9]+리$/.test(next) ? next : null;
+  return { region, code, umd, village };
 }
