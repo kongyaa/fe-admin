@@ -384,7 +384,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
   const presale = createPresaleClient({ fetch: fetchFn, key: dataKey, sleep, now, budgetMs: config.market.presale.budgetMs, onSoft: addSoftError });
   const aptInfo = createAptInfoClient({ fetch: fetchFn, key: dataKey, sleep, now, limits: config.market.aptInfo, onSoft: addSoftError });
-  const marketCounts = { stationUsed: 0, stationNoInput: 0, stationNoData: 0, 상: 0, 중: 0, 하: 0 };
+  const marketCounts = { complexOutliers: 0, stationUsed: 0, stationNoInput: 0, stationNoData: 0, 상: 0, 중: 0, 하: 0 };
   const stationCountNames = { used: 'stationUsed', noInput: 'stationNoInput', noData: 'stationNoData' };
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
   const interestRows = new Map(dryRunRows ?? existing);
@@ -426,6 +426,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       counts.evaluated += 1;
       if (evaluation.confidence) marketCounts[evaluation.confidence] += 1;
       if (evaluation.stationState) marketCounts[stationCountNames[evaluation.stationState]] += 1;
+      marketCounts.complexOutliers += evaluation.complexOutliers ?? 0;
       // 계산 방식이 바뀌어 로또에서 빠진 공고가 몇 건인지 건수만 남긴다. dry-run은 읽어 둔 행으로 센다.
       const stored = previous ?? dryRunRows?.get(notice.key);
       if (stored?.lotto === STATUS.LOTTO && [STATUS.NOT, STATUS.OUT_OF_SCOPE].includes(evaluation.status)) counts.lotto_demoted += 1;
@@ -434,6 +435,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       notice,
       status: evaluation?.status ?? carriedStatus(notice, previous, config),
       reason: evaluation?.reason ?? null,
+      // 카카오톡은 200자라 비교 단지 목록이 없는 짧은 근거를 쓴다. 메일 대체 발송도 같은 문구다.
+      shortReason: evaluation?.shortReason ?? evaluation?.reason ?? null,
       urgentDate: previous?.urgentDate ?? null,
       pageId: previous?.id ?? null,
     };
@@ -470,7 +473,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     // 긴급 알림은 놓치는 쪽이 더 나쁘므로 기록할 곳이 없어도 보낸다. 다음 실행과 중복될 수 있다.
     const urgent = selectUrgent(records, today, config.alertRegions);
     for (const record of urgent) {
-      const text = buildKakaoText({ notice: record.notice, stage: record.stage, reason: record.reason });
+      const text = buildKakaoText({ notice: record.notice, stage: record.stage, reason: record.shortReason ?? record.reason });
       await deliverAlert(record, text, 'urgent', alertContext);
     }
     // 발송 실패가 실제로는 전달됐을 수 있어, 로또 쪽이 실패한 공고도 이번 실행에서 다시 보내지 않는다.
@@ -524,7 +527,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   log(`collected=${notices.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
   log(`errors=${[...errors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
-  log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
+  log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);

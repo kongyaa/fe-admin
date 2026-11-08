@@ -50,19 +50,29 @@ function stationText(basis) {
   return '역 도보 미입력, 역 보정 없음';
 }
 
+const ageScope = (maxAge) => (maxAge === null ? '연식 무관' : `${maxAge}년 이내`);
+
+// 판별 근거에는 쓴 비교 단지를 모두 적는다. 단지명은 국토부 공개 자료다. Notion 한도 2000자 안에 든다.
 function basisText(basis) {
   if (basis.kind === 'same') {
     return `같은 단지 거래 ${basis.samples}건(분양권 ${basis.presaleSamples}건), 보정 없음`;
   }
   const names = basis.comparables
-    .slice(0, 3)
-    .map((item) => `${item.name || '이름 없음'}(${item.walkBand ? `${item.walkBand}, ` : ''}브랜드 ${percent(item.brandRatio)}, 연식 ${percent(item.ageRatio)})`)
+    .map((item) => `${item.name || '이름 없음'} ${eok(item.reference)}(${item.walkBand ? `${item.walkBand}, ` : ''}브랜드 ${percent(item.brandRatio)}, 연식 ${percent(item.ageRatio)})`)
     .join(', ');
-  return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${basis.scope}): ${names}`;
+  const outliers = basis.outliers > 0 ? `, 이상치 ${basis.outliers}곳 제외` : '';
+  return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${basis.scope}, ${ageScope(basis.maxAge)}${outliers}), 보정 후 84㎡ 환산: ${names}`;
 }
 
-const priceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${Math.round(best.marginRate * 100)}% (${best.houseType}, 신뢰도 ${best.confidence}); `
-  + `${basisText(best.basis)}; 하위 25% 시세 ${eok(best.safeValue)}에서 분양가 ${eok(best.price)}, 옵션 ${best.optionCost}만 원, 취득세 ${best.tax}만 원 차감`;
+const safeText = (best) => (best.basis.kind === 'same'
+  ? `하위 25% 시세 ${eok(best.safeValue)}`
+  : `보수 시세 ${eok(best.safeValue)}(추정 시세에서 검증 오차 ${Math.round(best.discount * 100)}% 차감)`);
+
+// 카카오톡용 짧은 근거. 메시지 200자 안에 들도록 마진과 신뢰도만 적는다.
+const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${Math.round(best.marginRate * 100)}% (${best.houseType}, 신뢰도 ${best.confidence})`;
+
+const priceText = (best) => `${shortPriceText(best)}; `
+  + `${basisText(best.basis)}; ${safeText(best)}에서 분양가 ${eok(best.price)}, 옵션 ${best.optionCost}만 원, 취득세 ${best.tax}만 원 차감`;
 
 const topPriceOf = (models) => {
   const prices = models.map((m) => m.price).filter((p) => p > 0);
@@ -195,20 +205,28 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
       confidence: best.confidence,
       // 건수만 센다. 같은 단지 거래로 계산하면 역 보정이 필요 없어 비어 있다.
       stationState: best.basis.stationState ?? null,
+      complexOutliers: best.outliers ?? 0,
     }
     : { topPrice };
 
   if (trigger) {
-    return result(STATUS.LOTTO, best ? `${trigger}; ${priceText(best)}` : trigger, price);
+    return result(STATUS.LOTTO, best ? `${trigger}; ${priceText(best)}` : trigger, { ...price, shortReason: best ? `${trigger}; ${shortPriceText(best)}` : trigger });
   }
   if (!best) return result(STATUS.UNDETERMINED, undetermined, price);
-  return result(meetsPriceRule(best, lotto) ? STATUS.LOTTO : STATUS.NOT, priceText(best), price);
+  return result(meetsPriceRule(best, lotto) ? STATUS.LOTTO : STATUS.NOT, priceText(best), { ...price, shortReason: shortPriceText(best) });
 }
 
-// 이번 판정이 불가여도 이미 로또로 기록된 공고는 로또를 유지한다.
+// 이번 판정이 불가이거나, 신뢰도 하인 추정이 가격 기준만으로 로또를 빼려 하면 이전 로또를 유지한다.
+// 약한 추정 하나로 알림이 조용히 사라지지 않게 하려는 것이다. 아님은 가격 기준에서만 나온다.
 export function keepPreviousLotto(evaluation, previousStatus) {
-  if (evaluation.status === STATUS.UNDETERMINED && previousStatus === STATUS.LOTTO) {
-    return { ...evaluation, status: STATUS.LOTTO, reason: `이전 판별 유지 (이번 실행: ${evaluation.reason})` };
-  }
-  return evaluation;
+  if (previousStatus !== STATUS.LOTTO) return evaluation;
+  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === '하';
+  if (evaluation.status !== STATUS.UNDETERMINED && !weak) return evaluation;
+  const label = weak ? '이전 판별 유지(이번 추정 신뢰도 하)' : '이전 판별 유지';
+  return {
+    ...evaluation,
+    status: STATUS.LOTTO,
+    reason: `${label} (이번 실행: ${evaluation.reason})`,
+    shortReason: `${label} (이번 실행: ${evaluation.shortReason ?? evaluation.reason})`,
+  };
 }

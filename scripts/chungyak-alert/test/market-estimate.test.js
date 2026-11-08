@@ -10,6 +10,7 @@ import {
   buildSubject,
   cleanTrades,
   comparableConfidence,
+  dropComplexOutliers,
   estimateBestMargin,
   groupComplexes,
   leadBuilder,
@@ -18,6 +19,8 @@ import {
   matchApartment,
   parseWalkMinutes,
   restrictedType,
+  safeDiscount,
+  selectComparables,
   spreadOf,
   stationFactor,
   weightedQuantile,
@@ -357,6 +360,85 @@ test('too few comparable values skip the station adjustment for the whole estima
   assert.equal(unmatched.estimate, 1000 * 84);
 });
 
+test('comparables close in age are preferred, widening in steps and lowering confidence', () => {
+  const pick = (allRows, extra = {}) => selectComparables(groupComplexes(allRows, 84, context), subject(extra), context);
+  const young = [...rows(5, 1500, { aptName: '신축가', jibun: '1', buildYear: 2016 }), ...rows(5, 1600, { aptName: '신축나', jibun: '2', buildYear: 2012 })];
+  const old = [...rows(40, 500, { aptName: '구축가', jibun: '3', buildYear: 1995 }), ...rows(30, 550, { aptName: '구축나', jibun: '4', buildYear: 1992 })];
+  const preferred = pick([...young, ...old]);
+  assert.equal(preferred.ageStep, 0);
+  assert.equal(preferred.maxAge, 15);
+  assert.equal(preferred.scope, '법정동');
+  assert.deepEqual(preferred.picked.map((item) => item.aptName).sort(), ['신축가', '신축나']);
+
+  // 같은 법정동에 신축이 하나뿐이면 시군구의 신축을 먼저 본다.
+  const elsewhere = [...rows(5, 1500, { aptName: '신축가', jibun: '1', buildYear: 2016 }), ...rows(5, 1600, { aptName: '옆동신축', umd: '삼성동', jibun: '9', buildYear: 2018 }), ...old];
+  const district = pick(elsewhere);
+  assert.equal(district.scope, '시군구');
+  assert.equal(district.ageStep, 0);
+
+  const middleAged = [...rows(5, 1000, { aptName: '중년가', jibun: '5', buildYear: 2004 }), ...rows(5, 1000, { aptName: '중년나', jibun: '6', buildYear: 2003 }), ...old];
+  assert.equal(pick(middleAged).ageStep, 1);
+  assert.equal(pick(middleAged).maxAge, 25);
+  const onlyOld = pick(old);
+  assert.equal(onlyOld.ageStep, 2);
+  assert.equal(onlyOld.maxAge, null);
+
+  const level = (ageStep) => comparableConfidence({ samples: 20, comparables: 4, spread: 0.1, looError: 0.05, stationState: STATION.USED, presaleOk: true, ageStep, lastAgeStep: 2 }, market.confidence);
+  assert.equal(level(0), CONFIDENCE.HIGH);
+  assert.equal(level(1), CONFIDENCE.MID);
+  assert.equal(level(2), CONFIDENCE.LOW);
+});
+
+const GWANGGYO = [
+  // 같은 법정동의 1990년대 단지. 싸고 거래가 많다. 금액은 84㎡ 기준(만원)
+  ['원천주공', 1992, 45000, 40], ['원천삼성', 1995, 52000, 35], ['원천동신', 1997, 60000, 30], ['원천한국', 1994, 55000, 25],
+  // 같은 법정동의 광교 신도시 단지
+  ['광교호반베르디움', 2012, 132000, 8], ['광교중흥에스클래스', 2019, 180000, 6], ['광교아이파크', 2018, 150000, 5],
+  ['힐스테이트광교', 2019, 190000, 4], ['영흥숲푸르지오파크비엔', 2020, 89000, 6],
+];
+const gwanggyoRows = (list) => list.flatMap(([aptName, buildYear, amount, count], index) => rows(count, amount / 84.6, { aptName, buildYear, umd: '원천동', jibun: String(100 + index), area: 84.6 }));
+// 이 커밋의 계산으로 낸 값이다. 추정 시세 15.2억, 보수 시세 12.1억(검증 오차가 상한 20%를 넘어 20% 차감), 안전 마진 2.3억.
+// 신도시 단지끼리도 13억~19억으로 퍼져 서로를 맞힌 오차가 커서 신뢰도는 하다.
+const GWANGGYO_EXPECTED = { estimate: 151820, safeValue: 121456, margin: 22999, confidence: CONFIDENCE.LOW };
+const gwanggyoModel = { houseType: '084.6192C', area: 84.6192, price: 93860 };
+const gwanggyo = (list) => estimateBestMargin({
+  models: [gwanggyoModel],
+  rows: gwanggyoRows(list),
+  subject: buildSubject({ name: '광교 자연앤 센트레빌(A17BL) 공공분양주택', builder: '', umd: '원천동', jibun: null, market }),
+  lotto,
+  market,
+  today,
+});
+
+test('regression: a new-town subject is valued from new-town complexes, not the old cheap ones in the same 법정동', () => {
+  const result = gwanggyo(GWANGGYO);
+  assert.equal(result.basis.maxAge, 15);
+  assert.equal(result.basis.scope, '법정동');
+  const names = result.basis.comparables.map((item) => item.name);
+  assert.ok(!names.some((name) => name.startsWith('원천')), names.join(','));
+  // 영흥숲푸르지오파크비엔은 보정 뒤에도 중위값의 0.7배 아래라 이상치로 빠진다.
+  assert.equal(result.outliers, 1);
+  assert.ok(!names.includes('영흥숲푸르지오파크비엔'));
+  // 추정 시세는 신도시 단지 범위(13억~19억) 안이고 안전 마진은 양수다.
+  assert.ok(result.estimate >= 130000 && result.estimate <= 190000, String(result.estimate));
+  assert.ok(result.margin > 0, String(result.margin));
+  assert.equal(result.estimate, GWANGGYO_EXPECTED.estimate);
+  assert.equal(result.safeValue, GWANGGYO_EXPECTED.safeValue);
+  assert.equal(result.margin, GWANGGYO_EXPECTED.margin);
+  assert.equal(result.confidence, GWANGGYO_EXPECTED.confidence);
+  // 근거의 금액은 공고 주택형 면적이 아니라 84㎡ 기준 보정 금액이다.
+  assert.deepEqual(result.basis.comparables.map((item) => [item.name, item.reference]), [
+    ['광교호반베르디움', 140929], ['광교중흥에스클래스', 185206], ['광교아이파크', 150709], ['힐스테이트광교', 189909],
+  ]);
+});
+
+test('regression: with only old complexes the estimate falls back to them at confidence 하', () => {
+  const result = gwanggyo(GWANGGYO.filter(([name]) => name.startsWith('원천')));
+  assert.equal(result.basis.maxAge, null);
+  assert.equal(result.confidence, CONFIDENCE.LOW);
+  assert.ok(result.margin < 0);
+});
+
 test('apartment matching is conservative', () => {
   const entry = (name, dong = '역삼동', ri = '', code = name) => ({ code, name, dong, ri });
   const match = (aptName, directory, umd = '역삼동') => matchApartment({ aptName, umd }, directory, market)?.code ?? null;
@@ -397,7 +479,7 @@ test('weighted quantile and spread arithmetic', () => {
   assert.ok(Math.abs(spreadOf([100, 110, 120, 130]) - 20 / 110) < 1e-9);
 });
 
-test('margin takes the lower quartile and subtracts price, option and acquisition tax', () => {
+test('margin takes the estimate less the leave-one-out error and subtracts price, option and acquisition tax', () => {
   const allRows = [
     ...rows(3, 1000, { aptName: '가단지', jibun: '1a', area: 100 }),
     ...rows(3, 1100, { aptName: '나단지', jibun: '2a', area: 100 }),
@@ -405,13 +487,72 @@ test('margin takes the lower quartile and subtracts price, option and acquisitio
     ...rows(3, 1300, { aptName: '라단지', jibun: '4a', area: 100 }),
   ];
   const result = estimate(allRows, { models: [{ houseType: '100A', area: 100, price: 80000 }] });
+  // 단지 4곳의 중위값(누적 가중치가 절반에 처음 닿는 값)은 1100이다.
   assert.equal(result.estimate, 110000);
-  assert.equal(result.safeValue, 100000);
+  // 서로 맞힌 오차: 1000→1200 0.2, 1100→1200 0.0909, 1200→1100 0.0833, 1300→1100 0.1538. 중위값 0.1224
+  const expectedDiscount = ((100 / 1100) + (200 / 1300)) / 2;
+  assert.ok(Math.abs(result.discount - expectedDiscount) < 1e-9);
+  assert.equal(result.safeValue, Math.round(1100 * (1 - expectedDiscount) * 100));
+  assert.equal(result.safeValue, 96538);
   // 8억의 세율은 1% + 2% × (2/3) = 2.3333%, 교육세 포함 × 1.1. 80000 × 0.0256667 = 2053
   assert.equal(result.tax, 2053);
   assert.equal(result.optionCost, 1500);
-  assert.equal(result.margin, 100000 - 80000 - 1500 - 2053);
-  assert.ok(Math.abs(result.marginRate - 16447 / 100000) < 1e-9);
+  assert.equal(result.margin, 96538 - 80000 - 1500 - 2053);
+  assert.ok(Math.abs(result.marginRate - 12985 / 96538) < 1e-9);
+});
+
+test('the safety discount is the leave-one-out error clamped to the configured range', () => {
+  const safe = market.safeValue;
+  assert.equal(safeDiscount(null, safe), safe.maxDiscount);
+  assert.equal(safeDiscount(0, safe), safe.minDiscount);
+  assert.equal(safeDiscount(0.12, safe), 0.12);
+  assert.equal(safeDiscount(0.9, safe), safe.maxDiscount);
+});
+
+test('two cheap complexes among eight do not drag the safety value down', () => {
+  const names = ['가', '나', '다', '라', '마', '바', '사', '아'];
+  const units = [1500, 1500, 1500, 1500, 1500, 1500, 1100, 1100];
+  const allRows = names.flatMap((name, index) => rows(3, units[index], { aptName: `${name}단지`, jibun: `${index}a` }));
+  const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  // 1100은 중위값 1500의 0.73배라 이상치가 아니다. 예전 하위 25%(8곳 중 2번째)라면 1100 × 84 = 92400이었다.
+  assert.equal(result.outliers, 0);
+  assert.equal(result.estimate, 1500 * 84);
+  // 6곳은 서로를 정확히 맞혀 오차 중위값이 0이고, 할인율 하한 5%가 붙는다.
+  assert.equal(result.discount, market.safeValue.minDiscount);
+  assert.equal(result.safeValue, Math.round(1500 * 0.95 * 84));
+});
+
+test('the safety discount is measured on the complexes left after outliers are dropped', () => {
+  const units = [1000, 1040, 1500, 1600, 1700, 1800];
+  const allRows = units.flatMap((unit, index) => rows(3, unit, { aptName: `${'가나다라마바'[index]}단지`, jibun: `${index}a` }));
+  const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  // 1000과 1040은 중위값 1500의 0.7배 아래라 빠지고 4곳이 남는다.
+  assert.equal(result.outliers, 2);
+  // 남은 4곳의 오차: 1500→1700, 1600→1700, 1700→1600, 1800→1600. 중위값은 가운데 둘의 평균이다.
+  const expected = (100 / 1600 + 200 / 1800) / 2;
+  assert.ok(Math.abs(result.discount - expected) < 1e-9, String(result.discount));
+});
+
+test('complexes far from the median after adjustment are dropped only when enough remain', () => {
+  const complex = (adjustedUnit) => ({ adjustedUnit });
+  const { comparables } = market;
+  const five = [1000, 1500, 1550, 1600, 2300].map(complex);
+  // 중위값 1550의 0.7배는 1085, 1.4배는 2170이다. 빼고 남는 단지가 4곳보다 적으면 빼지 않는다.
+  assert.equal(dropComplexOutliers(five, comparables).length, 5);
+  assert.deepEqual(dropComplexOutliers(five, { ...comparables, outlierMinRemaining: 3 }).map((item) => item.adjustedUnit), [1500, 1550, 1600]);
+  const six = [1000, 1500, 1550, 1600, 1650, 2300].map(complex);
+  assert.deepEqual(dropComplexOutliers(six, comparables).map((item) => item.adjustedUnit), [1500, 1550, 1600, 1650]);
+  const close = [1400, 1500, 1550, 1600].map(complex);
+  assert.equal(dropComplexOutliers(close, comparables).length, 4);
+
+  const allRows = [
+    ...rows(3, 900, { aptName: '싼단지', jibun: '0a' }),
+    ...['가', '나', '다', '라'].flatMap((name, index) => rows(3, 1500 + index * 10, { aptName: `${name}단지`, jibun: `${index + 1}a` })),
+  ];
+  const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  assert.equal(result.outliers, 1);
+  assert.ok(!result.basis.comparables.some((item) => item.name === '싼단지'));
+  assert.equal(result.basis.outliers, 1);
 });
 
 test('acquisition tax at each boundary includes the education tax', () => {

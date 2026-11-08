@@ -8,6 +8,8 @@ const DAYS_PER_MONTH = 30.4375;
 const EPSILON = 1e-9;
 
 export const CONFIDENCE = { HIGH: '상', MID: '중', LOW: '하' };
+// 판별 근거에서 단지끼리 비교하기 쉽게 보정 단가를 84㎡ 기준 금액으로 보여 준다.
+export const REFERENCE_AREA_M2 = 84;
 
 const compact = (value) => String(value ?? '').replace(/\s+/g, '').toLowerCase();
 
@@ -212,6 +214,13 @@ function sameComplexRows(rows, subject, area, { market, lotto }) {
   });
 }
 
+// 보수 시세에 쓰는 할인율. 비교 단지끼리 서로를 맞혀 본 오차(leave-one-out)를 쓴다. 공고 단지도 같은 방식으로
+// 맞히는 것이므로 그 오차만큼 낮춰 잡는다. 검증할 수 없으면(단지 3곳 미만) 상한을 쓴다.
+export function safeDiscount(looError, safe) {
+  if (looError === null || !Number.isFinite(looError)) return safe.maxDiscount;
+  return Math.min(Math.max(looError, safe.minDiscount), safe.maxDiscount);
+}
+
 function candidateTotals(model, market, unitMiddle, unitLow) {
   const estimate = Math.round(unitMiddle * model.area);
   const safeValue = Math.round(unitLow * model.area);
@@ -235,7 +244,7 @@ const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : C
 // 역 보정 상태. used: 적용, noInput: 공고 단지 입력 없음, noData: 입력은 있지만 비교 단지 값이 부족함
 export const STATION = { USED: 'used', NO_INPUT: 'noInput', NO_DATA: 'noData' };
 
-export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk }, confidence) {
+export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0 }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
   if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
@@ -245,6 +254,8 @@ export function comparableConfidence({ samples, comparables, spread, looError, s
   }
   if (stationState === STATION.NO_INPUT && level === CONFIDENCE.HIGH) level = CONFIDENCE.MID;
   if (stationState === STATION.NO_DATA) level = lowerOneLevel(level);
+  // 연식이 비슷한 단지가 부족해 넓혔으면 한 단계, 연식을 보지 않고 골랐으면 하다.
+  if (ageStep > 0) level = ageStep >= lastAgeStep ? CONFIDENCE.LOW : lowerOneLevel(level);
   return presaleOk ? level : lowerOneLevel(level);
 }
 
@@ -296,27 +307,40 @@ export function leaveOneOutError(complexes, adjustment, options) {
   return median(errors);
 }
 
-function scopedComparables(complexes, subject, { market, lotto }) {
+// 연식이 공고 단지와 가까운 단지를 먼저 고른다. 같은 법정동에 낡고 거래가 많은 단지가 섞여 있어도 신축 비교 단지가
+// 밀려나지 않게 하려는 것이다. 연식 단계마다 법정동, 시군구 순으로 보고, 표본과 단지 수가 모자라면 단계를 넓힌다.
+// 마지막 단계(null)는 연식을 보지 않으며 예전처럼 표본 수만 본다.
+export function selectComparables(complexes, subject, { market, lotto }) {
+  const { preferMaxAgeYears, ageWidenSteps, minComplexes, maxComparables } = market.comparables;
+  const steps = [preferMaxAgeYears, ...ageWidenSteps];
   const total = (list) => list.reduce((sum, complex) => sum + complex.samples, 0);
   const sameDong = subject.umd ? complexes.filter((complex) => complex.umd === subject.umd) : [];
-  let scope;
-  let pool;
-  if (total(sameDong) >= lotto.minSamples) {
-    scope = '법정동';
-    pool = sameDong;
-  } else if (total(complexes) >= lotto.minSamples) {
-    scope = '시군구';
-    pool = complexes;
-  } else {
-    return null;
+  const scopes = [['법정동', sameDong], ['시군구', complexes]];
+  for (const [ageStep, maxAge] of steps.entries()) {
+    const anyAge = maxAge === null;
+    for (const [scope, pool] of scopes) {
+      const eligible = anyAge
+        ? pool
+        : pool.filter((complex) => complex.ageYears !== null && Math.abs(complex.ageYears - subject.ageYears) <= maxAge);
+      if (total(eligible) < lotto.minSamples) continue;
+      if (!anyAge && eligible.length < minComplexes) continue;
+      const picked = [...eligible].sort((a, b) => b.samples - a.samples).slice(0, maxComparables);
+      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge };
+    }
   }
-  const picked = [...pool].sort((a, b) => b.samples - a.samples).slice(0, market.comparables.maxComparables);
-  return { scope, picked };
+  return null;
+}
+
+// 보정 뒤 단지들의 중위값에서 크게 벗어난 단지를 뺀다. 빼고도 일정 수가 남을 때만 뺀다.
+export function dropComplexOutliers(adjusted, comparables) {
+  const middle = weightedQuantile(adjusted.map((complex) => ({ value: complex.adjustedUnit, weight: 1 })), 0.5);
+  const kept = adjusted.filter((complex) => complex.adjustedUnit >= middle * comparables.outlierLow && complex.adjustedUnit <= middle * comparables.outlierHigh);
+  return kept.length >= comparables.outlierMinRemaining && kept.length < adjusted.length ? kept : adjusted;
 }
 
 function estimateFromComparables(model, rows, subject, inputs, context) {
   const { market } = context;
-  const scoped = scopedComparables(groupComplexes(rows, model.area, context), subject, context);
+  const scoped = selectComparables(groupComplexes(rows, model.area, context), subject, context);
   if (!scoped) return null;
   const picked = scoped.picked.map((complex) => ({ ...complex, ...inputs.stations.get(complex.key) }));
   const { adjustment } = market;
@@ -328,7 +352,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
   const useStation = stationState === STATION.USED;
   const options = { useStation, subjectStation: useStation ? stationFactor(subject.walkMinutes, adjustment.station) : 1, subjectAge: subject.ageYears };
   const subjectFactors = conditionFactors(subject, adjustment, options);
-  const adjusted = picked.map((complex) => {
+  const all = picked.map((complex) => {
     const factors = conditionFactors(complex, adjustment, options);
     const ratio = boundFactor(factorProduct(subjectFactors) / factorProduct(factors), adjustment);
     return {
@@ -338,23 +362,33 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       ageRatio: subjectFactors.age / factors.age,
     };
   });
+  const adjusted = dropComplexOutliers(all, market.comparables);
   const values = adjusted.map((complex) => complex.adjustedUnit);
   const equal = values.map((value) => ({ value, weight: 1 }));
   const samples = adjusted.reduce((sum, complex) => sum + complex.samples, 0);
-  const totals = candidateTotals(model, market, weightedQuantile(equal, 0.5), weightedQuantile(equal, 0.25));
+  const looError = leaveOneOutError(adjusted, adjustment, options);
+  const discount = safeDiscount(looError, market.safeValue);
+  const middle = weightedQuantile(equal, 0.5);
+  const totals = candidateTotals(model, market, middle, middle * (1 - discount));
   return {
     ...totals,
+    discount,
+    outliers: all.length - adjusted.length,
     confidence: comparableConfidence({
       samples,
       comparables: adjusted.length,
       spread: spreadOf(values),
-      looError: leaveOneOutError(picked, adjustment, options),
+      looError,
       stationState,
       presaleOk: inputs.presaleOk,
+      ageStep: scoped.ageStep,
+      lastAgeStep: scoped.lastAgeStep,
     }, market.confidence),
     basis: {
       kind: 'comparables',
       scope: scoped.scope,
+      maxAge: scoped.maxAge,
+      outliers: all.length - adjusted.length,
       stationState,
       walkMinutes: subject.walkMinutes,
       stationLookupFailed: inputs.stationLookupFailed,
@@ -364,6 +398,8 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
         samples: complex.samples,
         brandRatio: complex.brandRatio,
         ageRatio: complex.ageRatio,
+        // 근거 표시용 84㎡ 환산 보정 단가(만원)
+        reference: Math.round(complex.adjustedUnit * REFERENCE_AREA_M2),
         walkBand: useStation ? complex.walkBand ?? null : null,
       })),
     },
@@ -401,7 +437,7 @@ export function lookupCandidates({ models, rows, subject, lotto, market, today }
     if (!(model.area > 0) || !(model.price > 0)) continue;
     const same = sameComplexRows(rows, subject, model.area, context);
     if (unitsOf(same, context).length >= market.sameComplex.minSamples) continue;
-    const scoped = scopedComparables(groupComplexes(rows, model.area, context), subject, context);
+    const scoped = selectComparables(groupComplexes(rows, model.area, context), subject, context);
     for (const complex of scoped?.picked ?? []) {
       const known = seen.get(complex.key);
       if (!known || complex.samples > known.samples) seen.set(complex.key, complex);

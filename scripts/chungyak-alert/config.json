@@ -47,7 +47,17 @@
     "comparables": {
       "maxComparables": 8,
       "minComplexSamples": 2,
-      "minStationShare": 0.6
+      "minStationShare": 0.6,
+      "preferMaxAgeYears": 15,
+      "ageWidenSteps": [25, null],
+      "minComplexes": 2,
+      "outlierLow": 0.7,
+      "outlierHigh": 1.4,
+      "outlierMinRemaining": 4
+    },
+    "safeValue": {
+      "minDiscount": 0.05,
+      "maxDiscount": 0.2
     },
     "adjustment": {
       "minFactor": 0.7,
