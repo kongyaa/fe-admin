@@ -930,7 +930,8 @@ const NEW = { '안전 마진': { type: 'number', number: {} }, 마진율: { type
 const CONFIDENCE_PROP = { '시세 신뢰도': { type: 'select', select: {} } };
 const WALK = { '역 도보(분)': { type: 'number', number: {} } };
 const AVERAGE = { '평균 분양가': { type: 'number', number: {} } };
-const OTHERS = { ...WALK, ...AVERAGE, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
+const RECOMMEND = { '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
+const OTHERS = { ...WALK, ...AVERAGE, ...RECOMMEND, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
 
 const notice = (extra = {}) => ({ key: '1-1', name: '테스트', region: '서울', typeLabel: 'APT', source: '청약홈', url: 'https://www.applyhome.co.kr/a', stages: [], ...extra });
 
@@ -1129,7 +1130,7 @@ test('a new name of another type is left alone, and the old column keeps receivi
 
 test('역 도보(분) is added only if missing, read from the row and never written', async () => {
   const { 순번, 관심 } = OTHERS;
-  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, 순번, 관심 };
+  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, ...RECOMMEND, 순번, 관심 };
   const missing = schemaFake(others);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '역 도보(분)': { number: { format: 'number' } } }]);
@@ -1167,7 +1168,7 @@ test('역 도보(분) is added only if missing, read from the row and never writ
 
 test('평균 분양가 is added only if missing, created with new databases, and a wrong type is left alone and not written', async () => {
   const { 순번, 관심 } = OTHERS;
-  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, 순번, 관심 };
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...RECOMMEND, 순번, 관심 };
   const missing = schemaFake(base);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '평균 분양가': { number: { format: 'number' } } }]);
@@ -1213,6 +1214,25 @@ test('a full run stores the supply-weighted 평균 분양가 from the model rows
   // (40000 × 100 + 60000 × 300) / 400 = 55000
   assert.deepEqual(h.store.state.upserts[0].properties['평균 분양가'], { number: 55000 });
   assert.deepEqual(h.store.state.upserts[0].properties['최고 분양가'], { number: 60000 });
+});
+
+test('추천 전형 and 추천 접수일 are added only if missing, and other types are left alone', async () => {
+  const { 순번, 관심 } = OTHERS;
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...AVERAGE, 순번, 관심 };
+  const missing = schemaFake(base);
+  await realStore(missing).init();
+  assert.deepEqual(schemaPatches(missing), [{ '추천 전형': { select: {} } }, { '추천 접수일': { date: {} } }]);
+  const present = schemaFake({ ...base, ...RECOMMEND });
+  await realStore(present).init();
+  assert.deepEqual(schemaPatches(present), []);
+  const conflict = schemaFake({ ...base, '추천 전형': { type: 'rich_text', rich_text: {} }, '추천 접수일': { type: 'number', number: {} } });
+  const store = realStore(conflict);
+  await store.init();
+  assert.deepEqual(schemaPatches(conflict), []);
+  await store.upsert(notice(), { ...evaluation, recommendation: { track: '무순위', date: THU, end: null } }, undefined, THU);
+  const written = rowWrite(conflict).body.properties;
+  assert.equal(Object.hasOwn(written, '추천 전형'), false);
+  assert.equal(Object.hasOwn(written, '추천 접수일'), false);
 });
 
 test('시세 신뢰도 is added only if missing, and another type is left alone', async () => {
@@ -1720,6 +1740,92 @@ test('tag name lines say none when an API returned no items', async () => {
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.ok(h.logs.includes('sale_tag_names=none'));
   assert.ok(h.logs.includes('presale_tag_names=none'));
+});
+
+// 추천 전형 실행 테스트: 특별공급 THU, 1순위 해당지역 11/6, 기타지역 11/7인 서울 APT. 실거래가 낮아 로또 알림은 없다.
+// 테스트용 가짜 신청자 정보다. 인천 거주자라 서울 공고의 일반 1순위는 기타지역이다.
+const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTracks":["생애최초"]}';
+const lowTrades = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount: '84,000' }));
+function recommendWorld({ specials = { NWWDS_HSHLDCO: '30', NWBB_HSHLDCO: '10', LFE_FRST_HSHLDCO: '20' } } = {}) {
+  const row = aptRow({ GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-06', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-06', GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-07', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-07' });
+  const base = worldFetch({ rows: [row], trades: lowTrades });
+  return async (url) => (String(url).includes('getAPTLttotPblancMdl')
+    ? Response.json({ totalCount: 1, data: [{ HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '100,000', SUPLY_HSHLDCO: '40', SPSPLY_HSHLDCO: '60', ...specials }] })
+    : base.fetch(url));
+}
+
+test('a run with a profile stores the recommended track and date and never the profile', async () => {
+  const h = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON, GITHUB_ACTIONS: 'true' } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ properties, evaluation: value }] = h.store.state.upserts;
+  assert.deepEqual(properties['추천 전형'], { select: { name: '생애최초 특별공급' } });
+  assert.deepEqual(properties['추천 접수일'], { date: { start: THU } });
+  assert.ok(properties['판별 근거'].rich_text[0].text.content.includes('\n추천: 생애최초 특별공급 11/5 (20세대, 1순위 기타지역 11/7도 가능; 세대주·청약통장 요건 확인)'));
+  assert.equal(value.status, '아님');
+  assert.ok(h.logs.includes('recommend profile=ok recommended=1 none=0'));
+  assert.ok(h.written.includes(`::add-mask::${PROFILE_JSON}`));
+  const everything = JSON.stringify([h.logs, h.mails, h.store.state.upserts.map((item) => item.properties)]);
+  for (const secret of [PROFILE_JSON, 'residenceSido', 'residenceYears', 'specialTracks']) assert.ok(!everything.includes(secret), secret);
+});
+
+test('a missing or invalid profile turns the feature off without an error mail or Notion writes', async () => {
+  for (const [value, status] of [[undefined, 'missing'], ['{bad', 'invalid'], ['{"residenceSido":"인천","residenceYears":3,"specialTracks":["다자녀"]}', 'invalid']]) {
+    const env = value === undefined ? {} : { CHUNGYAK_PROFILE: value };
+    const h = harness({ fetch: recommendWorld(), env });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    assert.ok(h.logs.includes(`recommend profile=${status} recommended=0 none=0`), status);
+    assert.equal(errorMail(h), undefined, status);
+    const [{ properties }] = h.store.state.upserts;
+    assert.equal(Object.hasOwn(properties, '추천 전형'), false);
+    assert.equal(Object.hasOwn(properties, '추천 접수일'), false);
+    assert.ok(!properties['판별 근거'].rich_text[0].text.content.includes('추천:'));
+  }
+});
+
+test('a notice with no recommendation clears the stored columns when the profile is on', async () => {
+  const h = harness({ fetch: recommendWorld({ specials: {} }), env: { CHUNGYAK_PROFILE: '{"residenceSido":"인천","residenceYears":3,"specialTracks":[]}' } });
+  // 일반 1순위 기타지역(11/7)은 있으므로 그 날짜가 추천이다.
+  await run({ env: h.env, deps: h.deps });
+  assert.deepEqual(h.store.state.upserts[0].properties['추천 접수일'], { date: { start: '2026-11-07' } });
+  const outside = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: '{"residenceSido":"부산","residenceYears":5}' } });
+  await run({ env: outside.env, deps: outside.deps });
+  assert.deepEqual(outside.store.state.upserts[0].properties['추천 전형'], { select: null });
+  assert.deepEqual(outside.store.state.upserts[0].properties['추천 접수일'], { date: null });
+  assert.ok(outside.logs.includes('recommend profile=ok recommended=0 none=1'));
+});
+
+const interestRow = (extra = {}) => new Map([['7-7', {
+  id: 'p7', key: '7-7', name: '관심단지', link: 'https://www.applyhome.co.kr/a', interest: true, lotto: '아님', urgentDate: null,
+  start: '2026-11-10', end: '2026-11-20', recommendTrack: null, recommendDate: null, recommendEnd: null, ...extra,
+}]]);
+
+test('interest alerts go out on the freshly computed recommended date, overlaying a stale stored one', async () => {
+  const stale = interestRow({ recommendTrack: '신혼부부 특별공급', recommendDate: '2026-11-04' });
+  const h = harness({ store: fakeStore(stale), fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith('[관심 청약] '), h.kakao[0].text);
+  assert.ok(h.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05'), h.kakao[0].text);
+  assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
+});
+
+test('without a profile the stored recommended date is used, and without one the start date', async () => {
+  const stored = interestRow({ recommendTrack: '생애최초 특별공급', recommendDate: THU, recommendEnd: '2026-11-06' });
+  const h = harness({ store: fakeStore(stored), fetch: recommendWorld() });
+  await run({ env: h.env, deps: h.deps });
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05~2026-11-06'), h.kakao[0].text);
+
+  // 저장된 추천일이 다른 날이면 접수 시작일이 오늘이어도 보내지 않는다.
+  const other = harness({ store: fakeStore(interestRow({ start: THU, recommendTrack: '생애최초 특별공급', recommendDate: '2026-11-09' })), fetch: recommendWorld() });
+  await run({ env: other.env, deps: other.deps });
+  assert.equal(other.kakao.length, 0);
+
+  // 추천이 없으면 예전처럼 접수 시작일에 보낸다.
+  const plain = harness({ store: fakeStore(interestRow({ start: THU })), fetch: recommendWorld() });
+  await run({ env: plain.env, deps: plain.deps });
+  assert.equal(plain.kakao.length, 1);
+  assert.ok(plain.kakao[0].text.includes('접수 오늘 시작'), plain.kakao[0].text);
 });
 
 test('the molit client reports tag tallies without names', async () => {

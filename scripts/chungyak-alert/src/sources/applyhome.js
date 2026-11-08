@@ -121,6 +121,12 @@ export function normalizeModel(row) {
     area: parseNumber(row.EXCLUSE_AR) ?? parseHouseType(row.HOUSE_TY),
     price: parseNumber(row.LTTOT_TOP_AMOUNT) ?? parseNumber(row.SUPLY_AMOUNT),
     households: households(row),
+    // 특별공급 유형별 세대수. 스웨거상 APT 주택형에만 있다(신생아 NWBB, 신혼부부 NWWDS, 생애최초 LFE_FRST).
+    specials: {
+      신생아: parseNumber(row.NWBB_HSHLDCO),
+      신혼부부: parseNumber(row.NWWDS_HSHLDCO),
+      생애최초: parseNumber(row.LFE_FRST_HSHLDCO),
+    },
   };
 }
 

@@ -25,6 +25,8 @@ const P = {
   marginRate: '마진율',
   confidence: '시세 신뢰도',
   walkMinutes: '역 도보(분)',
+  recommendTrack: '추천 전형',
+  recommendDate: '추천 접수일',
   lotto: '로또 여부',
   reason: '판별 근거',
   link: '공고 링크',
@@ -37,9 +39,9 @@ const P = {
 
 // 이전 실행까지 쓰던 속성 이름. 값이 유지되도록 삭제하지 않고 이름만 바꾼다.
 const LEGACY = { margin: '예상 차익', marginRate: '차익률' };
-const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence, averagePrice: P.averagePrice };
+const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence, averagePrice: P.averagePrice, recommendTrack: P.recommendTrack, recommendDate: P.recommendDate };
 // 스키마를 읽지 못해 이번 실행의 이름을 모를 때 쓴다. 이 세 속성만 빼서 다른 값의 저장을 막지 않는다.
-const NO_COLUMNS = { margin: null, marginRate: null, confidence: null, averagePrice: null };
+const NO_COLUMNS = { margin: null, marginRate: null, confidence: null, averagePrice: null, recommendTrack: null, recommendDate: null };
 
 const DB_SCHEMA = {
   [P.name]: { title: {} },
@@ -61,6 +63,8 @@ const DB_SCHEMA = {
   [P.marginRate]: { number: { format: 'percent' } },
   [P.confidence]: { select: { options: [{ name: '상' }, { name: '중' }, { name: '하' }] } },
   [P.walkMinutes]: { number: { format: 'number' } },
+  [P.recommendTrack]: { select: {} },
+  [P.recommendDate]: { date: {} },
   [P.lotto]: {
     select: {
       options: [{ name: '로또' }, { name: '아님' }, { name: '판별 불가' }, { name: '대상 외' }],
@@ -111,6 +115,16 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
   if (columns.confidence) properties[columns.confidence] = evaluation?.clearMarket ? { select: null } : selectProp(evaluation?.confidence);
   // 공고의 사실이라 제한 유형에서도 지우지 않는다. 값이 없으면 보내지 않아 저장된 값을 둔다.
   if (columns.averagePrice) properties[columns.averagePrice] = numberProp(evaluation?.averagePrice);
+  // 추천은 프로필이 있을 때만 판정에 들어 있다. 없으면(undefined) 건드리지 않고, 추천이 없으면(null) 지운다.
+  if (evaluation && evaluation.recommendation !== undefined) {
+    const recommendation = evaluation.recommendation;
+    if (columns.recommendTrack) properties[columns.recommendTrack] = recommendation ? selectProp(recommendation.track) : { select: null };
+    if (columns.recommendDate) {
+      properties[columns.recommendDate] = recommendation
+        ? { date: { start: recommendation.date, ...(recommendation.end && recommendation.end > recommendation.date ? { end: recommendation.end } : {}) } }
+        : { date: null };
+    }
+  }
   return Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
 }
 
@@ -131,6 +145,9 @@ export function parseExistingPage(page) {
     name: (props[P.name]?.title ?? []).map((part) => part.plain_text).join(''),
     link: props[P.link]?.url ?? null,
     walkMinutes: Number.isFinite(walk) && walk >= 0 ? walk : null,
+    recommendTrack: props[P.recommendTrack]?.select?.name ?? null,
+    recommendDate: props[P.recommendDate]?.date?.start?.slice(0, 10) ?? null,
+    recommendEnd: props[P.recommendDate]?.date?.end?.slice(0, 10) ?? null,
   };
 }
 
@@ -273,6 +290,14 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   }
 
   // 사용자가 입력하는 열이다. 없을 때만 추가하고, 같은 이름의 다른 타입 속성은 건드리지 않는다.
+  // 배치가 쓰는 열이다. 없을 때만 추가하고, 같은 이름의 다른 타입 속성은 건드리지 않고 쓰지도 않는다.
+  async function ensureTypedColumn(properties, name, type) {
+    const property = properties[name];
+    if (property) return property.type === type ? name : null;
+    const added = await patchSchema({ [name]: DB_SCHEMA[name] }, 'notion_property_add_failed');
+    return added ? name : null;
+  }
+
   // 배치가 쓰는 숫자 열이다. 없을 때만 추가하고, 같은 이름의 다른 타입 속성은 건드리지 않고 쓰지도 않는다.
   async function ensureAveragePriceColumn(properties) {
     const property = properties[P.averagePrice];
@@ -302,6 +327,8 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       marginRate: await ensureNumberColumn(properties, P.marginRate, LEGACY.marginRate),
       confidence: await ensureConfidenceColumn(properties),
       averagePrice: await ensureAveragePriceColumn(properties),
+      recommendTrack: await ensureTypedColumn(properties, P.recommendTrack, 'select'),
+      recommendDate: await ensureTypedColumn(properties, P.recommendDate, 'date'),
     };
     await ensureWalkProperty(properties);
     await ensureSequenceProperty(properties);

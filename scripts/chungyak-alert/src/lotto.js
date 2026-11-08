@@ -9,6 +9,7 @@ import {
   meetsPriceRule,
   restrictedType,
 } from './market-estimate.js';
+import { recommendTrack } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
 
@@ -144,7 +145,22 @@ async function readPresale(getPresale, code, months) {
 }
 
 // getModels/getTrades 실패는 판정을 막지 않고 onError로 모은다. getPresale과 aptInfo는 실패해도 신뢰도만 낮춘다.
-export async function evaluateLotto(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {}, onSoftOnce = onSoft }) {
+// 판정에 추천 전형을 붙인다. 프로필이 없으면 recommendation 필드를 두지 않아 Notion의 추천 열을 건드리지 않는다.
+// 추천 문구는 저장되는 판별 근거에만 붙이고, 카카오톡의 짧은 근거에는 넣지 않는다. 프로필 내용은 어디에도 적지 않는다.
+export async function evaluateLotto(notice, options) {
+  let models = null;
+  const getModels = async (target) => {
+    models = await options.getModels(target);
+    return models;
+  };
+  const evaluation = await evaluatePrice(notice, { ...options, getModels });
+  if (!options.profile) return evaluation;
+  const recommendation = recommendTrack({ notice, models, profile: options.profile, config: options.config });
+  if (!recommendation) return { ...evaluation, recommendation: null };
+  return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${recommendation.text}` : recommendation.text };
+}
+
+async function evaluatePrice(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {}, onSoftOnce = onSoft }) {
   const { lotto, market } = config;
   const result = (status, reason, extra = {}) => ({
     status, reason, topPrice: null, estimate: null, margin: null, marginRate: null, confidence: null, ...extra,

@@ -281,6 +281,7 @@ test('HOUSE_TY and model fields parse into area and price', () => {
     area: 84.981,
     price: 120000,
     households: null,
+    specials: { 신생아: null, 신혼부부: null, 생애최초: null },
   });
   // 공급 세대수는 일반공급과 특별공급의 합이다.
   assert.equal(normalizeModel({ HOUSE_TY: '084A', SUPLY_HSHLDCO: '120', SPSPLY_HSHLDCO: '80' }).households, 200);

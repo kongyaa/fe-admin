@@ -9,6 +9,7 @@ import { restrictedType } from './market-estimate.js';
 import { computeSequenceNumbers, createNotionStore } from './notion-store.js';
 import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } from './notify-gmail.js';
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
+import { parseProfile } from './recommend.js';
 import {
   decodeServiceKey,
   defaultSleep,
@@ -97,15 +98,34 @@ function overlayNotice(row, notice) {
 
 // 실행 시작 때 읽은 Notion 행에 이번 실행의 원본 값을 덮어 고른다. 지역과 로또 여부는 보지 않는다.
 // handledKeys는 이번 실행에서 로또 알림 대상이 된 공고로, 하루 한 건만 보내기 위해 뺀다.
+// 추천 접수일이 있으면 그날, 없으면 접수 시작일에 보낸다.
 export function selectInterest(rows, today, handledKeys = new Set()) {
   return rows
-    .filter((row) => row.interest && row.start === today && row.urgentDate !== today && !handledKeys.has(row.key))
-    .map((row) => ({
-      notice: { key: row.key, name: row.name || row.key, url: linkFor(row.link) },
-      // 저장된 종료일이 시작일보다 이르면 지난 값이므로 표시하지 않는다.
-      stage: { name: '접수', start: row.start, end: row.end && row.end >= row.start ? row.end : null },
-      pageId: row.id,
-    }));
+    .filter((row) => row.interest && (row.recommendDate ?? row.start) === today && row.urgentDate !== today && !handledKeys.has(row.key))
+    .map((row) => {
+      const recommended = Boolean(row.recommendDate);
+      const start = recommended ? row.recommendDate : row.start;
+      const end = recommended ? row.recommendEnd : row.end;
+      return {
+        notice: { key: row.key, name: row.name || row.key, url: linkFor(row.link) },
+        // 저장된 종료일이 시작일보다 이르면 지난 값이므로 표시하지 않는다.
+        stage: { name: recommended && row.recommendTrack ? row.recommendTrack : '접수', start, end: end && end >= start ? end : null },
+        recommended,
+        pageId: row.id,
+      };
+    });
+}
+
+// 이번 실행에서 계산한 추천으로 관심 행을 덮는다. 프로필이 없으면 저장된 값을 그대로 둔다.
+function overlayRecommendation(row, evaluation) {
+  if (!evaluation || evaluation.recommendation === undefined) return row;
+  const recommendation = evaluation.recommendation;
+  return {
+    ...row,
+    recommendTrack: recommendation?.track ?? null,
+    recommendDate: recommendation?.date ?? null,
+    recommendEnd: recommendation?.end ?? null,
+  };
 }
 
 export function shouldSendWeekly(today, lastMonday, force = false) {
@@ -291,6 +311,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   maskServiceKey(dataKey, env, write);
   const accessToken = deps.accessToken !== undefined ? deps.accessToken : readAccessToken(env);
   maskValue(accessToken, env, write);
+  // 프로필은 공개 로그와 Notion 어디에도 적지 않는다.
+  maskValue(env.CHUNGYAK_PROFILE, env, write);
+  const { profile, status: profileStatus } = parseProfile(env.CHUNGYAK_PROFILE);
 
   const sendMail = deps.sendMail ?? createGmailSender({
     user: env.GMAIL_USER,
@@ -393,6 +416,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
   const presale = createPresaleClient({ fetch: fetchFn, key: dataKey, sleep, now, budgetMs: config.market.presale.budgetMs, onSoft: addSoftError });
   const aptInfo = createAptInfoClient({ fetch: fetchFn, key: dataKey, sleep, now, limits: config.market.aptInfo, onSoft: addSoftError });
+  const recommendCounts = { recommended: 0, none: 0 };
   const marketCounts = { complexOutliers: 0, stationUsed: 0, stationNoInput: 0, stationNoData: 0, 상: 0, 중: 0, 하: 0 };
   const stationCountNames = { used: 'stationUsed', noInput: 'stationNoInput', noData: 'stationNoData' };
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
@@ -427,6 +451,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
           onError: addError,
           onSoft: addSoftError,
           onSoftOnce: addSoftErrorOnce,
+          profile,
         });
       } catch (error) {
         addError(safeError(error));
@@ -437,6 +462,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       counts.evaluated += 1;
       if (evaluation.confidence) marketCounts[evaluation.confidence] += 1;
       if (evaluation.stationState) marketCounts[stationCountNames[evaluation.stationState]] += 1;
+      if (evaluation.recommendation) recommendCounts.recommended += 1;
+      else if (evaluation.recommendation === null) recommendCounts.none += 1;
+      const interestRow = interestRows.get(notice.key);
+      if (interestRow && !(interestRow.end && interestRow.end < today)) interestRows.set(notice.key, overlayRecommendation(interestRow, evaluation));
       marketCounts.complexOutliers += evaluation.complexOutliers ?? 0;
       // 계산 방식이 바뀌어 로또에서 빠진 공고가 몇 건인지 건수만 남긴다. dry-run은 읽어 둔 행으로 센다.
       const stored = previous ?? dryRunRows?.get(notice.key);
@@ -490,7 +519,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     // 발송 실패가 실제로는 전달됐을 수 있어, 로또 쪽이 실패한 공고도 이번 실행에서 다시 보내지 않는다.
     const handledKeys = new Set(urgent.map((record) => record.notice.key));
     for (const record of selectInterest([...interestRows.values()], today, handledKeys)) {
-      const text = buildKakaoText({ notice: record.notice, stage: record.stage, prefix: '[관심 청약]' });
+      const text = buildKakaoText({ notice: record.notice, stage: record.stage, prefix: '[관심 청약]', verb: record.recommended ? '오늘 접수' : '오늘 시작' });
       await deliverAlert(record, text, 'interest', alertContext);
     }
   }
@@ -539,6 +568,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`collected=${notices.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
   log(`errors=${[...errors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} ${umdFormatCounts(molit.stats(), presale.stats())} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
+  // 추천 기능 상태와 건수만 남긴다. 프로필 내용은 남기지 않는다.
+  log(`recommend profile=${profileStatus} recommended=${recommendCounts.recommended} none=${recommendCounts.none}`);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);

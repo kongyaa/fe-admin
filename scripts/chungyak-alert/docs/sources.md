@@ -23,6 +23,7 @@
   - `numOfRows` 상한. 스웨거에 값이 없다. 코드는 1,000을 요청하고 받은 건수를 `totalCount`와 비교해 다음 페이지를 읽는다. `totalCount`가 없으면 빈 페이지까지 읽고 `listNoTotal`로 센다.
   - 구로 나뉜 시군구 코드. 부천 `41192`, 화성 `41597` 등을 `sigunguCode`로 조회했을 때 결과가 나오는지 확인하지 못했다. 스웨거의 예시는 `11320`뿐이다. 비어 있으면 그 지역 비교 단지는 역 값이 없어 역 보정이 빠진다.
 - **`kaptdWtimesub`의 단위는 확인되지 않았다.** 스웨거의 설명은 `지하철역 거리`뿐이고 값 형식이나 단위가 없다. 코드는 외부 프로젝트가 측정해 공개한 구간 값(`5분이내`, `5~10분이내`, `20분초과`)을 따르고, 그 측정은 도보라는 표현이 값과 명세 어디에도 없다고 적는다. 도보가 아니라면 직접 입력하는 도보 분과 기준이 어긋난다. 첫 실행의 `apt_tags bands=`로 값 분포를 보고, 몇 단지를 지도와 비교한다. 측정 출처: https://github.com/kyhsa93/jipgye/issues/823
+- 청약홈 추천 전형 자료. 스웨거에서 확인한 필드만 쓴다. APT 상세의 `SPSPLY_RCEPT_BGNDE/ENDDE`(특별공급 접수), `GNRL_RNK1_CRSPAREA_RCPTDE/ENDDE`(1순위 해당지역), `GNRL_RNK1_ETC_GG_RCPTDE/ENDDE`(1순위 경기지역), `GNRL_RNK1_ETC_AREA_RCPTDE/ENDDE`(1순위 기타지역), APT 주택형의 `NWBB_HSHLDCO`(신생아), `NWWDS_HSHLDCO`(신혼부부), `LFE_FRST_HSHLDCO`(생애최초)다. 잔여세대와 임의공급 주택형에는 유형별 세대수가 없고(`SPSPLY_HSHLDCO` 합계만 잔여세대에 있음), 그 상세에는 `SUBSCRPT_RCEPT_BGNDE`와 특별공급·일반공급 접수일이 있다. 실응답 값은 확인하지 않았다.
 - 청약홈 주택형별 공급 세대수. 스웨거상 APT·잔여세대는 `SUPLY_HSHLDCO`(일반공급)와 `SPSPLY_HSHLDCO`(특별공급), 임의공급은 `SUPLY_HSHLDCO`만 있다. `평균 분양가`의 가중치로 쓰며 실응답의 값 형식은 확인하지 않았다.
 - 청약홈 `CNSTRCT_ENTRPS_NM`은 스웨거상 APT 상세에만 있다. 무순위 등 다른 유형은 단지명으로만 브랜드를 본다.
 - LH 경로, 응답 구조, 날짜 필드, `PAN_ID` 위치 (`src/sources/lh.js`). 구조가 다르면 `lh_parse` 오류로 알리고 다른 소스는 계속 진행한다.
