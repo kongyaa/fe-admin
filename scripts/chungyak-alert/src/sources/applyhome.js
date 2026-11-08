@@ -106,11 +106,21 @@ export function parseHouseType(houseType) {
   return match ? Number(match[1]) : null;
 }
 
+// 공급 세대수는 스웨거상 SUPLY_HSHLDCO(APT·잔여세대는 일반공급, 그 밖은 전체)와 SPSPLY_HSHLDCO(특별공급)다.
+// 둘 다 없으면 null이다.
+function households(row) {
+  const general = parseNumber(row.SUPLY_HSHLDCO);
+  const special = parseNumber(row.SPSPLY_HSHLDCO);
+  if (general === null && special === null) return null;
+  return (general ?? 0) + (special ?? 0);
+}
+
 export function normalizeModel(row) {
   return {
     houseType: row.HOUSE_TY ?? [row.GP, row.TP].filter(Boolean).join(' '),
     area: parseNumber(row.EXCLUSE_AR) ?? parseHouseType(row.HOUSE_TY),
     price: parseNumber(row.LTTOT_TOP_AMOUNT) ?? parseNumber(row.SUPLY_AMOUNT),
+    households: households(row),
   };
 }
 

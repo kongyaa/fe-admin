@@ -82,6 +82,16 @@ const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 $
 const priceText = (best) => `${shortPriceText(best)}; `
   + `${basisText(best.basis)}; ${safeText(best)}에서 분양가 ${eok(best.price)}, 옵션 ${best.optionCost}만 원, 취득세 ${best.tax}만 원 차감`;
 
+// 주택형별 최고 분양가를 공급 세대수로 가중 평균한다(만원). 세대수를 모르는 주택형이 하나라도 있으면 단순 평균이다.
+export function averagePriceOf(models) {
+  const priced = (models ?? []).filter((model) => model.price > 0);
+  if (priced.length === 0) return null;
+  const weighted = priced.every((model) => model.households > 0);
+  const weightOf = (model) => (weighted ? model.households : 1);
+  const total = priced.reduce((sum, model) => sum + weightOf(model), 0);
+  return Math.round(priced.reduce((sum, model) => sum + model.price * weightOf(model), 0) / total);
+}
+
 const topPriceOf = (models) => {
   const prices = models.map((m) => m.price).filter((p) => p > 0);
   return prices.length > 0 ? Math.max(...prices) : null;
@@ -147,7 +157,17 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
   // 판정 조건보다 먼저 본다. 저장된 추정 값이 남지 않도록 clearMarket으로 지우게 한다.
   const restricted = restrictedType(notice, market);
   if (restricted) {
-    return result(STATUS.OUT_OF_SCOPE, `제한 유형(${restricted})은 로또 판별과 안전 마진 대상이 아님`, { clearMarket: true });
+    // 평균 분양가는 공고의 사실이라 제한 유형에도 적는다. 실거래는 조회하지 않는다.
+    let restrictedModels = null;
+    try {
+      restrictedModels = await getModels(notice);
+    } catch (error) {
+      onError(safeError(error));
+    }
+    return result(STATUS.OUT_OF_SCOPE, `제한 유형(${restricted})은 로또 판별과 안전 마진 대상이 아님`, {
+      clearMarket: true,
+      averagePrice: averagePriceOf(restrictedModels),
+    });
   }
 
   const trigger = flagTrigger(notice, lotto);
@@ -165,6 +185,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
     onError(safeError(error));
   }
   const topPrice = models ? topPriceOf(models) : null;
+  const averagePrice = averagePriceOf(models);
 
   let best = null;
   let undetermined = models ? null : '주택형 정보 조회 실패';
@@ -219,6 +240,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
       complexOutliers: best.outliers ?? 0,
     }
     : { topPrice };
+  price.averagePrice = averagePrice;
 
   if (trigger) {
     return result(STATUS.LOTTO, best ? `${trigger}; ${priceText(best)}` : trigger, { ...price, shortReason: best ? `${trigger}; ${shortPriceText(best)}` : trigger });

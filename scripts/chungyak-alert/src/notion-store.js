@@ -19,6 +19,7 @@ const P = {
   rank2: '2순위 접수일',
   winner: '당첨자발표일',
   topPrice: '최고 분양가',
+  averagePrice: '평균 분양가',
   estimate: '추정 시세',
   margin: '안전 마진',
   marginRate: '마진율',
@@ -36,9 +37,9 @@ const P = {
 
 // 이전 실행까지 쓰던 속성 이름. 값이 유지되도록 삭제하지 않고 이름만 바꾼다.
 const LEGACY = { margin: '예상 차익', marginRate: '차익률' };
-const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence };
+const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence, averagePrice: P.averagePrice };
 // 스키마를 읽지 못해 이번 실행의 이름을 모를 때 쓴다. 이 세 속성만 빼서 다른 값의 저장을 막지 않는다.
-const NO_COLUMNS = { margin: null, marginRate: null, confidence: null };
+const NO_COLUMNS = { margin: null, marginRate: null, confidence: null, averagePrice: null };
 
 const DB_SCHEMA = {
   [P.name]: { title: {} },
@@ -54,6 +55,7 @@ const DB_SCHEMA = {
   [P.rank2]: { date: {} },
   [P.winner]: { date: {} },
   [P.topPrice]: { number: { format: 'number' } },
+  [P.averagePrice]: { number: { format: 'number' } },
   [P.estimate]: { number: { format: 'number' } },
   [P.margin]: { number: { format: 'number' } },
   [P.marginRate]: { number: { format: 'percent' } },
@@ -107,6 +109,8 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
   if (columns.margin) properties[columns.margin] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.margin);
   if (columns.marginRate) properties[columns.marginRate] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.marginRate);
   if (columns.confidence) properties[columns.confidence] = evaluation?.clearMarket ? { select: null } : selectProp(evaluation?.confidence);
+  // 공고의 사실이라 제한 유형에서도 지우지 않는다. 값이 없으면 보내지 않아 저장된 값을 둔다.
+  if (columns.averagePrice) properties[columns.averagePrice] = numberProp(evaluation?.averagePrice);
   return Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
 }
 
@@ -269,6 +273,14 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   }
 
   // 사용자가 입력하는 열이다. 없을 때만 추가하고, 같은 이름의 다른 타입 속성은 건드리지 않는다.
+  // 배치가 쓰는 숫자 열이다. 없을 때만 추가하고, 같은 이름의 다른 타입 속성은 건드리지 않고 쓰지도 않는다.
+  async function ensureAveragePriceColumn(properties) {
+    const property = properties[P.averagePrice];
+    if (property) return property.type === 'number' ? P.averagePrice : null;
+    const added = await patchSchema({ [P.averagePrice]: DB_SCHEMA[P.averagePrice] }, 'notion_property_add_failed');
+    return added ? P.averagePrice : null;
+  }
+
   async function ensureWalkProperty(properties) {
     if (properties[P.walkMinutes]) return;
     await patchSchema({ [P.walkMinutes]: DB_SCHEMA[P.walkMinutes] }, 'notion_property_add_failed');
@@ -289,6 +301,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       margin: await ensureNumberColumn(properties, P.margin, LEGACY.margin),
       marginRate: await ensureNumberColumn(properties, P.marginRate, LEGACY.marginRate),
       confidence: await ensureConfidenceColumn(properties),
+      averagePrice: await ensureAveragePriceColumn(properties),
     };
     await ensureWalkProperty(properties);
     await ensureSequenceProperty(properties);

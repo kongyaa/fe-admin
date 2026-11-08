@@ -10,7 +10,7 @@ import { buildKakaoText, sendKakaoMemo } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 
 const THU = '2026-11-05';
-const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} } };
 const notice = (extra = {}) => ({
   key: '1-1',
   name: '테스트',

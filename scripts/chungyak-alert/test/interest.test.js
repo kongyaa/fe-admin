@@ -120,7 +120,7 @@ const notionPage = ({ id = 'id-1', key = 'k-1', name = '관심 단지', interest
   },
 });
 
-const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} } };
 const COMPLETE_SCHEMA = { ...MARKET_SCHEMA, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
 
 function notionFake({ pages = [], databaseProperties = COMPLETE_SCHEMA, children, intercept = () => null } = {}) {

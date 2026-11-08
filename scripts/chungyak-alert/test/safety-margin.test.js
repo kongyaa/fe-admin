@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { STATUS, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
+import { STATUS, averagePriceOf, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
 import { run } from '../src/main.js';
 import { buildKakaoText } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
@@ -610,20 +610,24 @@ test('a real client with a small cap degrades later notices without further call
 test('restricted types are 대상 외 with empty margin, before triggers and before any lookup', async () => {
   for (const name of ['고덕강일 3단지 토지임대부', '광교 자연앤 센트레빌 59㎡ 지분적립형', '하남교산 신혼희망타운']) {
     for (const flags of [{ priceCap: false, publicDistrict: false }, { priceCap: true, publicDistrict: true }]) {
-      let called = 0;
+      let models = 0;
+      let lookups = 0;
       const result = await evaluateLotto(apt({ name, flags }), {
         config,
         today,
-        getModels: async () => { called += 1; return []; },
-        getTrades: async () => { called += 1; return []; },
-        getPresale: async () => { called += 1; return { rows: [], ok: true }; },
+        getModels: async () => { models += 1; return [{ houseType: '059A', area: 59, price: 40000, households: 10 }]; },
+        getTrades: async () => { lookups += 1; return []; },
+        getPresale: async () => { lookups += 1; return { rows: [], ok: true }; },
       });
       assert.equal(result.status, STATUS.OUT_OF_SCOPE);
       assert.equal(result.clearMarket, true);
       assert.equal(result.margin, null);
       assert.equal(result.marginRate, null);
       assert.equal(result.estimate, null);
-      assert.equal(called, 0);
+      // 평균 분양가만 쓰려고 주택형은 읽고, 실거래는 조회하지 않는다.
+      assert.equal(models, 1);
+      assert.equal(lookups, 0);
+      assert.equal(result.averagePrice, 40000);
       assert.equal(keepPreviousLotto(result, STATUS.LOTTO).status, STATUS.OUT_OF_SCOPE);
     }
   }
@@ -794,6 +798,48 @@ test('a small house type shows comparables at its own area, not scaled to 84㎡'
   assert.ok(!result.reason.includes('24.0억'));
 });
 
+test('the average price is weighted by supply households, or a simple mean when a count is missing', () => {
+  const model = (price, households) => ({ houseType: 'x', area: 84, price, households });
+  // (50000 × 100 + 70000 × 300) / 400 = 65000
+  assert.equal(averagePriceOf([model(50000, 100), model(70000, 300)]), 65000);
+  // 세대수를 모르는 주택형이 있으면 단순 평균
+  assert.equal(averagePriceOf([model(50000, 100), model(70000, null)]), 60000);
+  assert.equal(averagePriceOf([model(50000, 0), model(70000, 300)]), 60000);
+  // 가격이 없는 주택형은 뺀다.
+  assert.equal(averagePriceOf([model(50000, 100), model(null, 900), model(0, 900)]), 50000);
+  assert.equal(averagePriceOf([]), null);
+  assert.equal(averagePriceOf(null), null);
+  assert.equal(averagePriceOf([model(null, 10)]), null);
+  assert.equal(averagePriceOf([model(50001, 1), model(50002, 2)]), 50002);
+});
+
+test('the average price is recorded for triggered, priced and undetermined notices alike', async () => {
+  const models = [{ houseType: '059A', area: 59, price: 40000, households: 100 }, { houseType: '084A', area: 84, price: 60000, households: 300 }];
+  const triggered = await evaluate(apt({ flags: { priceCap: true, publicDistrict: false } }), { models, trades: saleRows(5, 1000) });
+  assert.equal(triggered.status, STATUS.LOTTO);
+  assert.equal(triggered.averagePrice, 55000);
+  const priced = await evaluate(apt(), { models, trades: saleRows(5, 1000) });
+  assert.equal(priced.averagePrice, 55000);
+  const undetermined = await evaluate(apt(), { models, trades: [] });
+  assert.equal(undetermined.status, STATUS.UNDETERMINED);
+  assert.equal(undetermined.averagePrice, 55000);
+  const failed = await evaluateLotto(apt(), { config, today, getModels: async () => { throw new Error('x'); }, getTrades: async () => [] });
+  assert.equal(failed.averagePrice, null);
+});
+
+test('평균 분양가 is written for every row that has it, kept on restricted rows, and never written empty', () => {
+  const props = buildProperties(notice(), { status: '아님', averagePrice: 55000 }, THU);
+  assert.deepEqual(props['평균 분양가'], { number: 55000 });
+  // 제한 유형도 공고의 사실이라 지우지 않는다.
+  const restricted = buildProperties(notice(), { status: '대상 외', clearMarket: true, averagePrice: 40000 }, THU);
+  assert.deepEqual(restricted['평균 분양가'], { number: 40000 });
+  assert.deepEqual(restricted['안전 마진'], { number: null });
+  // 값이 없으면 보내지 않아 저장된 값이 남는다.
+  for (const evaluation of [{ status: '판별 불가' }, { status: '대상 외', clearMarket: true }, null]) {
+    assert.equal(Object.hasOwn(buildProperties(notice(), evaluation, THU), '평균 분양가'), false);
+  }
+});
+
 test('the Applyhome constructor field becomes the subject builder', () => {
   const endpoint = ENDPOINTS.find((item) => item.kind === 'apt');
   const notice = normalizeDetail(endpoint, { HOUSE_MANAGE_NO: '1', PBLANC_NO: '1', CNSTRCT_ENTRPS_NM: 'GS건설(주)', BSNS_MBY_NM: '시행사' });
@@ -807,7 +853,8 @@ const OLD = { '예상 차익': { type: 'number', number: {} }, 차익률: { type
 const NEW = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} } };
 const CONFIDENCE_PROP = { '시세 신뢰도': { type: 'select', select: {} } };
 const WALK = { '역 도보(분)': { type: 'number', number: {} } };
-const OTHERS = { ...WALK, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
+const AVERAGE = { '평균 분양가': { type: 'number', number: {} } };
+const OTHERS = { ...WALK, ...AVERAGE, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
 
 const notice = (extra = {}) => ({ key: '1-1', name: '테스트', region: '서울', typeLabel: 'APT', source: '청약홈', url: 'https://www.applyhome.co.kr/a', stages: [], ...extra });
 
@@ -1006,7 +1053,7 @@ test('a new name of another type is left alone, and the old column keeps receivi
 
 test('역 도보(분) is added only if missing, read from the row and never written', async () => {
   const { 순번, 관심 } = OTHERS;
-  const others = { ...NEW, ...CONFIDENCE_PROP, 순번, 관심 };
+  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, 순번, 관심 };
   const missing = schemaFake(others);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '역 도보(분)': { number: { format: 'number' } } }]);
@@ -1040,6 +1087,56 @@ test('역 도보(분) is added only if missing, read from the row and never writ
   const store = realStore(failed);
   await store.init();
   assert.deepEqual(store.schemaIssues(), ['notion_property_add_failed']);
+});
+
+test('평균 분양가 is added only if missing, created with new databases, and a wrong type is left alone and not written', async () => {
+  const { 순번, 관심 } = OTHERS;
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, 순번, 관심 };
+  const missing = schemaFake(base);
+  await realStore(missing).init();
+  assert.deepEqual(schemaPatches(missing), [{ '평균 분양가': { number: { format: 'number' } } }]);
+
+  const present = schemaFake({ ...base, ...AVERAGE });
+  const presentStore = realStore(present);
+  await presentStore.init();
+  assert.deepEqual(schemaPatches(present), []);
+  await presentStore.upsert(notice(), { ...evaluation, averagePrice: 55000 }, undefined, THU);
+  assert.deepEqual(rowWrite(present).body.properties['평균 분양가'], { number: 55000 });
+
+  const conflict = schemaFake({ ...base, '평균 분양가': { type: 'rich_text', rich_text: {} } });
+  const conflictStore = realStore(conflict);
+  await conflictStore.init();
+  assert.deepEqual(schemaPatches(conflict), []);
+  await conflictStore.upsert(notice(), { ...evaluation, averagePrice: 55000 }, undefined, THU);
+  assert.equal(Object.hasOwn(rowWrite(conflict).body.properties, '평균 분양가'), false);
+
+  const failed = schemaFake(base, {
+    intercept: (call) => (call.method === 'PATCH' && call.path === '/databases/db' ? new Response('', { status: 403 }) : null),
+  });
+  const failedStore = realStore(failed);
+  await failedStore.init();
+  assert.deepEqual(failedStore.schemaIssues(), ['notion_property_add_failed']);
+  await failedStore.upsert(notice(), { ...evaluation, averagePrice: 55000 }, undefined, THU);
+  assert.equal(Object.hasOwn(rowWrite(failed).body.properties, '평균 분양가'), false);
+
+  const created = schemaFake({}, { children: [] });
+  await realStore(created).init();
+  assert.deepEqual(created.calls.find((call) => call.path === '/databases').body.properties['평균 분양가'], { number: { format: 'number' } });
+});
+
+test('a full run stores the supply-weighted 평균 분양가 from the model rows', async () => {
+  const base = worldFetch();
+  const fetch = async (url) => (String(url).includes('getAPTLttotPblancMdl')
+    ? Response.json({ totalCount: 2, data: [
+      { HOUSE_TY: '059.0000A', LTTOT_TOP_AMOUNT: '40,000', SUPLY_HSHLDCO: '60', SPSPLY_HSHLDCO: '40' },
+      { HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '60,000', SUPLY_HSHLDCO: '200', SPSPLY_HSHLDCO: '100' },
+    ] })
+    : base.fetch(url));
+  const h = harness({ fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // (40000 × 100 + 60000 × 300) / 400 = 55000
+  assert.deepEqual(h.store.state.upserts[0].properties['평균 분양가'], { number: 55000 });
+  assert.deepEqual(h.store.state.upserts[0].properties['최고 분양가'], { number: 60000 });
 });
 
 test('시세 신뢰도 is added only if missing, and another type is left alone', async () => {

@@ -280,7 +280,12 @@ test('HOUSE_TY and model fields parse into area and price', () => {
     houseType: '084.9810A',
     area: 84.981,
     price: 120000,
+    households: null,
   });
+  // 공급 세대수는 일반공급과 특별공급의 합이다.
+  assert.equal(normalizeModel({ HOUSE_TY: '084A', SUPLY_HSHLDCO: '120', SPSPLY_HSHLDCO: '80' }).households, 200);
+  assert.equal(normalizeModel({ HOUSE_TY: '084A', SUPLY_HSHLDCO: '12' }).households, 12);
+  assert.equal(normalizeModel({ GP: '1군', TP: 'A', SUPLY_HSHLDCO: '30' }).households, 30);
   const urbty = normalizeModel({ GP: '1군', TP: 'A', EXCLUSE_AR: '29.5', SUPLY_AMOUNT: '30000' });
   assert.equal(urbty.area, 29.5);
   assert.equal(urbty.price, 30000);
