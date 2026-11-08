@@ -77,8 +77,12 @@ const remainderTrack = (notice) => {
   if (notice.kind === 'arbitrary') return '임의공급';
   return notice.houseSecd === '06' ? '불법행위 재공급' : '무순위';
 };
+// 추천 전형 열과 관심 알림에 쓰는 짧은 이름. 거주 구분(해당지역, 기타경기, 기타지역)은 판별 근거의 추천 줄에만 적는다.
+const REMAINDER_LABELS = { 무순위: '무순위', '불법행위 재공급': '재공급', 임의공급: '임의공급' };
+const specialLabel = (track) => `특별(${track})`;
+const GENERAL_LABEL = '1순위';
 
-// 추천이 없으면 null이다. 결과는 { track, date, end, text }이고 text는 판별 근거에 붙이는 한 줄이다.
+// 추천이 없으면 null이다. 결과는 { track, date, end, text }이다. track은 짧은 이름이고 text는 판별 근거에 붙이는 한 줄이다.
 // 접수가 끝나지 않은 첫 후보(특별공급, 일반 1순위 순)를 고르고, 모두 끝났으면 추천하지 않는다.
 export function recommendTrack({ notice, models, profile, config, today }) {
   if (!profile) return null;
@@ -89,8 +93,8 @@ export function recommendTrack({ notice, models, profile, config, today }) {
   if (notice.kind !== 'apt') {
     const main = notice.stages.find((stage) => stage.start) ?? null;
     if (!isOpen(main, today)) return null;
-    const track = remainderTrack(notice);
-    return { track, date: main.start, end: main.end ?? null, text: `추천: ${track} ${shortDate(main.start)}` };
+    const name = remainderTrack(notice);
+    return { track: REMAINDER_LABELS[name], date: main.start, end: main.end ?? null, text: `추천: ${name} ${shortDate(main.start)}` };
   }
 
   const category = residenceCategory(notice, profile, config.recommendation);
@@ -104,7 +108,7 @@ export function recommendTrack({ notice, models, profile, config, today }) {
   if (special && specialOpen) {
     const alsoGeneral = general ? `, ${general.track} ${shortDate(general.stage.start)}도 가능` : '';
     return {
-      track: `${special.track} 특별공급`,
+      track: specialLabel(special.track),
       date: specialStage.start,
       end: specialStage.end ?? null,
       text: `추천: ${special.track} 특별공급 ${shortDate(specialStage.start)} (${special.units}세대${alsoGeneral}; ${checks})`,
@@ -113,7 +117,7 @@ export function recommendTrack({ notice, models, profile, config, today }) {
   if (!general) return null;
   const sameCityNote = category === '기타경기' ? ', 같은 시·군 거주면 해당지역' : '';
   return {
-    track: general.track,
+    track: GENERAL_LABEL,
     date: general.stage.start,
     end: general.stage.end ?? null,
     text: `추천: ${general.track} ${shortDate(general.stage.start)} (${checks}${sameCityNote})`,

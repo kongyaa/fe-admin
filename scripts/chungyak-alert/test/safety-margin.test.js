@@ -1774,7 +1774,7 @@ test('a run with a profile stores the recommended track and date and never the p
   const h = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON, GITHUB_ACTIONS: 'true' } });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const [{ properties, evaluation: value }] = h.store.state.upserts;
-  assert.deepEqual(properties['추천 전형'], { select: { name: '생애최초 특별공급' } });
+  assert.deepEqual(properties['추천 전형'], { select: { name: '특별(생애최초)' } });
   assert.deepEqual(properties['추천 접수일'], { date: { start: THU } });
   assert.ok(properties['판별 근거'].rich_text[0].text.content.includes('\n추천: 생애최초 특별공급 11/5 (20세대, 1순위 기타지역 11/7도 가능; 세대주·청약통장 요건 확인)'));
   assert.equal(value.status, '아님');
@@ -1836,12 +1836,16 @@ const interestRow = (extra = {}) => new Map([['7-7', {
 }]]);
 
 test('interest alerts go out on the freshly computed recommended date, overlaying a stale stored one', async () => {
+  // 예전 이름('신혼부부 특별공급')으로 저장된 행도 다시 계산하면 짧은 이름으로 바뀐다.
   const stale = interestRow({ recommendTrack: '신혼부부 특별공급', recommendDate: '2026-11-04' });
   const h = harness({ store: fakeStore(stale), fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(h.kakao.length, 1);
   assert.ok(h.kakao[0].text.startsWith('[관심 청약] '), h.kakao[0].text);
-  assert.ok(h.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05'), h.kakao[0].text);
+  assert.deepEqual(h.store.state.upserts[0].properties['추천 전형'], { select: { name: '특별(생애최초)' } });
+  assert.deepEqual(h.store.state.upserts[0].properties['추천 접수일'], { date: { start: THU } });
+  assert.ok(!h.kakao[0].text.includes('특별공급 오늘'), h.kakao[0].text);
+  assert.ok(h.kakao[0].text.includes('특별(생애최초) 오늘 접수 2026-11-05'), h.kakao[0].text);
   assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
 });
 
@@ -1852,15 +1856,15 @@ test('once the special supply has ended the next open 1순위 date is recommende
     GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-10', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-10',
     GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-10', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-10',
   };
-  const stored = interestRow({ start: '2026-11-09', end: '2026-11-10', recommendTrack: '생애최초 특별공급', recommendDate: '2026-11-09', recommendEnd: '2026-11-09' });
+  const stored = interestRow({ start: '2026-11-09', end: '2026-11-10', recommendTrack: '특별(생애최초)', recommendDate: '2026-11-09', recommendEnd: '2026-11-09' });
   const h = harness({ store: fakeStore(stored), fetch: recommendWorld({ dates }), env: { CHUNGYAK_PROFILE: PROFILE_JSON }, now: '2026-11-09T22:30:00Z' });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const [{ properties }] = h.store.state.upserts;
-  assert.deepEqual(properties['추천 전형'], { select: { name: '1순위 기타지역' } });
+  assert.deepEqual(properties['추천 전형'], { select: { name: '1순위' } });
   assert.deepEqual(properties['추천 접수일'], { date: { start: '2026-11-10' } });
   assert.ok(properties['판별 근거'].rich_text[0].text.content.endsWith('\n추천: 1순위 기타지역 11/10 (세대주·청약통장 요건 확인)'));
   assert.equal(h.kakao.length, 1);
-  assert.ok(h.kakao[0].text.includes('1순위 기타지역 오늘 접수 2026-11-10'), h.kakao[0].text);
+  assert.ok(h.kakao[0].text.includes('1순위 오늘 접수 2026-11-10'), h.kakao[0].text);
   assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: '2026-11-10' }]);
 });
 
@@ -1868,9 +1872,9 @@ test('a failed model lookup keeps the stored recommendation between runs instead
   // 첫 실행은 주택형 조회가 되어 생애최초 특별공급(THU)을 추천한다.
   const first = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
   await run({ env: first.env, deps: first.deps });
-  assert.deepEqual(first.store.state.upserts[0].properties['추천 전형'], { select: { name: '생애최초 특별공급' } });
+  assert.deepEqual(first.store.state.upserts[0].properties['추천 전형'], { select: { name: '특별(생애최초)' } });
   // 다음 실행에서 조회가 실패하면 일반 1순위로 바꾸지 않고 저장된 추천을 그대로 둔다.
-  const stored = interestRow({ start: THU, recommendTrack: '생애최초 특별공급', recommendDate: THU, recommendEnd: THU });
+  const stored = interestRow({ start: THU, recommendTrack: '특별(생애최초)', recommendDate: THU, recommendEnd: THU });
   const second = harness({ store: fakeStore(stored), fetch: recommendWorld({ modelsDown: true }), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
   await run({ env: second.env, deps: second.deps });
   const [{ properties }] = second.store.state.upserts;
@@ -1882,18 +1886,18 @@ test('a failed model lookup keeps the stored recommendation between runs instead
   assert.ok(second.logs.includes('recommend profile=ok recommended=0 none=0'));
   // 관심 알림도 저장된 추천으로 간다.
   assert.equal(second.kakao.length, 1);
-  assert.ok(second.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05'), second.kakao[0].text);
+  assert.ok(second.kakao[0].text.includes('특별(생애최초) 오늘 접수 2026-11-05'), second.kakao[0].text);
 });
 
 test('without a profile the stored recommended date is used, and without one the start date', async () => {
-  const stored = interestRow({ recommendTrack: '생애최초 특별공급', recommendDate: THU, recommendEnd: '2026-11-06' });
+  const stored = interestRow({ recommendTrack: '특별(생애최초)', recommendDate: THU, recommendEnd: '2026-11-06' });
   const h = harness({ store: fakeStore(stored), fetch: recommendWorld() });
   await run({ env: h.env, deps: h.deps });
   assert.equal(h.kakao.length, 1);
-  assert.ok(h.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05~2026-11-06'), h.kakao[0].text);
+  assert.ok(h.kakao[0].text.includes('특별(생애최초) 오늘 접수 2026-11-05~2026-11-06'), h.kakao[0].text);
 
   // 저장된 추천일이 다른 날이면 접수 시작일이 오늘이어도 보내지 않는다.
-  const other = harness({ store: fakeStore(interestRow({ start: THU, recommendTrack: '생애최초 특별공급', recommendDate: '2026-11-09' })), fetch: recommendWorld() });
+  const other = harness({ store: fakeStore(interestRow({ start: THU, recommendTrack: '특별(생애최초)', recommendDate: '2026-11-09' })), fetch: recommendWorld() });
   await run({ env: other.env, deps: other.deps });
   assert.equal(other.kakao.length, 0);
 
