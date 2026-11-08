@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { STATUS, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
+import { STATUS, averagePriceOf, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
 import { run } from '../src/main.js';
 import { buildKakaoText } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
@@ -527,6 +527,7 @@ test('a presale outage lowers each confidence level by one', async () => {
     ...saleRows(5, 2000, { aptName: '가단지', jibun: '11' }),
     ...saleRows(5, 2000, { aptName: '나단지', jibun: '12' }),
     ...saleRows(5, 2000, { aptName: '다단지', jibun: '13' }),
+    ...saleRows(5, 2000, { aptName: '라단지', jibun: '14' }),
   ];
   assert.equal((await evaluate(apt(), { trades, presale: { rows: [], ok: true } })).confidence, '중');
   assert.equal((await evaluate(apt(), { trades, presale: { rows: [], ok: false } })).confidence, '하');
@@ -607,23 +608,27 @@ test('a real client with a small cap degrades later notices without further call
   assert.deepEqual(soft, ['apt_call_cap']);
 });
 
-test('restricted types are 대상 외 with empty margin, before triggers and before any lookup', async () => {
+test('restricted types are 대상 외 with empty margin before triggers, reading only model rows for the average price', async () => {
   for (const name of ['고덕강일 3단지 토지임대부', '광교 자연앤 센트레빌 59㎡ 지분적립형', '하남교산 신혼희망타운']) {
     for (const flags of [{ priceCap: false, publicDistrict: false }, { priceCap: true, publicDistrict: true }]) {
-      let called = 0;
+      let models = 0;
+      let lookups = 0;
       const result = await evaluateLotto(apt({ name, flags }), {
         config,
         today,
-        getModels: async () => { called += 1; return []; },
-        getTrades: async () => { called += 1; return []; },
-        getPresale: async () => { called += 1; return { rows: [], ok: true }; },
+        getModels: async () => { models += 1; return [{ houseType: '059A', area: 59, price: 40000, households: 10 }]; },
+        getTrades: async () => { lookups += 1; return []; },
+        getPresale: async () => { lookups += 1; return { rows: [], ok: true }; },
       });
       assert.equal(result.status, STATUS.OUT_OF_SCOPE);
       assert.equal(result.clearMarket, true);
       assert.equal(result.margin, null);
       assert.equal(result.marginRate, null);
       assert.equal(result.estimate, null);
-      assert.equal(called, 0);
+      // 평균 분양가만 쓰려고 주택형은 읽고, 실거래는 조회하지 않는다.
+      assert.equal(models, 1);
+      assert.equal(lookups, 0);
+      assert.equal(result.averagePrice, 40000);
       assert.equal(keepPreviousLotto(result, STATUS.LOTTO).status, STATUS.OUT_OF_SCOPE);
     }
   }
@@ -655,7 +660,7 @@ test('lotto triggers are unchanged, and margin at or above thresholds with no tr
     assert.ok(result.reason.includes('084A'));
   }
   assert.equal((await evaluate(apt(), { trades: low })).status, STATUS.NOT);
-  const high = await evaluate(apt(), { trades: [...saleRows(5, 2500), ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })] });
+  const high = await evaluate(apt(), { trades: ['1', '2', '3', '4'].flatMap((n) => saleRows(5, 2500, { aptName: `비교단지${n}`, jibun: `10${n}` })) });
   assert.equal(high.status, STATUS.LOTTO);
   assert.ok(!high.reason.includes('무순위'));
 });
@@ -673,7 +678,7 @@ test('the reason leads with the margin so the Kakao text keeps it, with terms re
 
 test('a price-rule 로또 needs at least 중 confidence; triggers do not', async () => {
   const one = saleRows(5, 2500);
-  const two = [...one, ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })];
+  const two = ['1', '2', '3', '4'].flatMap((n) => saleRows(5, 2500, { aptName: `비교단지${n}`, jibun: `10${n}` }));
   const weak = await evaluate(apt(), { trades: one });
   assert.equal(weak.confidence, '하');
   assert.ok(weak.margin >= config.lotto.minMarginManwon);
@@ -695,10 +700,16 @@ test('a price-rule 로또 needs at least 중 confidence; triggers do not', async
 test('the reason says when the measured error exceeds the discount cap or could not be measured', async () => {
   const wide = [1000, 1600, 2200, 2800].flatMap((unit, index) => saleRows(4, unit, { aptName: `넓은${index}단지`, jibun: `w${index}` }));
   const over = await evaluate(apt(), { trades: wide });
-  assert.ok(over.reason.includes('검증 오차가 상한을 넘어 추정 시세에서 20%만 차감, 실제 위험은 더 큼'), over.reason);
+  assert.ok(over.reason.includes('검증 오차가 상한 10%를 넘어 10%만 차감, 실제 위험은 더 큼'), over.reason);
+  assert.ok(!over.reason.includes('20%'));
   assert.equal(over.confidence, '하');
+  // 서로 같은 단지 2곳은 오차를 재지 못해 차감하지 않지만 신뢰도는 중이라, 가격 기준으로 로또가 된다.
   const few = await evaluate(apt(), { trades: [...saleRows(5, 2500), ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })] });
-  assert.ok(few.reason.includes('비교 단지가 적어 추정 시세에서 상한 20% 차감'), few.reason);
+  assert.ok(few.reason.includes('(비교 단지가 적어 오차를 재지 못해 차감 없음)'), few.reason);
+  assert.ok(!few.reason.includes('신뢰도 하'), few.reason);
+  assert.equal(few.confidence, '중');
+  assert.equal(few.status, STATUS.LOTTO);
+  assert.equal(few.estimate * 1, few.margin + 100000 + 1500 + 3300);
 });
 
 // 2026-11-08 실제 실행에서 빌리브센트하이(2차)가 자기 분양권 거래를 찾지 못하고 다산 신도시 단지로 계산됐다.
@@ -794,6 +805,120 @@ test('a small house type shows comparables at its own area, not scaled to 84㎡'
   assert.ok(!result.reason.includes('24.0억'));
 });
 
+test('the average price is weighted by supply households, or a simple mean when a count is missing', () => {
+  const model = (price, households) => ({ houseType: 'x', area: 84, price, households });
+  // (50000 × 100 + 70000 × 300) / 400 = 65000
+  assert.equal(averagePriceOf([model(50000, 100), model(70000, 300)]), 65000);
+  // 세대수를 모르는 주택형이 있으면 단순 평균
+  assert.equal(averagePriceOf([model(50000, 100), model(70000, null)]), 60000);
+  // 0세대인 주택형은 가중치가 0이다: [059A 0세대 4.0억, 084A 300세대 7.0억] → 7.0억
+  assert.equal(averagePriceOf([{ ...model(40000, 0), houseType: '059A' }, { ...model(70000, 300), houseType: '084A' }]), 70000);
+  // 세대수 합이 0이면 단순 평균
+  assert.equal(averagePriceOf([model(40000, 0), model(70000, 0)]), 55000);
+  // 가격이 없는 주택형은 뺀다.
+  assert.equal(averagePriceOf([model(50000, 100), model(null, 900), model(0, 900)]), 50000);
+  assert.equal(averagePriceOf([]), null);
+  assert.equal(averagePriceOf(null), null);
+  assert.equal(averagePriceOf([model(null, 10)]), null);
+  assert.equal(averagePriceOf([model(50001, 1), model(50002, 2)]), 50002);
+});
+
+test('a failed model lookup on a restricted notice is soft, not an error', async () => {
+  const errors = [];
+  const soft = [];
+  const once = [];
+  const result = await evaluateLotto(apt({ name: '하남교산 신혼희망타운' }), {
+    config,
+    today,
+    getModels: async () => { throw new TypeError('fetch failed'); },
+    getTrades: async () => [],
+    onError: (kind) => errors.push(kind),
+    onSoft: (kind) => soft.push(kind),
+    onSoftOnce: (kind) => once.push(kind),
+  });
+  assert.equal(result.status, STATUS.OUT_OF_SCOPE);
+  assert.equal(result.averagePrice, null);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(soft, []);
+  assert.deepEqual(once, ['average_price_lookup_failed']);
+});
+
+test('a model outage across restricted notices is logged once per run and sends no error mail', async () => {
+  const rows = ['하남교산 신혼희망타운', '고덕강일 3단지 토지임대부', '광교 지분적립형'].map((name, index) => aptRow({ HOUSE_MANAGE_NO: String(20 + index), HOUSE_NM: name }));
+  const base = worldFetch({ rows });
+  let modelCalls = 0;
+  const fetch = async (url) => {
+    if (String(url).includes('getAPTLttotPblancMdl')) {
+      modelCalls += 1;
+      throw new TypeError('fetch failed');
+    }
+    return base.fetch(url);
+  };
+  const h = harness({ fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // 첫 공고에서 재시도 한 주기 뒤 장애로 보고 이후 공고는 호출하지 않는다.
+  assert.equal(modelCalls, 3);
+  assert.equal(errorMail(h), undefined);
+  assert.ok(marketLine(h).endsWith('soft=average_price_lookup_failed:1'), marketLine(h));
+  assert.equal(h.store.state.upserts.length, 3);
+  assert.ok(h.store.state.upserts.every((item) => !Object.hasOwn(item.properties, '평균 분양가')));
+});
+
+test('the average price is recorded for triggered, priced and undetermined notices alike', async () => {
+  const models = [{ houseType: '059A', area: 59, price: 40000, households: 100 }, { houseType: '084A', area: 84, price: 60000, households: 300 }];
+  const triggered = await evaluate(apt({ flags: { priceCap: true, publicDistrict: false } }), { models, trades: saleRows(5, 1000) });
+  assert.equal(triggered.status, STATUS.LOTTO);
+  assert.equal(triggered.averagePrice, 55000);
+  const priced = await evaluate(apt(), { models, trades: saleRows(5, 1000) });
+  assert.equal(priced.averagePrice, 55000);
+  const undetermined = await evaluate(apt(), { models, trades: [] });
+  assert.equal(undetermined.status, STATUS.UNDETERMINED);
+  assert.equal(undetermined.averagePrice, 55000);
+  const failed = await evaluateLotto(apt(), { config, today, getModels: async () => { throw new Error('x'); }, getTrades: async () => [] });
+  assert.equal(failed.averagePrice, null);
+});
+
+test('평균 분양가 is written for every row that has it, kept on restricted rows, and never written empty', () => {
+  const props = buildProperties(notice(), { status: '아님', averagePrice: 55000 }, THU);
+  assert.deepEqual(props['평균 분양가'], { number: 55000 });
+  // 제한 유형도 공고의 사실이라 지우지 않는다.
+  const restricted = buildProperties(notice(), { status: '대상 외', clearMarket: true, averagePrice: 40000 }, THU);
+  assert.deepEqual(restricted['평균 분양가'], { number: 40000 });
+  assert.deepEqual(restricted['안전 마진'], { number: null });
+  // 값이 없으면 보내지 않아 저장된 값이 남는다.
+  for (const evaluation of [{ status: '판별 불가' }, { status: '대상 외', clearMarket: true }, null]) {
+    assert.equal(Object.hasOwn(buildProperties(notice(), evaluation, THU), '평균 분양가'), false);
+  }
+});
+
+// 2026-11-08 실제 행: 의정부역 펠리스타워 양우내안애 59.98㎡, 최고 분양가 6.37억, 추정 시세 4.86억.
+// 보수 시세 대비로는 -70%였고, 할인 20%로 분양가 대비 -43%였다. 단지 1곳이라 오차를 재지 못해 이제는 할인하지 않아 -27%다.
+test('the margin rate is shown against the price (의정부 59.98㎡ example)', async () => {
+  const notice = apt({ name: '의정부역 펠리스타워 양우내안애', address: '경기 의정부시 의정부동 1', region: '경기' });
+  const trades = saleRows(5, 48600 / 59.98, { aptName: '의정부비교', umd: '의정부동', jibun: '9', area: 59.98, amount: 48600 });
+  const result = await evaluate(notice, { trades, models: [{ houseType: '059.9800A', area: 59.98, price: 63700 }] });
+  assert.equal(result.estimate, 48600);
+  // 보수 시세 48600 × 0.8 = 38880, 취득세 874만, 마진 38880 - 63700 - 1500 - 874 = -27194
+  // 보수 시세 48600(할인 없음), 취득세 874만, 마진 48600 - 63700 - 1500 - 874 = -17474
+  assert.equal(result.margin, -17474);
+  assert.ok(Math.abs(result.marginRate - -17474 / 63700) < 1e-12);
+  assert.ok(result.reason.includes('마진율 -27%(분양가 대비)'), result.reason);
+  assert.ok(result.shortReason.includes('마진율 -27%(분양가 대비)'));
+  assert.equal(result.confidence, '하');
+  assert.ok(!result.reason.includes('-70%'));
+});
+
+test('a margin that is 20% of the price passes the rate rule even below 20% of the safety value', async () => {
+  // 같은 값의 단지 4곳이라 오차 0, 할인 0%. 보수 시세 80000, 마진 80000 - 63700 - 1500 - 874 = 13926.
+  // 분양가 대비 21.9%라 기준을 넘는다. 보수 시세 대비라면 17.4%였다.
+  const trades = ['a1', 'a2', 'a3', 'a4'].flatMap((jibun) => saleRows(5, 80000 / 59.98, { aptName: `비교${jibun}`, jibun, area: 59.98, amount: 80000 }));
+  const result = await evaluate(apt(), { trades, models: [{ houseType: '059.9800A', area: 59.98, price: 63700 }] });
+  assert.equal(result.margin, 13926);
+  assert.equal(result.confidence, '중');
+  assert.equal(result.status, STATUS.LOTTO);
+  assert.ok(result.reason.includes('마진율 22%(분양가 대비)'), result.reason);
+});
+
 test('the Applyhome constructor field becomes the subject builder', () => {
   const endpoint = ENDPOINTS.find((item) => item.kind === 'apt');
   const notice = normalizeDetail(endpoint, { HOUSE_MANAGE_NO: '1', PBLANC_NO: '1', CNSTRCT_ENTRPS_NM: 'GS건설(주)', BSNS_MBY_NM: '시행사' });
@@ -807,7 +932,9 @@ const OLD = { '예상 차익': { type: 'number', number: {} }, 차익률: { type
 const NEW = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} } };
 const CONFIDENCE_PROP = { '시세 신뢰도': { type: 'select', select: {} } };
 const WALK = { '역 도보(분)': { type: 'number', number: {} } };
-const OTHERS = { ...WALK, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
+const AVERAGE = { '평균 분양가': { type: 'number', number: {} } };
+const RECOMMEND = { '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
+const OTHERS = { ...WALK, ...AVERAGE, ...RECOMMEND, 순번: { type: 'number', number: {} }, 관심: { type: 'checkbox', checkbox: {} } };
 
 const notice = (extra = {}) => ({ key: '1-1', name: '테스트', region: '서울', typeLabel: 'APT', source: '청약홈', url: 'https://www.applyhome.co.kr/a', stages: [], ...extra });
 
@@ -1006,7 +1133,7 @@ test('a new name of another type is left alone, and the old column keeps receivi
 
 test('역 도보(분) is added only if missing, read from the row and never written', async () => {
   const { 순번, 관심 } = OTHERS;
-  const others = { ...NEW, ...CONFIDENCE_PROP, 순번, 관심 };
+  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, ...RECOMMEND, 순번, 관심 };
   const missing = schemaFake(others);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '역 도보(분)': { number: { format: 'number' } } }]);
@@ -1040,6 +1167,75 @@ test('역 도보(분) is added only if missing, read from the row and never writ
   const store = realStore(failed);
   await store.init();
   assert.deepEqual(store.schemaIssues(), ['notion_property_add_failed']);
+});
+
+test('평균 분양가 is added only if missing, created with new databases, and a wrong type is left alone and not written', async () => {
+  const { 순번, 관심 } = OTHERS;
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...RECOMMEND, 순번, 관심 };
+  const missing = schemaFake(base);
+  await realStore(missing).init();
+  assert.deepEqual(schemaPatches(missing), [{ '평균 분양가': { number: { format: 'number' } } }]);
+
+  const present = schemaFake({ ...base, ...AVERAGE });
+  const presentStore = realStore(present);
+  await presentStore.init();
+  assert.deepEqual(schemaPatches(present), []);
+  await presentStore.upsert(notice(), { ...evaluation, averagePrice: 55000 }, undefined, THU);
+  assert.deepEqual(rowWrite(present).body.properties['평균 분양가'], { number: 55000 });
+
+  const conflict = schemaFake({ ...base, '평균 분양가': { type: 'rich_text', rich_text: {} } });
+  const conflictStore = realStore(conflict);
+  await conflictStore.init();
+  assert.deepEqual(schemaPatches(conflict), []);
+  await conflictStore.upsert(notice(), { ...evaluation, averagePrice: 55000 }, undefined, THU);
+  assert.equal(Object.hasOwn(rowWrite(conflict).body.properties, '평균 분양가'), false);
+
+  const failed = schemaFake(base, {
+    intercept: (call) => (call.method === 'PATCH' && call.path === '/databases/db' ? new Response('', { status: 403 }) : null),
+  });
+  const failedStore = realStore(failed);
+  await failedStore.init();
+  assert.deepEqual(failedStore.schemaIssues(), ['notion_property_add_failed']);
+  await failedStore.upsert(notice(), { ...evaluation, averagePrice: 55000 }, undefined, THU);
+  assert.equal(Object.hasOwn(rowWrite(failed).body.properties, '평균 분양가'), false);
+
+  const created = schemaFake({}, { children: [] });
+  await realStore(created).init();
+  assert.deepEqual(created.calls.find((call) => call.path === '/databases').body.properties['평균 분양가'], { number: { format: 'number' } });
+});
+
+test('a full run stores the supply-weighted 평균 분양가 from the model rows', async () => {
+  const base = worldFetch();
+  const fetch = async (url) => (String(url).includes('getAPTLttotPblancMdl')
+    ? Response.json({ totalCount: 2, data: [
+      { HOUSE_TY: '059.0000A', LTTOT_TOP_AMOUNT: '40,000', SUPLY_HSHLDCO: '60', SPSPLY_HSHLDCO: '40' },
+      { HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '60,000', SUPLY_HSHLDCO: '200', SPSPLY_HSHLDCO: '100' },
+    ] })
+    : base.fetch(url));
+  const h = harness({ fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // (40000 × 100 + 60000 × 300) / 400 = 55000
+  assert.deepEqual(h.store.state.upserts[0].properties['평균 분양가'], { number: 55000 });
+  assert.deepEqual(h.store.state.upserts[0].properties['최고 분양가'], { number: 60000 });
+});
+
+test('추천 전형 and 추천 접수일 are added only if missing, and other types are left alone', async () => {
+  const { 순번, 관심 } = OTHERS;
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...AVERAGE, 순번, 관심 };
+  const missing = schemaFake(base);
+  await realStore(missing).init();
+  assert.deepEqual(schemaPatches(missing), [{ '추천 전형': { select: {} } }, { '추천 접수일': { date: {} } }]);
+  const present = schemaFake({ ...base, ...RECOMMEND });
+  await realStore(present).init();
+  assert.deepEqual(schemaPatches(present), []);
+  const conflict = schemaFake({ ...base, '추천 전형': { type: 'rich_text', rich_text: {} }, '추천 접수일': { type: 'number', number: {} } });
+  const store = realStore(conflict);
+  await store.init();
+  assert.deepEqual(schemaPatches(conflict), []);
+  await store.upsert(notice(), { ...evaluation, recommendation: { track: '무순위', date: THU, end: null } }, undefined, THU);
+  const written = rowWrite(conflict).body.properties;
+  assert.equal(Object.hasOwn(written, '추천 전형'), false);
+  assert.equal(Object.hasOwn(written, '추천 접수일'), false);
 });
 
 test('시세 신뢰도 is added only if missing, and another type is left alone', async () => {
@@ -1084,7 +1280,7 @@ const aptRow = (extra = {}) => ({
   ...extra,
 });
 
-function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tradeTags({ name: '래미안비밀', jibun: '100', amount: '210,000' }), tradeTags({ name: '래미안비밀2', jibun: '102', amount: '210,000' })] } = {}) {
+function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = ['', '2', '3', '4'].map((n, index) => tradeTags({ name: `래미안비밀${n}`, jibun: String(100 + index * 2), amount: '210,000' })) } = {}) {
   const calls = { kakao: [], presale: [], molit: [], apt: [] };
   const fetch = async (url) => {
     const text = String(url);
@@ -1094,7 +1290,7 @@ function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tra
       calls.apt.push(text);
       if (aptHandler) return aptHandler(parsed);
       return text.includes('AptListService4')
-        ? Response.json(listBody([listItem('래미안비밀'), listItem('래미안비밀2', 'A2')]))
+        ? Response.json(listBody([listItem('래미안비밀'), listItem('래미안비밀2', 'A2'), listItem('래미안비밀3', 'A3'), listItem('래미안비밀4', 'A4')]))
         : Response.json(detailBody({ kaptCode: 'A1', subwayLine: '2호선', subwayStation: '역삼', kaptdWtimesub: '5분이내' }));
     }
     if (text.includes('RTMSDataSvcSilvTrade')) {
@@ -1132,7 +1328,7 @@ function fakeStore(existing = new Map()) {
   };
 }
 
-function harness({ store = fakeStore(), fetch, env = {}, argv } = {}) {
+function harness({ store = fakeStore(), fetch, env = {}, argv, now = THU_NOW } = {}) {
   const mails = [];
   const kakao = [];
   const logs = [];
@@ -1150,7 +1346,7 @@ function harness({ store = fakeStore(), fetch, env = {}, argv } = {}) {
       store,
       accessToken: 'token',
       sleep: noSleep,
-      now: () => new Date(THU_NOW),
+      now: () => new Date(now),
       log: (line) => logs.push(line),
       write: (line) => written.push(line),
       sendMail: async (mail) => { mails.push(mail); },
@@ -1178,11 +1374,11 @@ test('a normal run reads the manual value, looks up comparables, stores the marg
   assert.ok(reason.includes('래미안비밀 19.2억(5분이내, 브랜드'), reason);
   assert.ok(reason.includes('역 도보 15분(입력)'));
   assert.equal(Object.hasOwn(properties, '역 도보(분)'), false);
-  // 목록 1회, 상세 2회
-  assert.equal(world.calls.apt.length, 3);
-  assert.ok(h.logs.includes('market apt_calls=3 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=10 umd_other=0 soft=none'));
-  assert.ok(h.logs.includes('apt_tags listRows=2 listNoCode=0 listNoDong=0 listNoTotal=0 details=2 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:2'));
-  assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=10 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=10')));
+  // 목록 1회, 상세 4회
+  assert.equal(world.calls.apt.length, 5);
+  assert.ok(h.logs.includes('market apt_calls=5 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=1 confidence_mid=0 confidence_low=0 umd_town=0 umd_village=0 umd_dong=20 umd_other=0 soft=none'));
+  assert.ok(h.logs.includes('apt_tags listRows=4 listNoCode=0 listNoDong=0 listNoTotal=0 details=4 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:4'));
+  assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=20 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=20')));
   assert.ok(h.written.includes(`::add-mask::${DATA_SECRET}`));
 
   for (const secret of [KAKAO_SECRET, DATA_SECRET, 'apis.data.go.kr', '비밀공고단지', '래미안비밀', '역삼동', '7-7', 'A1']) {
@@ -1222,7 +1418,7 @@ test('a row without the manual value makes no apartment calls and caps confidenc
   const h = harness({ store: fakeStore(withWalk(null)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(world.calls.apt.length, 0);
-  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=10 umd_other=0 soft=none'));
+  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=20 umd_other=0 soft=none'));
   // 2500 / 1.05 × 84. 역 보정 없이 브랜드만 보정한다.
   assert.equal(h.store.state.upserts[0].evaluation.estimate, 200000);
 });
@@ -1251,8 +1447,8 @@ test('a name mismatch in a full run is soft and counted', async () => {
   const h = harness({ store: fakeStore(withWalk(15)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(errorMail(h), undefined);
-  // 기본 실거래의 비교 단지 2곳이 모두 목록에 없다.
-  assert.ok(marketLine(h).endsWith('soft=apt_name_unmatched:2'));
+  // 기본 실거래의 비교 단지 4곳이 모두 목록에 없다.
+  assert.ok(marketLine(h).endsWith('soft=apt_name_unmatched:4'));
   assert.equal(world.calls.apt.length, 1);
 });
 
@@ -1261,7 +1457,7 @@ const summaryLine = (h) => h.logs.find((line) => line.startsWith('collected='));
 test('lotto_demoted counts rows that were 로또 and now compute 아님 or 대상 외, and only those', async () => {
   const wasLotto = (extra = {}) => new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU, ...extra }]]);
   // 단지 2곳이라 신뢰도가 중이다. 신뢰도 하인 추정은 이전 로또를 유지하므로 빠진 것으로 세지 않는다.
-  const lowPrice = [tradeTags({ name: '가단지', jibun: '100', amount: '84,000' }), tradeTags({ name: '나단지', jibun: '101', amount: '84,000' })];
+  const lowPrice = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount: '84,000' }));
   const highPrice = [tradeTags({ name: '가단지', jibun: '100', amount: '300,000' })];
   const count = async ({ store, trades, rows, kakaoSent = 0, argv }) => {
     const world = worldFetch({ trades, rows });
@@ -1303,7 +1499,7 @@ test('a weak estimate cannot quietly drop a previous 로또, while a 중 estimat
   assert.equal(notBefore.store.state.upserts[0].evaluation.status, '아님');
 
   // 신뢰도 중이면 가격 기준대로 아님이 된다.
-  const twoComplexes = [...oneComplex, tradeTags({ name: '나단지', jibun: '101', amount: '84,000' })];
+  const twoComplexes = [...oneComplex, ...['나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(101 + index), amount: '84,000' }))];
   const firm = harness({ store: fakeStore(wasLotto), fetch: worldFetch({ trades: twoComplexes }).fetch });
   await run({ env: firm.env, deps: firm.deps });
   assert.equal(firm.store.state.upserts[0].evaluation.status, '아님');
@@ -1322,7 +1518,7 @@ test('complexes dropped as outliers are counted in the market log line', async (
 
 test('a notice with a 하 large type and a 중 small type that qualifies is 로또', async () => {
   const large = saleRows(5, 3000, { aptName: '대형가', jibun: 'L1' });
-  const small = [...saleRows(5, 1000, { aptName: '소형가', jibun: 'S1', area: 59, amount: 59000 }), ...saleRows(5, 1000, { aptName: '소형나', jibun: 'S2', area: 59, amount: 59000 })];
+  const small = ['S1', 'S2', 'S3', 'S4'].flatMap((jibun) => saleRows(5, 1000, { aptName: `소형${jibun}`, jibun, area: 59, amount: 59000 }));
   const result = await evaluate(apt(), {
     trades: [...large, ...small],
     models: [{ houseType: '084A', area: 84, price: 100000 }, { houseType: '059A', area: 59, price: 30000 }],
@@ -1501,7 +1697,7 @@ test('dry-run stays write-free while reading the manual value and market data', 
   assert.deepEqual(fake.calls.filter((call) => call.method === 'PATCH' || (call.method === 'POST' && !call.path.endsWith('/query'))), []);
   assert.equal(h.mails.length, 0);
   assert.equal(h.kakao.length, 0);
-  assert.equal(base.calls.apt.length, 3);
+  assert.equal(base.calls.apt.length, 5);
   assert.ok(marketLine(h).includes('station_used=1'));
 });
 
@@ -1547,6 +1743,165 @@ test('tag name lines say none when an API returned no items', async () => {
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.ok(h.logs.includes('sale_tag_names=none'));
   assert.ok(h.logs.includes('presale_tag_names=none'));
+});
+
+// 추천 전형 실행 테스트: 특별공급 THU, 1순위 해당지역 11/6, 기타지역 11/7인 서울 APT. 실거래가 낮아 로또 알림은 없다.
+// 테스트용 가짜 신청자 정보다. 인천 거주자라 서울 공고의 일반 1순위는 기타지역이다.
+const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTracks":["생애최초"]}';
+const lowTrades = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount: '84,000' }));
+function recommendWorld({ specials = { NWWDS_HSHLDCO: '30', NWBB_HSHLDCO: '10', LFE_FRST_HSHLDCO: '20' }, dates = {}, modelsDown = false } = {}) {
+  const row = aptRow({ GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-06', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-06', GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-07', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-07', ...dates });
+  const base = worldFetch({ rows: [row], trades: lowTrades });
+  return async (url) => {
+    if (!String(url).includes('getAPTLttotPblancMdl')) return base.fetch(url);
+    if (modelsDown) return new Response('down', { status: 500 });
+    return Response.json({ totalCount: 1, data: [{ HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '100,000', SUPLY_HSHLDCO: '40', SPSPLY_HSHLDCO: '60', ...specials }] });
+  };
+}
+// 신청자 정보가 로그, 메일, Notion 속성 어디에도 없는지 본다. 키 이름뿐 아니라 가짜 값 자체도 찾는다.
+// 공고는 서울이라 '인천'이 나오면 신청자 정보에서 온 것이다.
+const PROFILE_VALUES = ['residenceSido', 'residenceYears', 'specialTracks', '인천', '거주 3년', '3년 거주'];
+function assertNoProfile(h, profileText) {
+  const everything = JSON.stringify([h.logs, h.mails, h.kakao, h.store.state.upserts.map((item) => item.properties), h.store.state.stamps]);
+  for (const secret of [profileText, ...profileText.split('\n').map((line) => line.trim()).filter((line) => line.length > 1), ...PROFILE_VALUES]) {
+    assert.ok(!everything.includes(secret), secret);
+  }
+  // 가리는 명령 말고는 값의 어느 줄도 로그로 쓰지 않는다.
+  for (const line of h.written.filter((item) => !item.startsWith('::add-mask::'))) assert.ok(!line.includes('인천'), line);
+}
+
+test('a run with a profile stores the recommended track and date and never the profile', async () => {
+  const h = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON, GITHUB_ACTIONS: 'true' } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ properties, evaluation: value }] = h.store.state.upserts;
+  assert.deepEqual(properties['추천 전형'], { select: { name: '생애최초 특별공급' } });
+  assert.deepEqual(properties['추천 접수일'], { date: { start: THU } });
+  assert.ok(properties['판별 근거'].rich_text[0].text.content.includes('\n추천: 생애최초 특별공급 11/5 (20세대, 1순위 기타지역 11/7도 가능; 세대주·청약통장 요건 확인)'));
+  assert.equal(value.status, '아님');
+  assert.ok(h.logs.includes('recommend profile=ok recommended=1 none=0'));
+  assert.ok(h.written.includes(`::add-mask::${PROFILE_JSON}`));
+  assertNoProfile(h, PROFILE_JSON);
+});
+
+test('a multi-line profile is masked line by line, so no line reaches the log unmasked', async () => {
+  const pretty = JSON.stringify(JSON.parse(PROFILE_JSON), null, 2);
+  const h = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: pretty, GITHUB_ACTIONS: 'true' } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(h.logs.includes('recommend profile=ok recommended=1 none=0'));
+  const masks = h.written.filter((line) => line.startsWith('::add-mask::'));
+  // 한 줄에 하나씩이고, 줄바꿈이 든 가림 명령은 없다.
+  assert.ok(masks.every((line) => !line.includes('\n')), masks.join('|'));
+  for (const line of ['"residenceSido": "인천",', '"residenceYears": 3,', '"specialTracks": [', '"생애최초"']) {
+    assert.ok(masks.includes(`::add-mask::${line}`), line);
+  }
+  // 괄호만 있는 줄은 가리지 않는다.
+  assert.ok(!masks.includes('::add-mask::{') && !masks.includes('::add-mask::]') && !masks.includes('::add-mask::}'), masks.join('|'));
+  assertNoProfile(h, pretty);
+  // GitHub Actions 밖에서는 가림 명령을 쓰지 않는다.
+  const local = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: pretty } });
+  await run({ env: local.env, deps: local.deps });
+  assert.ok(!local.written.some((line) => line.includes('인천')));
+  assertNoProfile(local, pretty);
+});
+
+test('a missing or invalid profile turns the feature off without an error mail or Notion writes', async () => {
+  for (const [value, status] of [[undefined, 'missing'], ['{bad', 'invalid'], ['{"residenceSido":"인천","residenceYears":3,"specialTracks":["다자녀"]}', 'invalid']]) {
+    const env = value === undefined ? {} : { CHUNGYAK_PROFILE: value };
+    const h = harness({ fetch: recommendWorld(), env });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    assert.ok(h.logs.includes(`recommend profile=${status} recommended=0 none=0`), status);
+    assert.equal(errorMail(h), undefined, status);
+    const [{ properties }] = h.store.state.upserts;
+    assert.equal(Object.hasOwn(properties, '추천 전형'), false);
+    assert.equal(Object.hasOwn(properties, '추천 접수일'), false);
+    assert.ok(!properties['판별 근거'].rich_text[0].text.content.includes('추천:'));
+  }
+});
+
+test('a notice with no recommendation clears the stored columns when the profile is on', async () => {
+  const h = harness({ fetch: recommendWorld({ specials: {} }), env: { CHUNGYAK_PROFILE: '{"residenceSido":"인천","residenceYears":3,"specialTracks":[]}' } });
+  // 일반 1순위 기타지역(11/7)은 있으므로 그 날짜가 추천이다.
+  await run({ env: h.env, deps: h.deps });
+  assert.deepEqual(h.store.state.upserts[0].properties['추천 접수일'], { date: { start: '2026-11-07' } });
+  const outside = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: '{"residenceSido":"부산","residenceYears":5}' } });
+  await run({ env: outside.env, deps: outside.deps });
+  assert.deepEqual(outside.store.state.upserts[0].properties['추천 전형'], { select: null });
+  assert.deepEqual(outside.store.state.upserts[0].properties['추천 접수일'], { date: null });
+  assert.ok(outside.logs.includes('recommend profile=ok recommended=0 none=1'));
+});
+
+const interestRow = (extra = {}) => new Map([['7-7', {
+  id: 'p7', key: '7-7', name: '관심단지', link: 'https://www.applyhome.co.kr/a', interest: true, lotto: '아님', urgentDate: null,
+  start: '2026-11-10', end: '2026-11-20', recommendTrack: null, recommendDate: null, recommendEnd: null, ...extra,
+}]]);
+
+test('interest alerts go out on the freshly computed recommended date, overlaying a stale stored one', async () => {
+  const stale = interestRow({ recommendTrack: '신혼부부 특별공급', recommendDate: '2026-11-04' });
+  const h = harness({ store: fakeStore(stale), fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith('[관심 청약] '), h.kakao[0].text);
+  assert.ok(h.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05'), h.kakao[0].text);
+  assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
+});
+
+test('once the special supply has ended the next open 1순위 date is recommended and alerted on that day', async () => {
+  // 특별공급 11/9, 1순위(해당지역·기타지역) 11/10. 11/10 실행이다.
+  const dates = {
+    SPSPLY_RCEPT_BGNDE: '2026-11-09', SPSPLY_RCEPT_ENDDE: '2026-11-09',
+    GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-10', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-10',
+    GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-10', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-10',
+  };
+  const stored = interestRow({ start: '2026-11-09', end: '2026-11-10', recommendTrack: '생애최초 특별공급', recommendDate: '2026-11-09', recommendEnd: '2026-11-09' });
+  const h = harness({ store: fakeStore(stored), fetch: recommendWorld({ dates }), env: { CHUNGYAK_PROFILE: PROFILE_JSON }, now: '2026-11-09T22:30:00Z' });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ properties }] = h.store.state.upserts;
+  assert.deepEqual(properties['추천 전형'], { select: { name: '1순위 기타지역' } });
+  assert.deepEqual(properties['추천 접수일'], { date: { start: '2026-11-10' } });
+  assert.ok(properties['판별 근거'].rich_text[0].text.content.endsWith('\n추천: 1순위 기타지역 11/10 (세대주·청약통장 요건 확인)'));
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.includes('1순위 기타지역 오늘 접수 2026-11-10'), h.kakao[0].text);
+  assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: '2026-11-10' }]);
+});
+
+test('a failed model lookup keeps the stored recommendation between runs instead of flipping it', async () => {
+  // 첫 실행은 주택형 조회가 되어 생애최초 특별공급(THU)을 추천한다.
+  const first = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  await run({ env: first.env, deps: first.deps });
+  assert.deepEqual(first.store.state.upserts[0].properties['추천 전형'], { select: { name: '생애최초 특별공급' } });
+  // 다음 실행에서 조회가 실패하면 일반 1순위로 바꾸지 않고 저장된 추천을 그대로 둔다.
+  const stored = interestRow({ start: THU, recommendTrack: '생애최초 특별공급', recommendDate: THU, recommendEnd: THU });
+  const second = harness({ store: fakeStore(stored), fetch: recommendWorld({ modelsDown: true }), env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  await run({ env: second.env, deps: second.deps });
+  const [{ properties }] = second.store.state.upserts;
+  assert.equal(Object.hasOwn(properties, '추천 전형'), false);
+  assert.equal(Object.hasOwn(properties, '추천 접수일'), false);
+  const reason = properties['판별 근거'].rich_text[0].text.content;
+  assert.ok(reason.endsWith('\n(추천: 조회 실패로 이전 값 유지)'), reason);
+  assert.ok(!reason.includes('추천: 1순위'), reason);
+  assert.ok(second.logs.includes('recommend profile=ok recommended=0 none=0'));
+  // 관심 알림도 저장된 추천으로 간다.
+  assert.equal(second.kakao.length, 1);
+  assert.ok(second.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05'), second.kakao[0].text);
+});
+
+test('without a profile the stored recommended date is used, and without one the start date', async () => {
+  const stored = interestRow({ recommendTrack: '생애최초 특별공급', recommendDate: THU, recommendEnd: '2026-11-06' });
+  const h = harness({ store: fakeStore(stored), fetch: recommendWorld() });
+  await run({ env: h.env, deps: h.deps });
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.includes('생애최초 특별공급 오늘 접수 2026-11-05~2026-11-06'), h.kakao[0].text);
+
+  // 저장된 추천일이 다른 날이면 접수 시작일이 오늘이어도 보내지 않는다.
+  const other = harness({ store: fakeStore(interestRow({ start: THU, recommendTrack: '생애최초 특별공급', recommendDate: '2026-11-09' })), fetch: recommendWorld() });
+  await run({ env: other.env, deps: other.deps });
+  assert.equal(other.kakao.length, 0);
+
+  // 추천이 없으면 예전처럼 접수 시작일에 보낸다.
+  const plain = harness({ store: fakeStore(interestRow({ start: THU })), fetch: recommendWorld() });
+  await run({ env: plain.env, deps: plain.deps });
+  assert.equal(plain.kakao.length, 1);
+  assert.ok(plain.kakao[0].text.includes('접수 오늘 시작'), plain.kakao[0].text);
 });
 
 test('the molit client reports tag tallies without names', async () => {

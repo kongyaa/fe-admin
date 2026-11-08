@@ -144,6 +144,17 @@ export function maskValue(value, env, write = (line) => process.stdout.write(`${
   if (value && env.GITHUB_ACTIONS) write(`::add-mask::${value}`);
 }
 
+// 여러 줄일 수 있는 값은 줄마다 가린다. ::add-mask::는 한 줄 명령이라 여러 줄 값을 한 번에 넘기면
+// 첫 줄만 가려지고 둘째 줄부터는 일반 로그로 찍힌다. 괄호와 쉼표만 있는 줄은 정보가 없어 가리지 않는다.
+export function maskLines(value, env, write) {
+  if (!value) return;
+  for (const line of String(value).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (/^[{}[\],:]*$/.test(trimmed)) continue;
+    maskValue(trimmed, env, write);
+  }
+}
+
 export function maskServiceKey(key, env, write) {
   if (!key) return;
   const variants = new Set([

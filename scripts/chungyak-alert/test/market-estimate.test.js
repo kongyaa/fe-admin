@@ -16,6 +16,8 @@ import {
   leadBuilder,
   leaveOneOutError,
   localityConflict,
+  marginRateOf,
+  meetsPriceRule,
   lookupCandidates,
   parseLocality,
   normalizeComplexName,
@@ -509,7 +511,9 @@ const GWANGGYO = [
 const gwanggyoRows = (list) => list.flatMap(([aptName, buildYear, amount, count], index) => rows(count, amount / 84.6, { aptName, buildYear, umd: '원천동', jibun: String(100 + index), area: 84.6 }));
 // 이 커밋의 계산으로 낸 값이다. 추정 시세 15.2억, 보수 시세 12.1억(검증 오차가 상한 20%를 넘어 20% 차감), 안전 마진 2.3억.
 // 신도시 단지끼리도 13억~19억으로 퍼져 서로를 맞힌 오차가 커서 신뢰도는 하다.
-const GWANGGYO_EXPECTED = { estimate: 151820, safeValue: 121456, margin: 22999, confidence: CONFIDENCE.LOW };
+// 마진율은 분양가 대비 22999 / 93860 = 24.5%다. 보수 시세 대비였을 때는 18.9%였다.
+// 할인율 상한 10%(2026-11-08 변경): 보수 시세 151820 × 0.9 = 136638, 안전 마진 3.8억, 마진율 40.7%. 상한 20%일 때는 121456, 2.3억, 24.5%였다.
+const GWANGGYO_EXPECTED = { estimate: 151820, safeValue: 136638, margin: 38181, marginRate: 38181 / 93860, confidence: CONFIDENCE.LOW };
 const gwanggyoModel = { houseType: '084.6192C', area: 84.6192, price: 93860 };
 const gwanggyo = (list) => estimateBestMargin({
   models: [gwanggyoModel],
@@ -535,6 +539,7 @@ test('regression: a new-town subject is valued from new-town complexes, not the 
   assert.equal(result.estimate, GWANGGYO_EXPECTED.estimate);
   assert.equal(result.safeValue, GWANGGYO_EXPECTED.safeValue);
   assert.equal(result.margin, GWANGGYO_EXPECTED.margin);
+  assert.ok(Math.abs(result.marginRate - GWANGGYO_EXPECTED.marginRate) < 1e-12);
   assert.equal(result.confidence, GWANGGYO_EXPECTED.confidence);
   // 근거의 금액은 공고 주택형 면적(84.6192㎡) 기준 보정 금액이다.
   assert.equal(result.basis.area, 84.6192);
@@ -620,38 +625,69 @@ test('margin takes the estimate less the leave-one-out error and subtracts price
   assert.equal(result.estimate, 110000);
   // 서로 맞힌 오차: 1000→1200 0.2, 1100→1200 0.0909, 1200→1100 0.0833, 1300→1100 0.1538. 중위값 0.1224
   const expectedDiscount = ((100 / 1100) + (200 / 1300)) / 2;
-  assert.ok(Math.abs(result.discount - expectedDiscount) < 1e-9);
-  assert.equal(result.safeValue, Math.round(1100 * (1 - expectedDiscount) * 100));
-  assert.equal(result.safeValue, 96538);
+  // 측정한 오차 12.2%가 상한 10%를 넘어 10%만 뺀다.
+  assert.ok(expectedDiscount > 0.1);
+  assert.equal(result.discount, 0.1);
+  assert.equal(result.discountExceeded, true);
+  assert.equal(result.safeValue, 99000);
   // 8억의 세율은 1% + 2% × (2/3) = 2.3333%, 교육세 포함 × 1.1. 80000 × 0.0256667 = 2053
   assert.equal(result.tax, 2053);
   assert.equal(result.optionCost, 1500);
-  assert.equal(result.margin, 96538 - 80000 - 1500 - 2053);
-  assert.ok(Math.abs(result.marginRate - 12985 / 96538) < 1e-9);
+  assert.equal(result.margin, 99000 - 80000 - 1500 - 2053);
+  // 마진율은 분양가 대비다.
+  assert.ok(Math.abs(result.marginRate - 15447 / 80000) < 1e-9);
 });
 
-test('the safety discount trusts the measured error only with four or more complexes', () => {
+test('the margin rate is the margin over the price, and missing or zero prices give no rate', () => {
+  assert.equal(marginRateOf(-27194, 63700), -27194 / 63700);
+  for (const price of [0, -1, null, undefined, Number.NaN]) assert.equal(marginRateOf(1000, price), null, String(price));
+  assert.equal(marginRateOf(Number.NaN, 63700), null);
+  // 비율이 없으면 3억 원 기준만 본다.
+  assert.equal(meetsPriceRule({ margin: 30000, marginRate: null }, lotto), true);
+  assert.equal(meetsPriceRule({ margin: 29999, marginRate: null }, lotto), false);
+  for (const marginRate of [undefined, Number.NaN]) assert.equal(meetsPriceRule({ margin: 1, marginRate }, lotto), false, String(marginRate));
+  assert.equal(meetsPriceRule({ margin: 1, marginRate: 0.2 }, lotto), true);
+  assert.equal(meetsPriceRule({ margin: 1, marginRate: 0.1999 }, lotto), false);
+});
+
+test('the safety discount is only the measured error, capped at 10%, and nothing when it cannot be measured', () => {
   const safe = market.safeValue;
-  const discount = (input) => safeDiscount({ spread: 0, outliers: 0, comparables: 4, ...input }, safe);
-  assert.deepEqual(discount({ looError: null }), { discount: safe.maxDiscount, measured: false, exceeded: false });
-  // 서로 잘 맞는 단지 3곳도 검증하기엔 적어 상한을 쓴다.
-  assert.equal(discount({ looError: 0, comparables: 3 }).discount, safe.maxDiscount);
-  assert.equal(discount({ looError: 0 }).discount, safe.minDiscount);
-  assert.equal(discount({ looError: 0.12 }).discount, 0.12);
+  assert.equal(safe.maxDiscount, 0.1);
+  const discount = (input) => safeDiscount({ spread: 0, comparables: 4, ...input }, safe);
+  assert.deepEqual(discount({ looError: null }), { discount: 0, measured: false, exceeded: false });
+  // 단지 3곳은 오차를 믿기에 적어 할인하지 않는다.
+  assert.equal(discount({ looError: 0.05, comparables: 3 }).discount, 0);
+  assert.equal(discount({ looError: 0.05, comparables: 3 }).measured, false);
+  // 하한은 없다.
+  assert.equal(discount({ looError: 0 }).discount, 0);
+  assert.equal(discount({ looError: 0.07 }).discount, 0.07);
   // 오차 중위값보다 퍼짐의 절반이 크면 그 값을 쓴다.
-  assert.equal(discount({ looError: 0.02, spread: 0.3 }).discount, 0.15);
-  // 이상치를 뺐으면 하한이 10%다.
-  assert.equal(discount({ looError: 0, outliers: 1 }).discount, safe.minDiscountWithOutliers);
+  assert.equal(discount({ looError: 0.02, spread: 0.16 }).discount, 0.08);
   const over = discount({ looError: 0.35 });
-  assert.equal(over.discount, safe.maxDiscount);
+  assert.equal(over.discount, 0.1);
   assert.equal(over.exceeded, true);
+  assert.equal(discount({ looError: 0.1 }).exceeded, false);
 });
 
-test('three agreeing sibling complexes still get the full discount', () => {
+test('two or three agreeing complexes get no discount, and confidence follows the usual 중 rules', () => {
   const allRows = ['가', '나', '다'].flatMap((name, index) => rows(5, 1500, { aptName: `${name}단지`, jibun: `${index}a` }));
   const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
-  assert.equal(result.discount, market.safeValue.maxDiscount);
+  assert.equal(result.discount, 0);
   assert.equal(result.discountMeasured, false);
+  assert.equal(result.safeValue, result.estimate);
+  // 오차를 재지 못한 것만으로 하가 되지 않는다. 2~3곳이 서로 같으면 중이다.
+  assert.equal(result.confidence, CONFIDENCE.MID);
+  const pair = estimate(allRows.filter((row) => row.aptName !== '다단지'), { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  assert.equal(pair.discountMeasured, false);
+  assert.equal(pair.confidence, CONFIDENCE.MID);
+  // 퍼짐이 중 기준(30%)을 넘으면 그대로 하다.
+  const apart = ['가', '나'].flatMap((name, index) => rows(5, index === 0 ? 1000 : 1600, { aptName: `${name}단지`, jibun: `${index}a` }));
+  const wide = estimate(apart, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  assert.equal(wide.discountMeasured, false);
+  assert.equal(wide.confidence, CONFIDENCE.LOW);
+  // 측정한 오차가 상한을 넘으면 여전히 하다.
+  assert.equal(comparableConfidence({ samples: 40, comparables: 6, spread: 0.1, looError: 0.05, stationState: STATION.USED, presaleOk: true, discountExceeded: true }, config.market.confidence), CONFIDENCE.LOW);
+  assert.equal(comparableConfidence({ samples: 40, comparables: 6, spread: 0.1, looError: 0.05, stationState: STATION.USED, presaleOk: true }, config.market.confidence), CONFIDENCE.HIGH);
 });
 
 test('two cheap complexes among eight do not drag the safety value down', () => {
@@ -662,21 +698,27 @@ test('two cheap complexes among eight do not drag the safety value down', () => 
   // 1100은 중위값 1500의 0.73배라 이상치가 아니다. 예전 하위 25%(8곳 중 2번째)라면 1100 × 84 = 92400이었다.
   assert.equal(result.outliers, 0);
   assert.equal(result.estimate, 1500 * 84);
-  // 6곳은 서로를 정확히 맞혀 오차 중위값이 0이지만, 퍼짐 (1500 - 1100) / 1500의 절반 13.3%를 뺀다.
-  assert.ok(Math.abs(result.discount - 400 / 1500 / 2) < 1e-9);
-  assert.equal(result.safeValue, Math.round(1500 * (1 - 400 / 1500 / 2) * 84));
+  // 6곳은 서로를 정확히 맞혀 오차 중위값이 0이지만, 퍼짐 (1500 - 1100) / 1500의 절반 13.3%는 상한 10%를 넘는다.
+  assert.equal(result.discount, 0.1);
+  assert.equal(result.discountExceeded, true);
+  assert.equal(result.safeValue, Math.round(1500 * 0.9 * 84));
   assert.ok(result.safeValue > 92400);
+  // 퍼짐 26.7%는 중 기준(30%) 안이지만 할인 상한을 넘어 하다.
+  assert.equal(result.confidence, CONFIDENCE.LOW);
 });
 
-test('confidence and discount are measured on all complexes, and a removal keeps the discount above the floor', () => {
+test('confidence and discount are measured on all complexes, with no floor after a removal', () => {
   const units = [1000, 1500, 1550, 1600, 1650, 1700, 1750, 1800];
   const allRows = units.flatMap((unit, index) => rows(3, unit, { aptName: `${'가나다라마바사아'[index]}단지`, jibun: `${index}a` }));
   const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
   // 중심은 가운데 둘(1600, 1650)의 평균 1625이고, 1000은 그 0.7배인 1137.5 아래라 빠진다.
   assert.equal(result.outliers, 1);
   assert.ok(!result.basis.comparables.some((item) => item.name === '가단지'));
-  // 퍼짐(8곳 전체, 1500~1700)의 절반 6.25%와 오차 중위값보다 큰 하한 10%가 붙는다.
-  assert.equal(result.discount, market.safeValue.minDiscountWithOutliers);
+  // 퍼짐(8곳 전체, 1500~1700)의 절반 6.25%가 오차 중위값보다 커서 그대로 쓴다. 이상치를 뺐다고 하한을 두지 않는다.
+  // 이상치를 뺐다고 하한(예전 10%)을 두지 않고 측정값을 그대로 쓴다.
+  assert.ok(result.discount > 0 && result.discount < 0.1, String(result.discount));
+  assert.equal(result.discountExceeded, false);
+  assert.equal(result.discountMeasured, true);
   // 표본은 실제로 쓴 7곳만 센다.
   assert.equal(result.basis.samples, 21);
 });
@@ -687,9 +729,10 @@ test('removed complexes still count against confidence and the discount', () => 
   const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
   // 중심 1515의 0.7배 아래인 900, 950이 빠지고 6곳이 남는다. 남은 6곳끼리는 거의 같아 상으로 보일 수 있다.
   assert.equal(result.outliers, 2);
-  // 퍼짐은 8곳 전체로 계산한다: (1530 - 950) / 1510 = 0.384. 0.3을 넘어 하다.
+  // 퍼짐은 8곳 전체로 계산한다: (1530 - 950) / 1510 = 0.384. 0.3을 넘어 하고, 절반 19.2%는 상한 10%를 넘는다.
   assert.equal(result.confidence, CONFIDENCE.LOW);
-  assert.ok(Math.abs(result.discount - 580 / 1510 / 2) < 1e-9, String(result.discount));
+  assert.equal(result.discount, 0.1);
+  assert.equal(result.discountExceeded, true);
 });
 
 for (const [label, cheap, pricey] of [['four and four', 4, 4], ['three cheap and five pricey', 3, 5]]) {
@@ -814,9 +857,9 @@ test('a presale failure keeps a same-complex estimate at 중 when sale trades al
 });
 
 test('a 하 house type with a bigger margin does not hide a 중 house type that qualifies', () => {
-  // 84㎡은 단지 1곳뿐이라 하, 59㎡은 같은 값의 단지 2곳이라 중이다.
+  // 84㎡은 단지 1곳뿐이라 하, 59㎡은 같은 값의 단지 4곳이라 중이다.
   const large = rows(5, 3000, { aptName: '대형가', jibun: 'L1' });
-  const small = [...rows(5, 1000, { aptName: '소형가', jibun: 'S1', area: 59 }), ...rows(5, 1000, { aptName: '소형나', jibun: 'S2', area: 59 })];
+  const small = ['S1', 'S2', 'S3', 'S4'].flatMap((jibun) => rows(5, 1000, { aptName: `소형${jibun}`, jibun, area: 59 }));
   const result = estimate([...large, ...small], {
     models: [{ houseType: '084A', area: 84, price: 100000 }, { houseType: '059A', area: 59, price: 30000 }],
   });

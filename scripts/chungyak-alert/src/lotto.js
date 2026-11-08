@@ -9,6 +9,7 @@ import {
   meetsPriceRule,
   restrictedType,
 } from './market-estimate.js';
+import { recommendTrack } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
 
@@ -71,16 +72,29 @@ function basisText(basis) {
 function safeText(best) {
   if (best.basis.kind === 'same') return `하위 25% 시세 ${eok(best.safeValue)}`;
   const percentText = `${Math.round(best.discount * 100)}%`;
-  if (!best.discountMeasured) return `보수 시세 ${eok(best.safeValue)}(비교 단지가 적어 추정 시세에서 상한 ${percentText} 차감)`;
-  if (best.discountExceeded) return `보수 시세 ${eok(best.safeValue)}(검증 오차가 상한을 넘어 추정 시세에서 ${percentText}만 차감, 실제 위험은 더 큼)`;
+  if (!best.discountMeasured) return `보수 시세 ${eok(best.safeValue)}(비교 단지가 적어 오차를 재지 못해 차감 없음)`;
+  if (best.discountExceeded) return `보수 시세 ${eok(best.safeValue)}(검증 오차가 상한 ${percentText}를 넘어 ${percentText}만 차감, 실제 위험은 더 큼)`;
   return `보수 시세 ${eok(best.safeValue)}(추정 시세에서 검증 오차 ${percentText} 차감)`;
 }
 
 // 카카오톡용 짧은 근거. 메시지 200자 안에 들도록 마진과 신뢰도만 적는다.
-const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${Math.round(best.marginRate * 100)}% (${best.houseType}, 신뢰도 ${best.confidence})`;
+const rateText = (rate) => (Number.isFinite(rate) ? `${Math.round(rate * 100)}%(분양가 대비)` : '없음');
+const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${rateText(best.marginRate)} (${best.houseType}, 신뢰도 ${best.confidence})`;
 
 const priceText = (best) => `${shortPriceText(best)}; `
   + `${basisText(best.basis)}; ${safeText(best)}에서 분양가 ${eok(best.price)}, 옵션 ${best.optionCost}만 원, 취득세 ${best.tax}만 원 차감`;
+
+// 주택형별 최고 분양가를 공급 세대수로 가중 평균한다(만원). 0세대인 주택형은 가중치 0이다.
+// 세대수를 모르는 주택형이 하나라도 있거나 세대수 합이 0이면 단순 평균이다.
+export function averagePriceOf(models) {
+  const priced = (models ?? []).filter((model) => model.price > 0);
+  if (priced.length === 0) return null;
+  const known = priced.every((model) => Number.isFinite(model.households) && model.households >= 0);
+  const households = known ? priced.reduce((sum, model) => sum + model.households, 0) : 0;
+  const weightOf = (model) => (households > 0 ? model.households : 1);
+  const total = priced.reduce((sum, model) => sum + weightOf(model), 0);
+  return Math.round(priced.reduce((sum, model) => sum + model.price * weightOf(model), 0) / total);
+}
 
 const topPriceOf = (models) => {
   const prices = models.map((m) => m.price).filter((p) => p > 0);
@@ -131,7 +145,34 @@ async function readPresale(getPresale, code, months) {
 }
 
 // getModels/getTrades 실패는 판정을 막지 않고 onError로 모은다. getPresale과 aptInfo는 실패해도 신뢰도만 낮춘다.
-export async function evaluateLotto(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {} }) {
+// 판정에 추천 전형을 붙인다. 프로필이 없으면 recommendation 필드를 두지 않아 Notion의 추천 열을 건드리지 않는다.
+// 추천 문구는 저장되는 판별 근거에만 붙이고, 카카오톡의 짧은 근거에는 넣지 않는다. 프로필 내용은 어디에도 적지 않는다.
+export async function evaluateLotto(notice, options) {
+  let models = null;
+  let modelsFailed = false;
+  const getModels = async (target) => {
+    try {
+      models = await options.getModels(target);
+    } catch (error) {
+      modelsFailed = true;
+      throw error;
+    }
+    if (!models) modelsFailed = true;
+    return models;
+  };
+  const evaluation = await evaluatePrice(notice, { ...options, getModels });
+  if (!options.profile) return evaluation;
+  // APT 주택형 조회가 실패하면 특별공급 세대를 몰라 저장된 추천을 그대로 둔다. 실행마다 추천이 바뀌지 않게 한다.
+  if (notice.kind === 'apt' && modelsFailed) {
+    const kept = '(추천: 조회 실패로 이전 값 유지)';
+    return { ...evaluation, reason: evaluation.reason ? `${evaluation.reason}\n${kept}` : kept };
+  }
+  const recommendation = recommendTrack({ notice, models, profile: options.profile, config: options.config, today: options.today });
+  if (!recommendation) return { ...evaluation, recommendation: null };
+  return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${recommendation.text}` : recommendation.text };
+}
+
+async function evaluatePrice(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {}, onSoftOnce = onSoft }) {
   const { lotto, market } = config;
   const result = (status, reason, extra = {}) => ({
     status, reason, topPrice: null, estimate: null, margin: null, marginRate: null, confidence: null, ...extra,
@@ -147,7 +188,18 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
   // 판정 조건보다 먼저 본다. 저장된 추정 값이 남지 않도록 clearMarket으로 지우게 한다.
   const restricted = restrictedType(notice, market);
   if (restricted) {
-    return result(STATUS.OUT_OF_SCOPE, `제한 유형(${restricted})은 로또 판별과 안전 마진 대상이 아님`, { clearMarket: true });
+    // 평균 분양가는 공고의 사실이라 제한 유형에도 적는다. 실거래는 조회하지 않는다.
+    // 표시용 값이라 실패해도 오류 메일 없이 실행당 한 번만 건수로 남긴다.
+    let restrictedModels = null;
+    try {
+      restrictedModels = await getModels(notice);
+    } catch {
+      onSoftOnce('average_price_lookup_failed');
+    }
+    return result(STATUS.OUT_OF_SCOPE, `제한 유형(${restricted})은 로또 판별과 안전 마진 대상이 아님`, {
+      clearMarket: true,
+      averagePrice: averagePriceOf(restrictedModels),
+    });
   }
 
   const trigger = flagTrigger(notice, lotto);
@@ -165,6 +217,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
     onError(safeError(error));
   }
   const topPrice = models ? topPriceOf(models) : null;
+  const averagePrice = averagePriceOf(models);
 
   let best = null;
   let undetermined = models ? null : '주택형 정보 조회 실패';
@@ -219,6 +272,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
       complexOutliers: best.outliers ?? 0,
     }
     : { topPrice };
+  price.averagePrice = averagePrice;
 
   if (trigger) {
     return result(STATUS.LOTTO, best ? `${trigger}; ${priceText(best)}` : trigger, { ...price, shortReason: best ? `${trigger}; ${shortPriceText(best)}` : trigger });

@@ -21,6 +21,9 @@
     "includePriceCap": true,
     "includePublicDistrict": true
   },
+  "recommendation": {
+    "localResidenceYears": 2
+  },
   "market": {
     "restrictedNameKeywords": ["토지임대", "지분적립", "신혼희망"],
     "optionCostManwon": 1500,
@@ -57,9 +60,7 @@
       "outlierMaxShare": 0.25
     },
     "safeValue": {
-      "minDiscount": 0.05,
-      "minDiscountWithOutliers": 0.1,
-      "maxDiscount": 0.2,
+      "maxDiscount": 0.1,
       "minComplexesForLoo": 4
     },
     "adjustment": {

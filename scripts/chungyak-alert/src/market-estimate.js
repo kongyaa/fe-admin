@@ -280,16 +280,22 @@ function sameComplexRows(rows, subject, area, { market, lotto }) {
   });
 }
 
-// 보수 시세에 쓰는 할인율. 단지가 minComplexesForLoo(4곳) 이상이면 서로를 맞혀 본 오차와 퍼짐(사분위 범위/중위값)의 절반 중
-// 큰 값을 쓴다. 오차의 중위값은 다수가 서로 같으면 소수의 큰 차이를 보지 못해 퍼짐으로 보완한다.
-// 단지가 적으면 둘 다 믿기 어려워 상한을 쓴다. 이상치를 뺀 경우에는 하한을 올린다. exceeded는 계산값이 상한을 넘었다는 뜻이다.
-export function safeDiscount({ looError, spread, comparables, outliers = 0 }, safe) {
+// 보수 시세에 쓰는 할인율. 측정한 오차만 쓴다. 단지가 minComplexesForLoo(4곳) 이상이면 서로를 맞혀 본 오차와
+// 퍼짐(사분위 범위/중위값)의 절반 중 큰 값을 maxDiscount(10%)까지 쓴다. 오차의 중위값은 다수가 서로 같으면 소수의
+// 큰 차이를 보지 못해 퍼짐으로 보완한다. 측정할 수 없으면(measured: false) 할인하지 않고 판별 근거에 적는다. 신뢰도는 낮추지 않는다.
+// exceeded는 측정값이 상한을 넘었다는 뜻이다.
+export function safeDiscount({ looError, spread, comparables }, safe) {
   if (comparables < safe.minComplexesForLoo || looError === null || !Number.isFinite(looError)) {
-    return { discount: safe.maxDiscount, measured: false, exceeded: false };
+    return { discount: 0, measured: false, exceeded: false };
   }
   const raw = Math.max(looError, Number.isFinite(spread) ? spread / 2 : 0);
-  const floor = outliers > 0 ? safe.minDiscountWithOutliers : safe.minDiscount;
-  return { discount: Math.min(Math.max(raw, floor), safe.maxDiscount), measured: true, exceeded: raw > safe.maxDiscount, raw };
+  return { discount: Math.min(Math.max(raw, 0), safe.maxDiscount), measured: true, exceeded: raw > safe.maxDiscount, raw };
+}
+
+// 마진율은 안전 마진을 고른 주택형의 최고 분양가(마진 계산에 쓴 가격)로 나눈 비율이다.
+// 보수 시세로 나누면 시세가 낮을수록 음수가 크게 부풀어, 분양가 대비로 바꿨다. 가격이 없거나 0이면 비율도 없다.
+export function marginRateOf(margin, price) {
+  return Number.isFinite(margin) && Number.isFinite(price) && price > 0 ? margin / price : null;
 }
 
 function candidateTotals(model, market, unitMiddle, unitLow) {
@@ -306,7 +312,7 @@ function candidateTotals(model, market, unitMiddle, unitLow) {
     optionCost,
     tax,
     margin,
-    marginRate: margin / safeValue,
+    marginRate: marginRateOf(margin, model.price),
   };
 }
 
@@ -315,7 +321,7 @@ const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : C
 // 역 보정 상태. used: 적용, noInput: 공고 단지 입력 없음, noData: 입력은 있지만 비교 단지 값이 부족함
 export const STATION = { USED: 'used', NO_INPUT: 'noInput', NO_DATA: 'noData' };
 
-export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false, lastStepMinComplexes = Infinity, forceLow = false }, confidence) {
+export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false, lastStepMinComplexes = Infinity, forceLow = false, discountExceeded = false }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
   if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
@@ -337,6 +343,8 @@ export function comparableConfidence({ samples, comparables, spread, looError, s
   if (scopePenalty) level = lowerOneLevel(level);
   // 읍·면 공고 단지를 시군구 전체 단지로 쟀으면 다른 시장일 수 있어 하다.
   if (forceLow) level = CONFIDENCE.LOW;
+  // 측정한 오차가 할인 상한을 넘으면 보수 시세가 실제 위험을 다 담지 못하므로 하다.
+  if (discountExceeded) level = CONFIDENCE.LOW;
   return presaleOk ? level : lowerOneLevel(level);
 }
 
@@ -473,7 +481,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
   const allValues = all.map((complex) => complex.adjustedUnit);
   const looError = leaveOneOutError(all, adjustment, options);
   const spread = spreadOf(allValues);
-  const safe = safeDiscount({ looError, spread, comparables: all.length, outliers }, market.safeValue);
+  const safe = safeDiscount({ looError, spread, comparables: all.length }, market.safeValue);
   const equal = adjusted.map((complex) => ({ value: complex.adjustedUnit, weight: 1 }));
   // 표본과 단지 수는 실제로 쓴 단지만 센다. 빠진 단지로 신뢰도를 올리지 않는다.
   const samples = adjusted.reduce((sum, complex) => sum + complex.samples, 0);
@@ -496,6 +504,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       lastAgeStep: scoped.lastAgeStep,
       scopePenalty: scoped.scopePenalty,
       lastStepMinComplexes: market.safeValue.minComplexesForLoo,
+      discountExceeded: safe.exceeded,
       forceLow: scoped.townWide,
     }, market.confidence),
     basis: {
@@ -579,7 +588,9 @@ export function buildSubject({ name, builder, umd, village = null, jibun, walkMi
   };
 }
 
-export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon || candidate.marginRate >= lotto.minMarginRate;
+// 마진이 3억 원 이상이거나, 마진율(분양가 대비)이 20% 이상이면 가격 기준을 넘는다. 마진율이 없으면 금액만 본다.
+export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon
+  || (Number.isFinite(candidate.marginRate) && candidate.marginRate >= lotto.minMarginRate);
 
 // 가격 기준으로 로또가 되려면 신뢰도가 중 이상이어야 한다. 주택형을 고를 때도 같은 조건을 써서
 // 신뢰도 하인 주택형의 큰 마진이 기준을 넘는 다른 주택형을 가리지 않게 한다.
