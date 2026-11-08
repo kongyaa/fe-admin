@@ -64,7 +64,7 @@ function basisText(basis) {
     .map((item) => `${item.name || '이름 없음'} ${eok(item.reference)}(${item.walkBand ? `${item.walkBand}, ` : ''}브랜드 ${percent(item.brandRatio)}, 연식 ${percent(item.ageRatio)})`)
     .join(', ');
   const outliers = basis.outliers > 0 ? `, 이상치 ${basis.outliers}곳 제외` : '';
-  const scope = basis.townWide ? '시군구, 같은 읍·면 표본 부족으로 신뢰도 하' : basis.scope;
+  const scope = basis.townWide ? '시군구, 같은 읍·면 단지를 찾지 못해 신뢰도 하' : basis.scope;
   return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${scope}, ${ageScope(basis.maxAge)}${outliers}), 보정 후 ${areaText(basis.area)}㎡ 기준: ${names}`;
 }
 

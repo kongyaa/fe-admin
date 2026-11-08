@@ -247,10 +247,25 @@ export function localityConflict(a, b) {
 
 const sameFinestPlace = (a, b) => !localityConflict(a, b) && Boolean(finestPlace(a)) && finestPlace(a) === finestPlace(b);
 
+// 거래 행이 공고 단지와 같은 읍·면·리·동을 가리키는지. 지역이 비어 있으면 모르는 것이므로 받는다.
+// 리만 있는 행은 어느 읍·면인지 몰라 공고 단지의 리와 같을 때만 받는다.
+const sharesPlace = (place, rowPlace) => {
+  if (!rowPlace.town && !rowPlace.village && !rowPlace.dong) return true;
+  return ['town', 'village', 'dong'].some((part) => place[part] && place[part] === rowPlace[part]);
+};
+
+// 공개 로그 진단용. 국토부 법정동 이름의 형식만 센다.
+export function localityFormat(text) {
+  const place = parseLocality(text);
+  if (place.town) return 'town';
+  if (place.village) return 'village';
+  if (place.dong) return 'dong';
+  return 'other';
+}
+
 function sameComplexRows(rows, subject, area, { market, lotto }) {
   const place = subjectLocality(subject);
   const nameRule = {
-    allowSubstring: Boolean(finestPlace(place)),
     minLength: market.sameComplex.minNameLength,
     minDistinctive: market.sameComplex.minDistinctiveLength,
     brand: market.adjustment.brand,
@@ -259,7 +274,9 @@ function sameComplexRows(rows, subject, area, { market, lotto }) {
     const rowPlace = parseLocality(row.umd);
     if (localityConflict(place, rowPlace)) return false;
     if (subject.jibun && row.jibun && subject.jibun === row.jibun && sameFinestPlace(place, rowPlace)) return true;
-    return sameName(subject.name, row.aptName, nameRule);
+    // 포함 관계는 같은 곳임을 아는 행에만 쓴다. 다른 읍의 리만 적힌 행이 이름 일부로 묶이지 않게 한다.
+    const allowSubstring = Boolean(finestPlace(place)) && sharesPlace(place, rowPlace);
+    return sameName(subject.name, row.aptName, { ...nameRule, allowSubstring });
   });
 }
 

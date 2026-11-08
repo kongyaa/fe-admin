@@ -1,3 +1,4 @@
+import { localityFormat } from '../market-estimate.js';
 import { AppError, defaultSleep, fetchWithRetry, normalizeDate, parseNumber, safeError } from '../util.js';
 
 const URL_BASE = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade';
@@ -163,10 +164,11 @@ function tallyTags(stats, rows) {
     if (!row.jibun) stats.noJibun += 1;
     if (!row.aptSeq) stats.noSeq += 1;
     if (row.presale && !row.ownership) stats.noOwnership += 1;
+    stats.umdFormats[localityFormat(row.umd)] += 1;
   }
 }
 
-const emptyStats = () => ({ rows: 0, noFloor: 0, noDate: 0, noDealing: 0, noJibun: 0, noSeq: 0, noOwnership: 0 });
+const emptyStats = () => ({ rows: 0, noFloor: 0, noDate: 0, noDealing: 0, noJibun: 0, noSeq: 0, noOwnership: 0, umdFormats: { town: 0, village: 0, dong: 0, other: 0 } });
 
 export function createMolitClient({ fetch, key, sleep }) {
   const cache = new Map();

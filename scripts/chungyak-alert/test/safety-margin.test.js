@@ -731,6 +731,28 @@ test('빌리브센트하이(2차) in 화도읍 마석우리 is valued from its o
   }
 });
 
+test('a 리 is read only directly after the 읍·면, never from a building name', () => {
+  assert.equal(resolveAddress('경기 남양주시 오남읍 양지로 12 (오남센트럴밸리)', '경기').village, null);
+  assert.equal(resolveAddress('경기 남양주시 화도읍 경춘로 1 (마석갤러리)', '경기').village, null);
+  assert.equal(resolveAddress('경기 남양주시 오남읍 양지로 12 오남센트럴밸리', '경기').village, null);
+  assert.equal(resolveAddress('경기 남양주시 화도읍 마석우리 295-32 (마석갤러리)', '경기').village, '마석우리');
+});
+
+test('the market line counts how MOLIT writes 법정동 names, without the names', async () => {
+  const trades = [
+    tradeTags({ name: '가단지', umd: '화도읍 마석우리', jibun: '1', amount: '84,000' }),
+    tradeTags({ name: '나단지', umd: '마석우리', jibun: '2', amount: '84,000' }),
+    tradeTags({ name: '다단지', umd: '역삼동', jibun: '3', amount: '84,000' }),
+    tradeTags({ name: '라단지', umd: '', jibun: '4', amount: '84,000' }),
+  ];
+  // 분양권 행도 센다.
+  const presale = (url) => new Response(xml(url.searchParams.get('DEAL_YMD') === '202610' ? [tradeTags({ name: '분양권단지', umd: '화도읍 마석우리', jibun: '9', extra: '<ownershipGbn>분</ownershipGbn>' })] : []));
+  const h = harness({ fetch: worldFetch({ trades, presale }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(marketLine(h).includes(' umd_town=6 umd_village=5 umd_dong=5 umd_other=5 '), marketLine(h));
+  assert.ok(!marketLine(h).includes('마석우리'));
+});
+
 test('읍·면 addresses keep their 리 for the subject and its lot number', () => {
   assert.deepEqual(resolveAddress('경기 남양주시 화도읍 마석우리 295-32', '경기'), { region: '경기', code: '41360', umd: '화도읍', village: '마석우리' });
   assert.deepEqual(resolveAddress('경기도 가평군 청평면 청평리 1', '경기'), { region: '경기', code: '41820', umd: '청평면', village: '청평리' });
@@ -761,7 +783,7 @@ test('오남읍 valued only from other parts of 남양주시 is 하 and the reas
     getPresale: async () => ({ rows: [], ok: true }),
   });
   assert.equal(result.confidence, '하');
-  assert.ok(result.reason.includes('(시군구, 같은 읍·면 표본 부족으로 신뢰도 하,'), result.reason);
+  assert.ok(result.reason.includes('(시군구, 같은 읍·면 단지를 찾지 못해 신뢰도 하,'), result.reason);
 });
 
 test('a small house type shows comparables at its own area, not scaled to 84㎡', async () => {
@@ -1158,7 +1180,7 @@ test('a normal run reads the manual value, looks up comparables, stores the marg
   assert.equal(Object.hasOwn(properties, '역 도보(분)'), false);
   // 목록 1회, 상세 2회
   assert.equal(world.calls.apt.length, 3);
-  assert.ok(h.logs.includes('market apt_calls=3 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 soft=none'));
+  assert.ok(h.logs.includes('market apt_calls=3 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=10 umd_other=0 soft=none'));
   assert.ok(h.logs.includes('apt_tags listRows=2 listNoCode=0 listNoDong=0 listNoTotal=0 details=2 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:2'));
   assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=10 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=10')));
   assert.ok(h.written.includes(`::add-mask::${DATA_SECRET}`));
@@ -1200,7 +1222,7 @@ test('a row without the manual value makes no apartment calls and caps confidenc
   const h = harness({ store: fakeStore(withWalk(null)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(world.calls.apt.length, 0);
-  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 soft=none'));
+  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=10 umd_other=0 soft=none'));
   // 2500 / 1.05 × 84. 역 보정 없이 브랜드만 보정한다.
   assert.equal(h.store.state.upserts[0].evaluation.estimate, 200000);
 });
@@ -1530,7 +1552,7 @@ test('tag name lines say none when an API returned no items', async () => {
 test('the molit client reports tag tallies without names', async () => {
   const client = createMolitClient({ key: 'k', sleep: noSleep, fetch: async () => new Response(xml(['<dealAmount>1</dealAmount><excluUseAr>84</excluUseAr>', tradeTags()])) });
   await client.getTrades('11680', ['202610']);
-  assert.deepEqual(client.stats(), { rows: 2, noFloor: 1, noDate: 1, noDealing: 1, noJibun: 1, noSeq: 2, noOwnership: 0 });
+  assert.deepEqual(client.stats(), { rows: 2, noFloor: 1, noDate: 1, noDealing: 1, noJibun: 1, noSeq: 2, noOwnership: 0, umdFormats: { town: 0, village: 0, dong: 1, other: 1 } });
 });
 
 test('the workflow keeps the Kakao key only for the token refresh step', () => {

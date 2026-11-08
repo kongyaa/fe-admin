@@ -132,7 +132,12 @@ function carriedStatus(notice, previous, config) {
   return previous?.lotto ?? null;
 }
 
-const tagCounts = (stats) => Object.entries(stats).map(([name, value]) => `${name}=${value}`).join(' ');
+const tagCounts = (stats) => Object.entries(stats).filter(([, value]) => typeof value === 'number').map(([name, value]) => `${name}=${value}`).join(' ');
+
+// 국토부 법정동 이름의 형식별 행 수. 읍·면이 앞에 붙은 형식(umd_town)인지, 리만 있는 형식(umd_village)인지 실실행에서 확인한다.
+const umdFormatCounts = (...all) => ['town', 'village', 'dong', 'other']
+  .map((format) => `umd_${format}=${all.reduce((sum, stats) => sum + stats.umdFormats[format], 0)}`)
+  .join(' ');
 
 function readAccessToken(env) {
   const file = env.KAKAO_ACCESS_FILE;
@@ -528,7 +533,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   log(`collected=${notices.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
   log(`errors=${[...errors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
-  log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
+  log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} ${umdFormatCounts(molit.stats(), presale.stats())} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);

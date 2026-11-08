@@ -434,6 +434,22 @@ test('a 읍·면 subject valued from the whole 시군구 is 하 and its reason s
   assert.equal(estimate(dasan, { subjectExtra: namyangju('별내동', null) }).confidence, CONFIDENCE.MID);
 });
 
+test('a 리-less 읍·면 subject does not take a bare 리 row from elsewhere by partial name', () => {
+  const place = { umd: '오남읍', village: null, jibun: null, name: '더샵퍼스트시티 오남' };
+  const kind = (umd, aptName = '더샵퍼스트시티') => estimate(rows(5, 1500, { aptName, umd, jibun: '9' }), { subjectExtra: place }).basis.kind;
+  // 리만 적힌 마석우리는 화도읍이라 오남읍 공고와 이름 일부가 같아도 다른 단지다.
+  assert.equal(kind('마석우리'), 'comparables');
+  // 같은 읍이거나 지역이 비어 있으면 예전처럼 포함 관계를 쓴다.
+  assert.equal(kind('오남읍 양지리'), 'same');
+  assert.equal(kind(''), 'same');
+  // 이름이 정확히 같으면 리만 있어도 같은 단지로 본다.
+  assert.equal(kind('마석우리', '더샵퍼스트시티 오남'), 'same');
+  // 동 주소는 같은 동이나 빈 지역이면 포함 관계를 쓴다.
+  const dong = (umd) => estimate(rows(5, 1500, { aptName: '광교자연앤센트레빌 1단지', umd, jibun: '9' }), { subjectExtra: { name: '광교 자연앤 센트레빌', umd: '역삼동' } }).basis.kind;
+  assert.equal(dong('역삼동'), 'same');
+  assert.equal(dong(''), 'same');
+});
+
 test('brand spellings are only replaced at a word start, not inside other words', () => {
   assert.equal(normalizeComplexName('BUS클래스'), 'bus클래스');
   assert.equal(normalizeComplexName('SKIPARK'), 'skipark');
