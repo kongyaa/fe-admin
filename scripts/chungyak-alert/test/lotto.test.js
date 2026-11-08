@@ -29,8 +29,9 @@ const trades = (count, unit, extra = {}) => Array.from({ length: count }, () => 
   ...extra,
 }));
 
-// 같은 단가의 단지 두 곳. 단지 2곳, 표본 10건이면 신뢰도 중이다. 단지가 4곳 미만이라 할인율은 상한 20%다.
-const two = (count, unit, extra = {}) => [...trades(count, unit, { ...extra, jibun: 'a1' }), ...trades(count, unit, { ...extra, jibun: 'a2' })];
+// 같은 단가의 단지 네 곳. 오차를 잴 수 있어 신뢰도가 중 이상이고, 서로 같아 할인율은 0이다.
+// 단지가 4곳 미만이면 오차를 재지 못해 할인하지 않고 신뢰도 하다.
+const four = (count, unit, extra = {}) => ['a1', 'a2', 'a3', 'a4'].flatMap((jibun) => trades(count, unit, { ...extra, jibun }));
 
 const evaluate = (notice, { models = [{ houseType: '084A', area: 84, price: 100000 }], data = [], overrides = {} } = {}) => evaluateLotto(notice, {
   config: { ...config, lotto: { ...config.lotto, ...overrides } },
@@ -40,30 +41,30 @@ const evaluate = (notice, { models = [{ houseType: '084A', area: 84, price: 1000
 });
 
 test('price rule: margin at or above 3억 is 로또', async () => {
-  const result = await evaluate(apt(), { data: two(5, 2200) });
+  const result = await evaluate(apt(), { data: four(5, 2200) });
   assert.equal(result.status, STATUS.LOTTO);
   assert.equal(result.estimate, 184800);
-  // 보수 시세 184800 × 0.8 = 147840. 147840 - 100000 - 옵션 1500 - 취득세 3300 (10억의 3.3%)
-  assert.equal(result.margin, 43040);
+  // 보수 시세 184800(할인 0%). 184800 - 100000 - 옵션 1500 - 취득세 3300 (10억의 3.3%)
+  assert.equal(result.margin, 80000);
   assert.ok(result.reason.includes('법정동'));
-  assert.ok(result.reason.includes('안전 마진 4.3억'));
+  assert.ok(result.reason.includes('안전 마진 8.0억'));
 });
 
 test('price rule: margin rate of 20% with a small margin is 로또', async () => {
   const result = await evaluate(apt(), {
     models: [{ houseType: '084A', area: 84, price: 30000 }],
-    data: two(5, 600),
+    data: four(5, 600),
   });
-  // 50400 × 0.8 = 40320. 40320 - 30000 - 1500 - 330 = 8490, 8490 / 40320 = 21%
-  assert.equal(result.margin, 8490);
+  // 50400 - 30000 - 1500 - 330 = 18570, 분양가 대비 62%
+  assert.equal(result.margin, 18570);
   assert.equal(result.status, STATUS.LOTTO);
 });
 
 test('price rule: below both thresholds is 아님', async () => {
   const result = await evaluate(apt(), { data: trades(5, 1250) });
   assert.equal(result.status, STATUS.NOT);
-  // 105000 × 0.8 - 100000 - 1500 - 3300
-  assert.equal(result.margin, -20800);
+  // 단지 1곳이라 할인하지 않는다. 105000 - 100000 - 1500 - 3300
+  assert.equal(result.margin, 200);
 });
 
 test('too few samples is 판별 불가', async () => {
@@ -94,9 +95,9 @@ test('flag trigger makes 로또 even when price says no, and records the price',
   assert.equal(low.status, STATUS.LOTTO);
   assert.equal(low.estimate, 92400);
   assert.ok(low.reason.includes('무순위'));
-  // 92400 × 0.8 - 100000 - 1500 - 3300 = -30880. 조건형 로또는 마진이 음수여도 유지하고 근거에 함께 적는다.
-  assert.equal(low.margin, -30880);
-  assert.ok(low.reason.includes('안전 마진 -3.1억'));
+  // 92400 - 100000 - 1500 - 3300 = -12400. 조건형 로또는 마진이 음수여도 유지하고 근거에 함께 적는다.
+  assert.equal(low.margin, -12400);
+  assert.ok(low.reason.includes('안전 마진 -1.2억'));
 
   const noData = await evaluate(apt({ kind: 'remainder', houseSecd: '06' }), { data: [] });
   assert.equal(noData.status, STATUS.LOTTO);
@@ -150,8 +151,8 @@ test('price cap and public district trigger 로또 by default', async () => {
 });
 
 test('any qualifying model makes 로또 and the largest qualifying margin is recorded', async () => {
-  const large = two(5, 1000, { area: 120, amount: 120000 });
-  const small = two(5, 1000, { area: 59, amount: 59000 });
+  const large = four(5, 1000, { area: 120, amount: 120000 });
+  const small = four(5, 1000, { area: 59, amount: 59000 });
   const small2 = { houseType: '059B', area: 59, price: 35000 };
   const result = await evaluate(apt(), {
     models: [
@@ -164,8 +165,8 @@ test('any qualifying model makes 로또 and the largest qualifying margin is rec
   assert.equal(result.status, STATUS.LOTTO);
   assert.equal(result.topPrice, 30000);
   assert.equal(result.estimate, 59000);
-  // 59000 × 0.8 - 30000 - 1500 - 330
-  assert.equal(result.margin, 15370);
+  // 59000 - 30000 - 1500 - 330
+  assert.equal(result.margin, 27170);
   assert.ok(result.reason.includes('059A'));
 });
 
@@ -178,9 +179,9 @@ test('with no qualifying model the largest margin is recorded and the status is 
     data: [...trades(5, 1000, { area: 120, amount: 120000 }), ...trades(5, 1000, { area: 59, amount: 59000 })],
   });
   assert.equal(result.status, STATUS.NOT);
-  // 120A: 96000 - 110000 - 1500 - 3630 = -19130, 059A: 47200 - 55000 - 1500 - 605 = -9905
-  assert.equal(result.margin, -9905);
-  assert.equal(result.estimate, 59000);
+  // 120A: 120000 - 110000 - 1500 - 3630 = 4870, 059A: 59000 - 55000 - 1500 - 605 = 1895
+  assert.equal(result.margin, 4870);
+  assert.equal(result.estimate, 120000);
 });
 
 test('models are not fetched for types that do not use the price rule', async () => {
@@ -243,8 +244,8 @@ test('area tolerance filters trades and the largest margin model is kept', () =>
     { houseType: 'invalid', area: null, price: 1 },
   ], trades(5, 1250));
   assert.equal(result.houseType, 'cheap');
-  // 105000 × 0.8 - 90000 - 1500 - 2970
-  assert.equal(result.margin, -10470);
+  // 105000 - 90000 - 1500 - 2970
+  assert.equal(result.margin, 10530);
 });
 
 test('cancelled trades are excluded from the estimate', async () => {

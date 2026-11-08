@@ -527,6 +527,7 @@ test('a presale outage lowers each confidence level by one', async () => {
     ...saleRows(5, 2000, { aptName: '가단지', jibun: '11' }),
     ...saleRows(5, 2000, { aptName: '나단지', jibun: '12' }),
     ...saleRows(5, 2000, { aptName: '다단지', jibun: '13' }),
+    ...saleRows(5, 2000, { aptName: '라단지', jibun: '14' }),
   ];
   assert.equal((await evaluate(apt(), { trades, presale: { rows: [], ok: true } })).confidence, '중');
   assert.equal((await evaluate(apt(), { trades, presale: { rows: [], ok: false } })).confidence, '하');
@@ -659,7 +660,7 @@ test('lotto triggers are unchanged, and margin at or above thresholds with no tr
     assert.ok(result.reason.includes('084A'));
   }
   assert.equal((await evaluate(apt(), { trades: low })).status, STATUS.NOT);
-  const high = await evaluate(apt(), { trades: [...saleRows(5, 2500), ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })] });
+  const high = await evaluate(apt(), { trades: ['1', '2', '3', '4'].flatMap((n) => saleRows(5, 2500, { aptName: `비교단지${n}`, jibun: `10${n}` })) });
   assert.equal(high.status, STATUS.LOTTO);
   assert.ok(!high.reason.includes('무순위'));
 });
@@ -677,7 +678,7 @@ test('the reason leads with the margin so the Kakao text keeps it, with terms re
 
 test('a price-rule 로또 needs at least 중 confidence; triggers do not', async () => {
   const one = saleRows(5, 2500);
-  const two = [...one, ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })];
+  const two = ['1', '2', '3', '4'].flatMap((n) => saleRows(5, 2500, { aptName: `비교단지${n}`, jibun: `10${n}` }));
   const weak = await evaluate(apt(), { trades: one });
   assert.equal(weak.confidence, '하');
   assert.ok(weak.margin >= config.lotto.minMarginManwon);
@@ -699,10 +700,13 @@ test('a price-rule 로또 needs at least 중 confidence; triggers do not', async
 test('the reason says when the measured error exceeds the discount cap or could not be measured', async () => {
   const wide = [1000, 1600, 2200, 2800].flatMap((unit, index) => saleRows(4, unit, { aptName: `넓은${index}단지`, jibun: `w${index}` }));
   const over = await evaluate(apt(), { trades: wide });
-  assert.ok(over.reason.includes('검증 오차가 상한을 넘어 추정 시세에서 20%만 차감, 실제 위험은 더 큼'), over.reason);
+  assert.ok(over.reason.includes('검증 오차가 상한 10%를 넘어 10%만 차감, 실제 위험은 더 큼'), over.reason);
+  assert.ok(!over.reason.includes('20%'));
   assert.equal(over.confidence, '하');
   const few = await evaluate(apt(), { trades: [...saleRows(5, 2500), ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })] });
-  assert.ok(few.reason.includes('비교 단지가 적어 추정 시세에서 상한 20% 차감'), few.reason);
+  assert.ok(few.reason.includes('비교 단지가 적어 오차를 재지 못해 차감 없음, 신뢰도 하'), few.reason);
+  assert.equal(few.confidence, '하');
+  assert.equal(few.estimate * 1, few.margin + 100000 + 1500 + 3300);
 });
 
 // 2026-11-08 실제 실행에서 빌리브센트하이(2차)가 자기 분양권 거래를 찾지 못하고 다산 신도시 단지로 계산됐다.
@@ -885,27 +889,26 @@ test('평균 분양가 is written for every row that has it, kept on restricted 
 });
 
 // 2026-11-08 실제 행: 의정부역 펠리스타워 양우내안애 59.98㎡, 최고 분양가 6.37억, 추정 시세 4.86억.
-// 보수 시세 대비로는 -70%였고 분양가 대비로는 -43%다.
+// 보수 시세 대비로는 -70%였고, 할인 20%로 분양가 대비 -43%였다. 단지 1곳이라 오차를 재지 못해 이제는 할인하지 않아 -27%다.
 test('the margin rate is shown against the price (의정부 59.98㎡ example)', async () => {
   const notice = apt({ name: '의정부역 펠리스타워 양우내안애', address: '경기 의정부시 의정부동 1', region: '경기' });
   const trades = saleRows(5, 48600 / 59.98, { aptName: '의정부비교', umd: '의정부동', jibun: '9', area: 59.98, amount: 48600 });
   const result = await evaluate(notice, { trades, models: [{ houseType: '059.9800A', area: 59.98, price: 63700 }] });
   assert.equal(result.estimate, 48600);
   // 보수 시세 48600 × 0.8 = 38880, 취득세 874만, 마진 38880 - 63700 - 1500 - 874 = -27194
-  assert.equal(result.margin, -27194);
-  assert.ok(Math.abs(result.marginRate - -27194 / 63700) < 1e-12);
-  assert.ok(result.reason.includes('마진율 -43%(분양가 대비)'), result.reason);
-  assert.ok(result.shortReason.includes('마진율 -43%(분양가 대비)'));
+  // 보수 시세 48600(할인 없음), 취득세 874만, 마진 48600 - 63700 - 1500 - 874 = -17474
+  assert.equal(result.margin, -17474);
+  assert.ok(Math.abs(result.marginRate - -17474 / 63700) < 1e-12);
+  assert.ok(result.reason.includes('마진율 -27%(분양가 대비)'), result.reason);
+  assert.ok(result.shortReason.includes('마진율 -27%(분양가 대비)'));
+  assert.equal(result.confidence, '하');
   assert.ok(!result.reason.includes('-70%'));
 });
 
 test('a margin that is 20% of the price passes the rate rule even below 20% of the safety value', async () => {
-  // 보수 시세 80000(추정 100000의 80%), 마진 80000 - 63700 - 1500 - 874 = 13926.
+  // 같은 값의 단지 4곳이라 오차 0, 할인 0%. 보수 시세 80000, 마진 80000 - 63700 - 1500 - 874 = 13926.
   // 분양가 대비 21.9%라 기준을 넘는다. 보수 시세 대비라면 17.4%였다.
-  const trades = [
-    ...saleRows(5, 100000 / 59.98, { aptName: '가비교', jibun: 'a1', area: 59.98, amount: 100000 }),
-    ...saleRows(5, 100000 / 59.98, { aptName: '나비교', jibun: 'a2', area: 59.98, amount: 100000 }),
-  ];
+  const trades = ['a1', 'a2', 'a3', 'a4'].flatMap((jibun) => saleRows(5, 80000 / 59.98, { aptName: `비교${jibun}`, jibun, area: 59.98, amount: 80000 }));
   const result = await evaluate(apt(), { trades, models: [{ houseType: '059.9800A', area: 59.98, price: 63700 }] });
   assert.equal(result.margin, 13926);
   assert.equal(result.confidence, '중');
@@ -1254,7 +1257,7 @@ const aptRow = (extra = {}) => ({
   ...extra,
 });
 
-function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tradeTags({ name: '래미안비밀', jibun: '100', amount: '210,000' }), tradeTags({ name: '래미안비밀2', jibun: '102', amount: '210,000' })] } = {}) {
+function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = ['', '2', '3', '4'].map((n, index) => tradeTags({ name: `래미안비밀${n}`, jibun: String(100 + index * 2), amount: '210,000' })) } = {}) {
   const calls = { kakao: [], presale: [], molit: [], apt: [] };
   const fetch = async (url) => {
     const text = String(url);
@@ -1264,7 +1267,7 @@ function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tra
       calls.apt.push(text);
       if (aptHandler) return aptHandler(parsed);
       return text.includes('AptListService4')
-        ? Response.json(listBody([listItem('래미안비밀'), listItem('래미안비밀2', 'A2')]))
+        ? Response.json(listBody([listItem('래미안비밀'), listItem('래미안비밀2', 'A2'), listItem('래미안비밀3', 'A3'), listItem('래미안비밀4', 'A4')]))
         : Response.json(detailBody({ kaptCode: 'A1', subwayLine: '2호선', subwayStation: '역삼', kaptdWtimesub: '5분이내' }));
     }
     if (text.includes('RTMSDataSvcSilvTrade')) {
@@ -1348,11 +1351,11 @@ test('a normal run reads the manual value, looks up comparables, stores the marg
   assert.ok(reason.includes('래미안비밀 19.2억(5분이내, 브랜드'), reason);
   assert.ok(reason.includes('역 도보 15분(입력)'));
   assert.equal(Object.hasOwn(properties, '역 도보(분)'), false);
-  // 목록 1회, 상세 2회
-  assert.equal(world.calls.apt.length, 3);
-  assert.ok(h.logs.includes('market apt_calls=3 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=10 umd_other=0 soft=none'));
-  assert.ok(h.logs.includes('apt_tags listRows=2 listNoCode=0 listNoDong=0 listNoTotal=0 details=2 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:2'));
-  assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=10 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=10')));
+  // 목록 1회, 상세 4회
+  assert.equal(world.calls.apt.length, 5);
+  assert.ok(h.logs.includes('market apt_calls=5 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=1 confidence_mid=0 confidence_low=0 umd_town=0 umd_village=0 umd_dong=20 umd_other=0 soft=none'));
+  assert.ok(h.logs.includes('apt_tags listRows=4 listNoCode=0 listNoDong=0 listNoTotal=0 details=4 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:4'));
+  assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=20 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=20')));
   assert.ok(h.written.includes(`::add-mask::${DATA_SECRET}`));
 
   for (const secret of [KAKAO_SECRET, DATA_SECRET, 'apis.data.go.kr', '비밀공고단지', '래미안비밀', '역삼동', '7-7', 'A1']) {
@@ -1392,7 +1395,7 @@ test('a row without the manual value makes no apartment calls and caps confidenc
   const h = harness({ store: fakeStore(withWalk(null)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(world.calls.apt.length, 0);
-  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=10 umd_other=0 soft=none'));
+  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 umd_town=0 umd_village=0 umd_dong=20 umd_other=0 soft=none'));
   // 2500 / 1.05 × 84. 역 보정 없이 브랜드만 보정한다.
   assert.equal(h.store.state.upserts[0].evaluation.estimate, 200000);
 });
@@ -1421,8 +1424,8 @@ test('a name mismatch in a full run is soft and counted', async () => {
   const h = harness({ store: fakeStore(withWalk(15)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(errorMail(h), undefined);
-  // 기본 실거래의 비교 단지 2곳이 모두 목록에 없다.
-  assert.ok(marketLine(h).endsWith('soft=apt_name_unmatched:2'));
+  // 기본 실거래의 비교 단지 4곳이 모두 목록에 없다.
+  assert.ok(marketLine(h).endsWith('soft=apt_name_unmatched:4'));
   assert.equal(world.calls.apt.length, 1);
 });
 
@@ -1431,7 +1434,7 @@ const summaryLine = (h) => h.logs.find((line) => line.startsWith('collected='));
 test('lotto_demoted counts rows that were 로또 and now compute 아님 or 대상 외, and only those', async () => {
   const wasLotto = (extra = {}) => new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU, ...extra }]]);
   // 단지 2곳이라 신뢰도가 중이다. 신뢰도 하인 추정은 이전 로또를 유지하므로 빠진 것으로 세지 않는다.
-  const lowPrice = [tradeTags({ name: '가단지', jibun: '100', amount: '84,000' }), tradeTags({ name: '나단지', jibun: '101', amount: '84,000' })];
+  const lowPrice = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount: '84,000' }));
   const highPrice = [tradeTags({ name: '가단지', jibun: '100', amount: '300,000' })];
   const count = async ({ store, trades, rows, kakaoSent = 0, argv }) => {
     const world = worldFetch({ trades, rows });
@@ -1473,7 +1476,7 @@ test('a weak estimate cannot quietly drop a previous 로또, while a 중 estimat
   assert.equal(notBefore.store.state.upserts[0].evaluation.status, '아님');
 
   // 신뢰도 중이면 가격 기준대로 아님이 된다.
-  const twoComplexes = [...oneComplex, tradeTags({ name: '나단지', jibun: '101', amount: '84,000' })];
+  const twoComplexes = [...oneComplex, ...['나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(101 + index), amount: '84,000' }))];
   const firm = harness({ store: fakeStore(wasLotto), fetch: worldFetch({ trades: twoComplexes }).fetch });
   await run({ env: firm.env, deps: firm.deps });
   assert.equal(firm.store.state.upserts[0].evaluation.status, '아님');
@@ -1492,7 +1495,7 @@ test('complexes dropped as outliers are counted in the market log line', async (
 
 test('a notice with a 하 large type and a 중 small type that qualifies is 로또', async () => {
   const large = saleRows(5, 3000, { aptName: '대형가', jibun: 'L1' });
-  const small = [...saleRows(5, 1000, { aptName: '소형가', jibun: 'S1', area: 59, amount: 59000 }), ...saleRows(5, 1000, { aptName: '소형나', jibun: 'S2', area: 59, amount: 59000 })];
+  const small = ['S1', 'S2', 'S3', 'S4'].flatMap((jibun) => saleRows(5, 1000, { aptName: `소형${jibun}`, jibun, area: 59, amount: 59000 }));
   const result = await evaluate(apt(), {
     trades: [...large, ...small],
     models: [{ houseType: '084A', area: 84, price: 100000 }, { houseType: '059A', area: 59, price: 30000 }],
@@ -1671,7 +1674,7 @@ test('dry-run stays write-free while reading the manual value and market data', 
   assert.deepEqual(fake.calls.filter((call) => call.method === 'PATCH' || (call.method === 'POST' && !call.path.endsWith('/query'))), []);
   assert.equal(h.mails.length, 0);
   assert.equal(h.kakao.length, 0);
-  assert.equal(base.calls.apt.length, 3);
+  assert.equal(base.calls.apt.length, 5);
   assert.ok(marketLine(h).includes('station_used=1'));
 });
 

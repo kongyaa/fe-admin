@@ -71,8 +71,8 @@ function basisText(basis) {
 function safeText(best) {
   if (best.basis.kind === 'same') return `하위 25% 시세 ${eok(best.safeValue)}`;
   const percentText = `${Math.round(best.discount * 100)}%`;
-  if (!best.discountMeasured) return `보수 시세 ${eok(best.safeValue)}(비교 단지가 적어 추정 시세에서 상한 ${percentText} 차감)`;
-  if (best.discountExceeded) return `보수 시세 ${eok(best.safeValue)}(검증 오차가 상한을 넘어 추정 시세에서 ${percentText}만 차감, 실제 위험은 더 큼)`;
+  if (!best.discountMeasured) return `보수 시세 ${eok(best.safeValue)}(비교 단지가 적어 오차를 재지 못해 차감 없음, 신뢰도 하)`;
+  if (best.discountExceeded) return `보수 시세 ${eok(best.safeValue)}(검증 오차가 상한 ${percentText}를 넘어 ${percentText}만 차감, 실제 위험은 더 큼)`;
   return `보수 시세 ${eok(best.safeValue)}(추정 시세에서 검증 오차 ${percentText} 차감)`;
 }
 

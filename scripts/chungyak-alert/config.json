@@ -57,9 +57,7 @@
       "outlierMaxShare": 0.25
     },
     "safeValue": {
-      "minDiscount": 0.05,
-      "minDiscountWithOutliers": 0.1,
-      "maxDiscount": 0.2,
+      "maxDiscount": 0.1,
       "minComplexesForLoo": 4
     },
     "adjustment": {
