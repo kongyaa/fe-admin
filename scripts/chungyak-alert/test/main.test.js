@@ -205,7 +205,7 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
       '접수 종료일': { date: null },
     },
   });
-  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, sequence: null, interest: false, name: '', link: null, walkMinutes: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
+  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, interest: false, name: '', link: null, walkMinutes: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
 });
 
 function notionFake(children = []) {
@@ -213,7 +213,7 @@ function notionFake(children = []) {
   const fetch = async (url, init) => {
     const path = new URL(url).pathname.replace('/v1', '');
     calls.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : null, headers: init.headers });
-    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { ...MARKET_SCHEMA, 순번: { type: 'number' }, 관심: { type: 'checkbox' } } });
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { ...MARKET_SCHEMA, 관심: { type: 'checkbox' } } });
     if (init.method === 'GET') return Response.json({ results: children, has_more: false });
     if (path === '/databases') return Response.json({ id: 'db' });
     if (path.endsWith('/query')) return Response.json({ results: [], has_more: false });
@@ -547,7 +547,7 @@ function stalledNotionHarness({ rows = stalledNotionRows, pages = [], stall, fai
     const path = new URL(url).pathname.replace('/v1', '');
     notionCalls.push(`${init.method} ${path}`);
     if (stall(init.method, path)) throw failure;
-    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { ...MARKET_SCHEMA, 순번: { type: 'number' }, 관심: { type: 'checkbox' } } });
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { ...MARKET_SCHEMA, 관심: { type: 'checkbox' } } });
     if (init.method === 'GET') {
       return Response.json({
         has_more: false,
@@ -862,7 +862,7 @@ function cleanupHarness({ pages = cleanupPages, patch, children } = {}) {
     }
     const path = new URL(url).pathname.replace('/v1', '');
     calls.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : null });
-    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: { 순번: { type: 'number' } } });
+    if (init.method === 'GET' && path.startsWith('/databases/')) return Response.json({ properties: {} });
     if (init.method === 'GET') {
       return Response.json({
         has_more: false,
