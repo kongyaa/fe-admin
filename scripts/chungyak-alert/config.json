@@ -53,11 +53,14 @@
       "minComplexes": 2,
       "outlierLow": 0.7,
       "outlierHigh": 1.4,
-      "outlierMinRemaining": 4
+      "outlierMinRemaining": 4,
+      "outlierMaxShare": 0.25
     },
     "safeValue": {
       "minDiscount": 0.05,
-      "maxDiscount": 0.2
+      "minDiscountWithOutliers": 0.1,
+      "maxDiscount": 0.2,
+      "minComplexesForLoo": 4
     },
     "adjustment": {
       "minFactor": 0.7,

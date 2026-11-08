@@ -76,10 +76,11 @@ export function parseWalkMinutes(value) {
   return over ? Number(over[1]) + 1 : null;
 }
 
+// 단지명과 같은 정규화를 써서 S클래스와 에스클래스처럼 표기만 다른 브랜드를 같게 본다.
 const tierOf = (text, tiers) => {
-  const normalized = compact(text);
+  const normalized = normalizeComplexName(text);
   if (!normalized) return null;
-  return ['top', 'mid'].find((tier) => tiers[tier].some((keyword) => normalized.includes(compact(keyword)))) ?? null;
+  return ['top', 'mid'].find((tier) => tiers[tier].some((keyword) => normalized.includes(normalizeComplexName(keyword)))) ?? null;
 };
 
 // 컨소시엄은 첫 번째로 적힌 회사를 주간사로 본다.
@@ -97,10 +98,23 @@ export function ageFactor(ageYears, age) {
   return 1 - age.ratePerYear * years;
 }
 
-export const normalizeComplexName = (name) => compact(name)
-  .replace(/\([^)]*\)|\[[^\]]*\]/g, '')
-  .replace(/[^0-9a-z가-힣]/g, '')
-  .replace(/(아파트|단지)+$/, '');
+// 같은 단지가 영문과 한글 브랜드 표기로 섞여 두 단지로 세지지 않게 한글 표기로 맞춘다.
+const BRAND_SPELLINGS = [
+  [/s클래스/g, '에스클래스'],
+  [/e편한세상/g, '이편한세상'],
+  [/sk뷰/g, '에스케이뷰'],
+  [/skview/g, '에스케이뷰'],
+  [/ipark/g, '아이파크'],
+  [/hillstate/g, '힐스테이트'],
+  [/thesharp/g, '더샵'],
+];
+
+export const normalizeComplexName = (name) => BRAND_SPELLINGS.reduce(
+  (text, [pattern, korean]) => text.replace(pattern, korean),
+  compact(name)
+    .replace(/\([^)]*\)|\[[^\]]*\]/g, '')
+    .replace(/[^0-9a-z가-힣]/g, ''),
+).replace(/(아파트|단지)+$/, '');
 
 const lotKey = (row) => `${row.umd ?? ''}|${row.jibun ?? ''}|${normalizeComplexName(row.aptName)}`;
 
@@ -216,9 +230,16 @@ function sameComplexRows(rows, subject, area, { market, lotto }) {
 
 // 보수 시세에 쓰는 할인율. 비교 단지끼리 서로를 맞혀 본 오차(leave-one-out)를 쓴다. 공고 단지도 같은 방식으로
 // 맞히는 것이므로 그 오차만큼 낮춰 잡는다. 검증할 수 없으면(단지 3곳 미만) 상한을 쓴다.
-export function safeDiscount(looError, safe) {
-  if (looError === null || !Number.isFinite(looError)) return safe.maxDiscount;
-  return Math.min(Math.max(looError, safe.minDiscount), safe.maxDiscount);
+// 보수 시세에 쓰는 할인율. 단지가 minComplexesForLoo(4곳) 이상이면 서로를 맞혀 본 오차와 퍼짐(사분위 범위/중위값)의 절반 중
+// 큰 값을 쓴다. 오차의 중위값은 다수가 서로 같으면 소수의 큰 차이를 보지 못해 퍼짐으로 보완한다.
+// 단지가 적으면 둘 다 믿기 어려워 상한을 쓴다. 이상치를 뺀 경우에는 하한을 올린다. exceeded는 계산값이 상한을 넘었다는 뜻이다.
+export function safeDiscount({ looError, spread, comparables, outliers = 0 }, safe) {
+  if (comparables < safe.minComplexesForLoo || looError === null || !Number.isFinite(looError)) {
+    return { discount: safe.maxDiscount, measured: false, exceeded: false };
+  }
+  const raw = Math.max(looError, Number.isFinite(spread) ? spread / 2 : 0);
+  const floor = outliers > 0 ? safe.minDiscountWithOutliers : safe.minDiscount;
+  return { discount: Math.min(Math.max(raw, floor), safe.maxDiscount), measured: true, exceeded: raw > safe.maxDiscount, raw };
 }
 
 function candidateTotals(model, market, unitMiddle, unitLow) {
@@ -244,7 +265,7 @@ const lowerOneLevel = (level) => (level === CONFIDENCE.HIGH ? CONFIDENCE.MID : C
 // 역 보정 상태. used: 적용, noInput: 공고 단지 입력 없음, noData: 입력은 있지만 비교 단지 값이 부족함
 export const STATION = { USED: 'used', NO_INPUT: 'noInput', NO_DATA: 'noData' };
 
-export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0 }, confidence) {
+export function comparableConfidence({ samples, comparables, spread, looError, stationState, presaleOk, ageStep = 0, lastAgeStep = 0, scopePenalty = false }, confidence) {
   const { high, mid } = confidence;
   let level = CONFIDENCE.LOW;
   if (samples >= high.samples && comparables >= high.comparables && spread <= high.spread && looError !== null && looError <= high.looError) {
@@ -256,6 +277,8 @@ export function comparableConfidence({ samples, comparables, spread, looError, s
   if (stationState === STATION.NO_DATA) level = lowerOneLevel(level);
   // 연식이 비슷한 단지가 부족해 넓혔으면 한 단계, 연식을 보지 않고 골랐으면 하다.
   if (ageStep > 0) level = ageStep >= lastAgeStep ? CONFIDENCE.LOW : lowerOneLevel(level);
+  // 같은 법정동에 거래가 충분했는데 연식 때문에 시군구로 넓혔으면 위치가 다른 만큼 한 단계 내린다.
+  if (scopePenalty) level = lowerOneLevel(level);
   return presaleOk ? level : lowerOneLevel(level);
 }
 
@@ -325,17 +348,22 @@ export function selectComparables(complexes, subject, { market, lotto }) {
       if (total(eligible) < lotto.minSamples) continue;
       if (!anyAge && eligible.length < minComplexes) continue;
       const picked = [...eligible].sort((a, b) => b.samples - a.samples).slice(0, maxComparables);
-      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge };
+      const scopePenalty = scope === '시군구' && total(sameDong) >= lotto.minSamples;
+      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge, scopePenalty };
     }
   }
   return null;
 }
 
-// 보정 뒤 단지들의 중위값에서 크게 벗어난 단지를 뺀다. 빼고도 일정 수가 남을 때만 뺀다.
+// 보정 뒤 단지들의 중위값에서 크게 벗어난 단지를 뺀다. 짝수 개면 가운데 두 값의 평균을 중심으로 쓴다.
+// 벗어난 단지가 outlierMaxShare(25%)를 넘으면 이상치가 아니라 시세가 둘로 갈린 것이므로 빼지 않는다.
+// 빼고도 outlierMinRemaining(4곳) 이상 남을 때만 뺀다.
 export function dropComplexOutliers(adjusted, comparables) {
-  const middle = weightedQuantile(adjusted.map((complex) => ({ value: complex.adjustedUnit, weight: 1 })), 0.5);
+  const middle = median(adjusted.map((complex) => complex.adjustedUnit));
   const kept = adjusted.filter((complex) => complex.adjustedUnit >= middle * comparables.outlierLow && complex.adjustedUnit <= middle * comparables.outlierHigh);
-  return kept.length >= comparables.outlierMinRemaining && kept.length < adjusted.length ? kept : adjusted;
+  const removed = adjusted.length - kept.length;
+  if (removed === 0 || removed > Math.floor(adjusted.length * comparables.outlierMaxShare)) return adjusted;
+  return kept.length >= comparables.outlierMinRemaining ? kept : adjusted;
 }
 
 function estimateFromComparables(model, rows, subject, inputs, context) {
@@ -363,32 +391,39 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
     };
   });
   const adjusted = dropComplexOutliers(all, market.comparables);
-  const values = adjusted.map((complex) => complex.adjustedUnit);
-  const equal = values.map((value) => ({ value, weight: 1 }));
+  const outliers = all.length - adjusted.length;
+  // 신뢰도와 할인율은 이상치를 빼기 전 전체로 계산한다. 뺀 뒤의 단지만 보면 남은 단지끼리 서로를 확인하는 셈이 된다.
+  const allValues = all.map((complex) => complex.adjustedUnit);
+  const looError = leaveOneOutError(all, adjustment, options);
+  const spread = spreadOf(allValues);
+  const safe = safeDiscount({ looError, spread, comparables: all.length, outliers }, market.safeValue);
+  const equal = adjusted.map((complex) => ({ value: complex.adjustedUnit, weight: 1 }));
+  // 표본과 단지 수는 실제로 쓴 단지만 센다. 빠진 단지로 신뢰도를 올리지 않는다.
   const samples = adjusted.reduce((sum, complex) => sum + complex.samples, 0);
-  const looError = leaveOneOutError(adjusted, adjustment, options);
-  const discount = safeDiscount(looError, market.safeValue);
   const middle = weightedQuantile(equal, 0.5);
-  const totals = candidateTotals(model, market, middle, middle * (1 - discount));
+  const totals = candidateTotals(model, market, middle, middle * (1 - safe.discount));
   return {
     ...totals,
-    discount,
-    outliers: all.length - adjusted.length,
+    discount: safe.discount,
+    discountMeasured: safe.measured,
+    discountExceeded: safe.exceeded,
+    outliers,
     confidence: comparableConfidence({
       samples,
       comparables: adjusted.length,
-      spread: spreadOf(values),
+      spread,
       looError,
       stationState,
       presaleOk: inputs.presaleOk,
       ageStep: scoped.ageStep,
       lastAgeStep: scoped.lastAgeStep,
+      scopePenalty: scoped.scopePenalty,
     }, market.confidence),
     basis: {
       kind: 'comparables',
       scope: scoped.scope,
       maxAge: scoped.maxAge,
-      outliers: all.length - adjusted.length,
+      outliers,
       stationState,
       walkMinutes: subject.walkMinutes,
       stationLookupFailed: inputs.stationLookupFailed,

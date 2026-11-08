@@ -29,6 +29,9 @@ const trades = (count, unit, extra = {}) => Array.from({ length: count }, () => 
   ...extra,
 }));
 
+// 같은 단가의 단지 두 곳. 단지 2곳, 표본 10건이면 신뢰도 중이다. 단지가 4곳 미만이라 할인율은 상한 20%다.
+const two = (count, unit, extra = {}) => [...trades(count, unit, { ...extra, jibun: 'a1' }), ...trades(count, unit, { ...extra, jibun: 'a2' })];
+
 const evaluate = (notice, { models = [{ houseType: '084A', area: 84, price: 100000 }], data = [], overrides = {} } = {}) => evaluateLotto(notice, {
   config: { ...config, lotto: { ...config.lotto, ...overrides } },
   today,
@@ -37,7 +40,7 @@ const evaluate = (notice, { models = [{ houseType: '084A', area: 84, price: 1000
 });
 
 test('price rule: margin at or above 3억 is 로또', async () => {
-  const result = await evaluate(apt(), { data: trades(5, 2200) });
+  const result = await evaluate(apt(), { data: two(5, 2200) });
   assert.equal(result.status, STATUS.LOTTO);
   assert.equal(result.estimate, 184800);
   // 보수 시세 184800 × 0.8 = 147840. 147840 - 100000 - 옵션 1500 - 취득세 3300 (10억의 3.3%)
@@ -49,7 +52,7 @@ test('price rule: margin at or above 3억 is 로또', async () => {
 test('price rule: margin rate of 20% with a small margin is 로또', async () => {
   const result = await evaluate(apt(), {
     models: [{ houseType: '084A', area: 84, price: 30000 }],
-    data: trades(5, 600),
+    data: two(5, 600),
   });
   // 50400 × 0.8 = 40320. 40320 - 30000 - 1500 - 330 = 8490, 8490 / 40320 = 21%
   assert.equal(result.margin, 8490);
@@ -147,8 +150,8 @@ test('price cap and public district trigger 로또 by default', async () => {
 });
 
 test('any qualifying model makes 로또 and the largest qualifying margin is recorded', async () => {
-  const large = trades(5, 1000, { area: 120, amount: 120000 });
-  const small = trades(5, 1000, { area: 59, amount: 59000 });
+  const large = two(5, 1000, { area: 120, amount: 120000 });
+  const small = two(5, 1000, { area: 59, amount: 59000 });
   const small2 = { houseType: '059B', area: 59, price: 35000 };
   const result = await evaluate(apt(), {
     models: [

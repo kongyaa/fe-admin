@@ -654,7 +654,7 @@ test('lotto triggers are unchanged, and margin at or above thresholds with no tr
     assert.ok(result.reason.includes('084A'));
   }
   assert.equal((await evaluate(apt(), { trades: low })).status, STATUS.NOT);
-  const high = await evaluate(apt(), { trades: saleRows(5, 2500) });
+  const high = await evaluate(apt(), { trades: [...saleRows(5, 2500), ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })] });
   assert.equal(high.status, STATUS.LOTTO);
   assert.ok(!high.reason.includes('무순위'));
 });
@@ -668,6 +668,36 @@ test('the reason leads with the margin so the Kakao text keeps it, with terms re
   assert.ok(text.includes('추정치'));
   assert.ok(!text.includes('차익'));
   assert.ok(!result.reason.includes('차익'));
+});
+
+test('a price-rule 로또 needs at least 중 confidence; triggers do not', async () => {
+  const one = saleRows(5, 2500);
+  const two = [...one, ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })];
+  const weak = await evaluate(apt(), { trades: one });
+  assert.equal(weak.confidence, '하');
+  assert.ok(weak.margin >= config.lotto.minMarginManwon);
+  assert.equal(weak.status, STATUS.NOT);
+  assert.ok(weak.reason.startsWith('가격 기준은 넘지만 추정 신뢰도가 하라 로또로 보지 않음; 안전 마진'), weak.reason);
+  assert.ok(weak.shortReason.startsWith('가격 기준은 넘지만 추정 신뢰도가 하라 로또로 보지 않음; 안전 마진'));
+  const firm = await evaluate(apt(), { trades: two });
+  assert.equal(firm.confidence, '중');
+  assert.equal(firm.status, STATUS.LOTTO);
+  const trigger = await evaluate(apt({ flags: { priceCap: true, publicDistrict: false } }), { trades: one });
+  assert.equal(trigger.status, STATUS.LOTTO);
+  assert.equal(trigger.confidence, '하');
+  // 이미 로또였던 공고는 신뢰도 하인 결과로 빠지지 않는다.
+  const kept = keepPreviousLotto(weak, STATUS.LOTTO);
+  assert.equal(kept.status, STATUS.LOTTO);
+  assert.ok(kept.reason.startsWith('이전 판별 유지(이번 추정 신뢰도 하) (이번 실행: 가격 기준은 넘지만'));
+});
+
+test('the reason says when the measured error exceeds the discount cap or could not be measured', async () => {
+  const wide = [1000, 1600, 2200, 2800].flatMap((unit, index) => saleRows(4, unit, { aptName: `넓은${index}단지`, jibun: `w${index}` }));
+  const over = await evaluate(apt(), { trades: wide });
+  assert.ok(over.reason.includes('검증 오차가 상한을 넘어 추정 시세에서 20%만 차감, 실제 위험은 더 큼'), over.reason);
+  assert.equal(over.confidence, '하');
+  const few = await evaluate(apt(), { trades: [...saleRows(5, 2500), ...saleRows(5, 2500, { aptName: '비교단지2', jibun: '101' })] });
+  assert.ok(few.reason.includes('비교 단지가 적어 추정 시세에서 상한 20% 차감'), few.reason);
 });
 
 test('the Applyhome constructor field becomes the subject builder', () => {
@@ -960,7 +990,7 @@ const aptRow = (extra = {}) => ({
   ...extra,
 });
 
-function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tradeTags({ name: '래미안비밀', jibun: '100', amount: '210,000' })] } = {}) {
+function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tradeTags({ name: '래미안비밀', jibun: '100', amount: '210,000' }), tradeTags({ name: '래미안비밀2', jibun: '102', amount: '210,000' })] } = {}) {
   const calls = { kakao: [], presale: [], molit: [], apt: [] };
   const fetch = async (url) => {
     const text = String(url);
@@ -970,7 +1000,7 @@ function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, trades = [tra
       calls.apt.push(text);
       if (aptHandler) return aptHandler(parsed);
       return text.includes('AptListService4')
-        ? Response.json(listBody([listItem('래미안비밀')]))
+        ? Response.json(listBody([listItem('래미안비밀'), listItem('래미안비밀2', 'A2')]))
         : Response.json(detailBody({ kaptCode: 'A1', subwayLine: '2호선', subwayStation: '역삼', kaptdWtimesub: '5분이내' }));
     }
     if (text.includes('RTMSDataSvcSilvTrade')) {
@@ -1054,11 +1084,11 @@ test('a normal run reads the manual value, looks up comparables, stores the marg
   assert.ok(reason.includes('래미안비밀 19.2억(5분이내, 브랜드'), reason);
   assert.ok(reason.includes('역 도보 15분(입력)'));
   assert.equal(Object.hasOwn(properties, '역 도보(분)'), false);
-  // 목록 1회, 상세 1회
-  assert.equal(world.calls.apt.length, 2);
-  assert.ok(h.logs.includes('market apt_calls=2 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=0 confidence_low=1 soft=none'));
-  assert.ok(h.logs.includes('apt_tags listRows=1 listNoCode=0 listNoDong=0 listNoTotal=0 details=1 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:1'));
-  assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=5 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=5')));
+  // 목록 1회, 상세 2회
+  assert.equal(world.calls.apt.length, 3);
+  assert.ok(h.logs.includes('market apt_calls=3 station_used=1 station_no_input=0 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 soft=none'));
+  assert.ok(h.logs.includes('apt_tags listRows=2 listNoCode=0 listNoDong=0 listNoTotal=0 details=2 noItem=0 noData=0 noField=0 emptyWalk=0 badWalk=0 bands=5분이내:2'));
+  assert.ok(h.logs.some((line) => line.startsWith('trade_tags rows=10 noFloor=0 noDate=0 noDealing=0 noJibun=0 noSeq=10')));
   assert.ok(h.written.includes(`::add-mask::${DATA_SECRET}`));
 
   for (const secret of [KAKAO_SECRET, DATA_SECRET, 'apis.data.go.kr', '비밀공고단지', '래미안비밀', '역삼동', '7-7', 'A1']) {
@@ -1098,7 +1128,7 @@ test('a row without the manual value makes no apartment calls and caps confidenc
   const h = harness({ store: fakeStore(withWalk(null)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(world.calls.apt.length, 0);
-  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=0 confidence_low=1 soft=none'));
+  assert.ok(h.logs.includes('market apt_calls=0 station_used=0 station_no_input=1 station_no_data=0 complex_outliers=0 confidence_high=0 confidence_mid=1 confidence_low=0 soft=none'));
   // 2500 / 1.05 × 84. 역 보정 없이 브랜드만 보정한다.
   assert.equal(h.store.state.upserts[0].evaluation.estimate, 200000);
 });
@@ -1127,7 +1157,8 @@ test('a name mismatch in a full run is soft and counted', async () => {
   const h = harness({ store: fakeStore(withWalk(15)), fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(errorMail(h), undefined);
-  assert.ok(marketLine(h).endsWith('soft=apt_name_unmatched:1'));
+  // 기본 실거래의 비교 단지 2곳이 모두 목록에 없다.
+  assert.ok(marketLine(h).endsWith('soft=apt_name_unmatched:2'));
   assert.equal(world.calls.apt.length, 1);
 });
 
@@ -1193,6 +1224,54 @@ test('complexes dropped as outliers are counted in the market log line', async (
   assert.ok(marketLine(h).includes(' complex_outliers=1 '), marketLine(h));
   assert.ok(!marketLine(h).includes('싼단지'));
   assert.ok(h.store.state.upserts[0].evaluation.reason.includes('이상치 1곳 제외'));
+});
+
+test('a weak estimate does not create a price-rule 로또 for a new row in a full run', async () => {
+  const oneComplex = [tradeTags({ name: '가단지', jibun: '100', amount: '300,000' })];
+  const h = harness({ fetch: worldFetch({ trades: oneComplex }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const value = h.store.state.upserts[0].evaluation;
+  assert.equal(value.status, '아님');
+  assert.equal(value.confidence, '하');
+  assert.equal(h.kakao.length, 0);
+});
+
+test('dry-run applies the same previous-로또 protection as a normal run', async () => {
+  const oneComplex = [tradeTags({ name: '가단지', jibun: '100', amount: '84,000' })];
+  const stored = { id: 'stored', properties: { '고유 키': { rich_text: [{ plain_text: '7-7' }] }, '로또 여부': { select: { name: '로또' } }, '접수 종료일': { date: { start: THU } } } };
+  const fake = schemaFake({ ...NEW, ...CONFIDENCE_PROP, ...OTHERS });
+  const base = worldFetch({ trades: oneComplex });
+  const fetch = async (url, init = {}) => {
+    if (!String(url).includes('api.notion.com')) return base.fetch(url);
+    if (String(url).endsWith('/query')) return Response.json({ has_more: false, results: [stored] });
+    return fake.fetch(url, init);
+  };
+  const dry = harness({ store: null, fetch });
+  dry.deps.store = undefined;
+  assert.equal(await run({ argv: ['--dry-run'], env: dry.env, deps: dry.deps }), 0);
+  assert.ok(dry.logs.some((line) => line.startsWith('dry-run lotto=1 ')), dry.logs.join(' | '));
+  assert.ok(summaryLine(dry).includes('lotto_demoted=0'));
+
+  const normal = harness({ store: fakeStore(new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]])), fetch: worldFetch({ trades: oneComplex }).fetch });
+  await run({ env: normal.env, deps: normal.deps });
+  assert.equal(normal.store.state.upserts[0].evaluation.status, '로또');
+  assert.ok(summaryLine(normal).includes('lotto_demoted=0'));
+});
+
+test('the urgent mail fallback carries the full reason, while Kakao gets the short one', async () => {
+  const kakaoTexts = [];
+  const h = harness({ fetch: worldFetch().fetch });
+  h.deps.sendKakao = async ({ text }) => {
+    kakaoTexts.push(text);
+    throw new Error('kakao down');
+  };
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const urgent = h.mails.find((mail) => mail.subject.startsWith('[청약 긴급]'));
+  assert.ok(urgent);
+  assert.ok(!kakaoTexts[0].includes('래미안비밀'));
+  assert.ok(urgent.text.includes('판별 근거: 안전 마진'));
+  assert.ok(urgent.text.includes('래미안비밀'));
+  assert.ok(urgent.html.includes('판별 근거: 안전 마진'));
 });
 
 test('the reason lists every comparable within the Notion limit and Kakao gets the short form', async () => {
@@ -1312,7 +1391,7 @@ test('dry-run stays write-free while reading the manual value and market data', 
   assert.deepEqual(fake.calls.filter((call) => call.method === 'PATCH' || (call.method === 'POST' && !call.path.endsWith('/query'))), []);
   assert.equal(h.mails.length, 0);
   assert.equal(h.kakao.length, 0);
-  assert.equal(base.calls.apt.length, 2);
+  assert.equal(base.calls.apt.length, 3);
   assert.ok(marketLine(h).includes('station_used=1'));
 });
 

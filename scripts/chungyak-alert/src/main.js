@@ -422,7 +422,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         addError(safeError(error));
         evaluation = { status: STATUS.UNDETERMINED, reason: '판별 실패' };
       }
-      evaluation = keepPreviousLotto(evaluation, previous?.lotto);
+      // dry-run도 읽어 둔 행의 이전 상태로 같은 보호를 적용해 일반 실행과 건수가 같게 한다.
+      evaluation = keepPreviousLotto(evaluation, (previous ?? dryRunRows?.get(notice.key))?.lotto);
       counts.evaluated += 1;
       if (evaluation.confidence) marketCounts[evaluation.confidence] += 1;
       if (evaluation.stationState) marketCounts[stationCountNames[evaluation.stationState]] += 1;
@@ -553,7 +554,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 }
 
 // 카카오로 보내고, 실패하면 메일로 대신 보낸 뒤 발송일을 기록한다. 로또와 관심 알림이 함께 쓴다.
-async function deliverAlert({ notice, pageId }, text, countName, { store, sendKakao, sendMail, today, addError, counts, markLost, markNotionFailed }) {
+async function deliverAlert({ notice, pageId, reason }, text, countName, { store, sendKakao, sendMail, today, addError, counts, markLost, markNotionFailed }) {
   let sent = false;
   try {
     await sendKakao({ text, url: notice.url });
@@ -562,7 +563,8 @@ async function deliverAlert({ notice, pageId }, text, countName, { store, sendKa
   } catch (error) {
     addError(safeError(error));
     try {
-      await sendMail(buildUrgentMail({ notice, text, url: notice.url }));
+      // 메일은 길이 제한이 없어 비교 단지 목록이 있는 전체 근거를 함께 보낸다.
+      await sendMail(buildUrgentMail({ notice, text, url: notice.url, reason }));
       sent = true;
       counts[countName] += 1;
       counts.urgentMailFallback += 1;

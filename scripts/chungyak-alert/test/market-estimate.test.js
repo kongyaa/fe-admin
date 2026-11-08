@@ -360,6 +360,37 @@ test('too few comparable values skip the station adjustment for the whole estima
   assert.equal(unmatched.estimate, 1000 * 84);
 });
 
+test('widening to the 시군구 while the 법정동 had enough trades lowers confidence one level', () => {
+  const pick = (allRows) => selectComparables(groupComplexes(allRows, 84, context), subject(), context);
+  const youngElsewhere = [...rows(3, 1500, { aptName: '옆동가', umd: '삼성동', jibun: '8', buildYear: 2016 }), ...rows(3, 1600, { aptName: '옆동나', umd: '삼성동', jibun: '9', buildYear: 2018 })];
+  const oldHere = [...rows(6, 500, { aptName: '구축가', jibun: '3', buildYear: 1995 })];
+  const penalised = pick([...youngElsewhere, ...oldHere]);
+  assert.equal(penalised.scope, '시군구');
+  assert.equal(penalised.scopePenalty, true);
+  const thinHere = pick([...youngElsewhere, ...rows(3, 500, { aptName: '구축가', jibun: '3', buildYear: 1995 })]);
+  assert.equal(thinHere.scope, '시군구');
+  assert.equal(thinHere.scopePenalty, false);
+
+  const level = (scopePenalty) => comparableConfidence({ samples: 20, comparables: 4, spread: 0.1, looError: 0.05, stationState: STATION.USED, presaleOk: true, scopePenalty }, market.confidence);
+  assert.equal(level(false), CONFIDENCE.HIGH);
+  assert.equal(level(true), CONFIDENCE.MID);
+
+  // 다른 동 신축 2곳, 표본 6건이면 보통 중이지만 이 경우 하다.
+  const result = estimate([...youngElsewhere, ...oldHere].map((row) => ({ ...row })), { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  assert.equal(result.basis.scope, '시군구');
+  assert.equal(result.confidence, CONFIDENCE.LOW);
+});
+
+test('romanised and Korean brand spellings of one complex are grouped together', () => {
+  const pairs = [['광교중흥S클래스', '광교중흥에스클래스'], ['시흥e편한세상', '시흥이편한세상'], ['수원SK뷰', '수원에스케이뷰'], ['광교 I-PARK', '광교아이파크'], ['동탄 HILLSTATE', '동탄힐스테이트'], ['송도 The Sharp', '송도더샵']];
+  for (const [roman, korean] of pairs) {
+    const complexes = groupComplexes([...rows(3, 1500, { aptName: roman, jibun: '7' }), ...rows(3, 1500, { aptName: korean, jibun: '7' })], 84, context);
+    assert.equal(complexes.length, 1, roman);
+    assert.equal(complexes[0].samples, 6, roman);
+  }
+  assert.equal(brandTier({ name: '광교중흥S클래스' }, adjustment.brand), brandTier({ name: '광교중흥에스클래스' }, adjustment.brand));
+});
+
 test('comparables close in age are preferred, widening in steps and lowering confidence', () => {
   const pick = (allRows, extra = {}) => selectComparables(groupComplexes(allRows, 84, context), subject(extra), context);
   const young = [...rows(5, 1500, { aptName: '신축가', jibun: '1', buildYear: 2016 }), ...rows(5, 1600, { aptName: '신축나', jibun: '2', buildYear: 2012 })];
@@ -501,12 +532,28 @@ test('margin takes the estimate less the leave-one-out error and subtracts price
   assert.ok(Math.abs(result.marginRate - 12985 / 96538) < 1e-9);
 });
 
-test('the safety discount is the leave-one-out error clamped to the configured range', () => {
+test('the safety discount trusts the measured error only with four or more complexes', () => {
   const safe = market.safeValue;
-  assert.equal(safeDiscount(null, safe), safe.maxDiscount);
-  assert.equal(safeDiscount(0, safe), safe.minDiscount);
-  assert.equal(safeDiscount(0.12, safe), 0.12);
-  assert.equal(safeDiscount(0.9, safe), safe.maxDiscount);
+  const discount = (input) => safeDiscount({ spread: 0, outliers: 0, comparables: 4, ...input }, safe);
+  assert.deepEqual(discount({ looError: null }), { discount: safe.maxDiscount, measured: false, exceeded: false });
+  // 서로 잘 맞는 단지 3곳도 검증하기엔 적어 상한을 쓴다.
+  assert.equal(discount({ looError: 0, comparables: 3 }).discount, safe.maxDiscount);
+  assert.equal(discount({ looError: 0 }).discount, safe.minDiscount);
+  assert.equal(discount({ looError: 0.12 }).discount, 0.12);
+  // 오차 중위값보다 퍼짐의 절반이 크면 그 값을 쓴다.
+  assert.equal(discount({ looError: 0.02, spread: 0.3 }).discount, 0.15);
+  // 이상치를 뺐으면 하한이 10%다.
+  assert.equal(discount({ looError: 0, outliers: 1 }).discount, safe.minDiscountWithOutliers);
+  const over = discount({ looError: 0.35 });
+  assert.equal(over.discount, safe.maxDiscount);
+  assert.equal(over.exceeded, true);
+});
+
+test('three agreeing sibling complexes still get the full discount', () => {
+  const allRows = ['가', '나', '다'].flatMap((name, index) => rows(5, 1500, { aptName: `${name}단지`, jibun: `${index}a` }));
+  const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  assert.equal(result.discount, market.safeValue.maxDiscount);
+  assert.equal(result.discountMeasured, false);
 });
 
 test('two cheap complexes among eight do not drag the safety value down', () => {
@@ -517,33 +564,66 @@ test('two cheap complexes among eight do not drag the safety value down', () => 
   // 1100은 중위값 1500의 0.73배라 이상치가 아니다. 예전 하위 25%(8곳 중 2번째)라면 1100 × 84 = 92400이었다.
   assert.equal(result.outliers, 0);
   assert.equal(result.estimate, 1500 * 84);
-  // 6곳은 서로를 정확히 맞혀 오차 중위값이 0이고, 할인율 하한 5%가 붙는다.
-  assert.equal(result.discount, market.safeValue.minDiscount);
-  assert.equal(result.safeValue, Math.round(1500 * 0.95 * 84));
+  // 6곳은 서로를 정확히 맞혀 오차 중위값이 0이지만, 퍼짐 (1500 - 1100) / 1500의 절반 13.3%를 뺀다.
+  assert.ok(Math.abs(result.discount - 400 / 1500 / 2) < 1e-9);
+  assert.equal(result.safeValue, Math.round(1500 * (1 - 400 / 1500 / 2) * 84));
+  assert.ok(result.safeValue > 92400);
 });
 
-test('the safety discount is measured on the complexes left after outliers are dropped', () => {
-  const units = [1000, 1040, 1500, 1600, 1700, 1800];
-  const allRows = units.flatMap((unit, index) => rows(3, unit, { aptName: `${'가나다라마바'[index]}단지`, jibun: `${index}a` }));
+test('confidence and discount are measured on all complexes, and a removal keeps the discount above the floor', () => {
+  const units = [1000, 1500, 1550, 1600, 1650, 1700, 1750, 1800];
+  const allRows = units.flatMap((unit, index) => rows(3, unit, { aptName: `${'가나다라마바사아'[index]}단지`, jibun: `${index}a` }));
   const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
-  // 1000과 1040은 중위값 1500의 0.7배 아래라 빠지고 4곳이 남는다.
-  assert.equal(result.outliers, 2);
-  // 남은 4곳의 오차: 1500→1700, 1600→1700, 1700→1600, 1800→1600. 중위값은 가운데 둘의 평균이다.
-  const expected = (100 / 1600 + 200 / 1800) / 2;
-  assert.ok(Math.abs(result.discount - expected) < 1e-9, String(result.discount));
+  // 중심은 가운데 둘(1600, 1650)의 평균 1625이고, 1000은 그 0.7배인 1137.5 아래라 빠진다.
+  assert.equal(result.outliers, 1);
+  assert.ok(!result.basis.comparables.some((item) => item.name === '가단지'));
+  // 퍼짐(8곳 전체, 1500~1700)의 절반 6.25%와 오차 중위값보다 큰 하한 10%가 붙는다.
+  assert.equal(result.discount, market.safeValue.minDiscountWithOutliers);
+  // 표본은 실제로 쓴 7곳만 센다.
+  assert.equal(result.basis.samples, 21);
 });
 
-test('complexes far from the median after adjustment are dropped only when enough remain', () => {
+test('removed complexes still count against confidence and the discount', () => {
+  const units = [900, 950, 1500, 1510, 1520, 1530, 1540, 1550];
+  const allRows = units.flatMap((unit, index) => rows(4, unit, { aptName: `${'가나다라마바사아'[index]}단지`, jibun: `${index}a` }));
+  const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+  // 중심 1515의 0.7배 아래인 900, 950이 빠지고 6곳이 남는다. 남은 6곳끼리는 거의 같아 상으로 보일 수 있다.
+  assert.equal(result.outliers, 2);
+  // 퍼짐은 8곳 전체로 계산한다: (1530 - 950) / 1510 = 0.384. 0.3을 넘어 하다.
+  assert.equal(result.confidence, CONFIDENCE.LOW);
+  assert.ok(Math.abs(result.discount - 580 / 1510 / 2) < 1e-9, String(result.discount));
+});
+
+for (const [label, cheap, pricey] of [['four and four', 4, 4], ['three cheap and five pricey', 3, 5]]) {
+  test(`a bimodal split (${label}) is not treated as outliers and cannot look confident`, () => {
+    const allRows = [
+      ...Array.from({ length: cheap }, (_, index) => rows(4, 90000 / 84, { aptName: `싼단지${index}호`, jibun: `c${index}` })).flat(),
+      ...Array.from({ length: pricey }, (_, index) => rows(4, 170000 / 84, { aptName: `비싼단지${index}호`, jibun: `p${index}` })).flat(),
+    ];
+    const result = estimate(allRows, { models: [{ houseType: '084A', area: 84, price: 80000 }] });
+    assert.equal(result.outliers, 0);
+    assert.equal(result.basis.comparables.length, 8);
+    assert.equal(result.confidence, CONFIDENCE.LOW);
+    assert.equal(result.discount, market.safeValue.maxDiscount);
+  });
+}
+
+test('complexes far from the median after adjustment are dropped only when few and enough remain', () => {
   const complex = (adjustedUnit) => ({ adjustedUnit });
   const { comparables } = market;
-  const five = [1000, 1500, 1550, 1600, 2300].map(complex);
-  // 중위값 1550의 0.7배는 1085, 1.4배는 2170이다. 빼고 남는 단지가 4곳보다 적으면 빼지 않는다.
-  assert.equal(dropComplexOutliers(five, comparables).length, 5);
-  assert.deepEqual(dropComplexOutliers(five, { ...comparables, outlierMinRemaining: 3 }).map((item) => item.adjustedUnit), [1500, 1550, 1600]);
-  const six = [1000, 1500, 1550, 1600, 1650, 2300].map(complex);
-  assert.deepEqual(dropComplexOutliers(six, comparables).map((item) => item.adjustedUnit), [1500, 1550, 1600, 1650]);
-  const close = [1400, 1500, 1550, 1600].map(complex);
-  assert.equal(dropComplexOutliers(close, comparables).length, 4);
+  const loose = { ...comparables, outlierMinRemaining: 1, outlierMaxShare: 1 };
+  const values = (list, rule) => dropComplexOutliers(list.map(complex), rule).map((item) => item.adjustedUnit);
+  // 짝수 개면 가운데 둘의 평균(1080과 1500의 평균 1290)이 중심이다. 아래쪽 가운데 값 1080을 중심으로 쓰면 1520, 1540도 빠진다.
+  assert.deepEqual(values([700, 1000, 1080, 1500, 1520, 1540], loose), [1000, 1080, 1500, 1520, 1540]);
+  // 8곳이면 2곳까지만 뺀다. 3곳이 벗어나면 시세가 갈린 것으로 보고 빼지 않는다.
+  assert.deepEqual(values([1000, 1010, 1500, 1520, 1540, 1560, 1580, 1600], comparables), [1500, 1520, 1540, 1560, 1580, 1600]);
+  assert.equal(values([1000, 1010, 1020, 1520, 1540, 1560, 1580, 1600], comparables).length, 8);
+  // 위쪽도 같다. 중심 1570의 1.4배 2198 위인 두 곳이 빠진다.
+  assert.deepEqual(values([1500, 1520, 1540, 1560, 1580, 1600, 2300, 2400], comparables), [1500, 1520, 1540, 1560, 1580, 1600]);
+  // 빼고 남는 단지가 4곳보다 적으면 빼지 않는다.
+  assert.equal(values([1000, 1500, 1550, 1600], { ...comparables, outlierMaxShare: 1 }).length, 4);
+  assert.deepEqual(values([1000, 1500, 1550, 1600], { ...comparables, outlierMaxShare: 1, outlierMinRemaining: 3 }), [1500, 1550, 1600]);
+  assert.equal(values([1400, 1500, 1550, 1600], comparables).length, 4);
 
   const allRows = [
     ...rows(3, 900, { aptName: '싼단지', jibun: '0a' }),

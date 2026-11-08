@@ -9,6 +9,8 @@ import {
   restrictedType,
 } from './market-estimate.js';
 import { resolveAddress } from './sgg-codes.js';
+
+const CONFIDENCE_LOW = '하';
 import { AppError, completeMonths, safeError } from './util.js';
 
 export const STATUS = {
@@ -64,9 +66,13 @@ function basisText(basis) {
   return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${basis.scope}, ${ageScope(basis.maxAge)}${outliers}), 보정 후 84㎡ 환산: ${names}`;
 }
 
-const safeText = (best) => (best.basis.kind === 'same'
-  ? `하위 25% 시세 ${eok(best.safeValue)}`
-  : `보수 시세 ${eok(best.safeValue)}(추정 시세에서 검증 오차 ${Math.round(best.discount * 100)}% 차감)`);
+function safeText(best) {
+  if (best.basis.kind === 'same') return `하위 25% 시세 ${eok(best.safeValue)}`;
+  const percentText = `${Math.round(best.discount * 100)}%`;
+  if (!best.discountMeasured) return `보수 시세 ${eok(best.safeValue)}(비교 단지가 적어 추정 시세에서 상한 ${percentText} 차감)`;
+  if (best.discountExceeded) return `보수 시세 ${eok(best.safeValue)}(검증 오차가 상한을 넘어 추정 시세에서 ${percentText}만 차감, 실제 위험은 더 큼)`;
+  return `보수 시세 ${eok(best.safeValue)}(추정 시세에서 검증 오차 ${percentText} 차감)`;
+}
 
 // 카카오톡용 짧은 근거. 메시지 200자 안에 들도록 마진과 신뢰도만 적는다.
 const shortPriceText = (best) => `안전 마진 ${eok(best.margin)}, 마진율 ${Math.round(best.marginRate * 100)}% (${best.houseType}, 신뢰도 ${best.confidence})`;
@@ -213,6 +219,11 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
     return result(STATUS.LOTTO, best ? `${trigger}; ${priceText(best)}` : trigger, { ...price, shortReason: best ? `${trigger}; ${shortPriceText(best)}` : trigger });
   }
   if (!best) return result(STATUS.UNDETERMINED, undetermined, price);
+  // 가격 기준만으로 로또가 되려면 신뢰도가 중 이상이어야 한다. 조건형 로또는 위에서 이미 정해졌다.
+  if (meetsPriceRule(best, lotto) && best.confidence === CONFIDENCE_LOW) {
+    const note = '가격 기준은 넘지만 추정 신뢰도가 하라 로또로 보지 않음';
+    return result(STATUS.NOT, `${note}; ${priceText(best)}`, { ...price, shortReason: `${note}; ${shortPriceText(best)}` });
+  }
   return result(meetsPriceRule(best, lotto) ? STATUS.LOTTO : STATUS.NOT, priceText(best), { ...price, shortReason: shortPriceText(best) });
 }
 
@@ -220,7 +231,7 @@ export async function evaluateLotto(notice, { config, today, getModels, getTrade
 // 약한 추정 하나로 알림이 조용히 사라지지 않게 하려는 것이다. 아님은 가격 기준에서만 나온다.
 export function keepPreviousLotto(evaluation, previousStatus) {
   if (previousStatus !== STATUS.LOTTO) return evaluation;
-  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === '하';
+  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE_LOW;
   if (evaluation.status !== STATUS.UNDETERMINED && !weak) return evaluation;
   const label = weak ? '이전 판별 유지(이번 추정 신뢰도 하)' : '이전 판별 유지';
   return {
