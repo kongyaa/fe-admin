@@ -596,8 +596,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`collected=${collected.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
   log(`errors=${[...errors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} ${umdFormatCounts(molit.stats(), presale.stats())} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
-  // 추천 기능 상태와 건수만 남긴다. 프로필 내용은 남기지 않는다.
-  log(`recommend profile=${profileStatus} recommended=${recommendCounts.recommended} none=${recommendCounts.none}`);
+  // 추천 기능 상태와 건수만 남긴다. 프로필 내용과 신청자 이름표는 남기지 않는다. v2는 신청자 수만 덧붙인다.
+  const applicantCount = profile?.version === 2 ? ` version=2 applicants=${profile.applicants.length}` : '';
+  log(`recommend profile=${profileStatus} recommended=${recommendCounts.recommended} none=${recommendCounts.none}${applicantCount}`);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);
