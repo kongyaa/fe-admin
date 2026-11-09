@@ -40,12 +40,12 @@ export function extractPanId(row) {
   return /(?:PAN_ID|panId)["']?\s*[:=]\s*["']?([\w-]+)/.exec(url)?.[1] ?? null;
 }
 
-// keepKeywords(토지임대부 등)가 유형이나 이름에 있으면 excludeKeywords(토지, 상가)로 빼지 않는다.
+// 유형의 keepKeywords(토지임대부 등)는 지우고 excludeKeywords(토지, 상가)를 본다. 이름은 보지 않는다.
+// main.js는 lh.filterSaleArea가 켜져 있을 때만 keepKeywords를 넘긴다.
 export function normalizeLh(row, excludeKeywords, keepKeywords = []) {
   const type = `${row.UPP_AIS_TP_NM ?? ''} ${row.AIS_TP_CD_NM ?? ''}`;
-  const squashed = `${type} ${row.PAN_NM ?? ''}`.replace(/\s+/g, '');
-  const keep = keepKeywords.some((word) => word && squashed.includes(word.replace(/\s+/g, '')));
-  if (!keep && excludeKeywords.some((word) => type.includes(word))) return null;
+  const rest = keepKeywords.reduce((text, word) => (word ? text.split(word).join(' ') : text), type);
+  if (excludeKeywords.some((word) => rest.includes(word))) return null;
   const panId = extractPanId(row);
   if (!panId) return null;
   const start = normalizeDate(row.PAN_NT_ST_DT ?? row.PAN_DT);

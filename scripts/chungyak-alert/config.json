@@ -11,7 +11,8 @@
     "saleTypes": ["분양주택", "공공분양", "신혼희망타운", "뉴홈", "나눔형", "일반형"],
     "forceSaleKeywords": ["토지임대부"],
     "nonSaleTypes": ["임대", "행복주택", "전세", "주거복지", "토지", "상가", "매각"],
-    "excludeKeywords": ["선택형", "분양전환", "일반매각", "주택매각"],
+    "excludeKeywords": ["선택형", "분양전환", "일반매각", "주택매각", "용지"],
+    "nameExcludeUnless": { "선택형": ["나눔형", "일반형", "공공분양"] },
     "targetRegions": ["서울"],
     "targetAreas": [
       { "name": "하남교산", "keywords": ["하남교산", "교산"] },

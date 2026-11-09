@@ -11,7 +11,7 @@ import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } f
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
 import { parseProfile } from './recommend.js';
 import { isRental } from './rental.js';
-import { formatLhTypes, isUnknownLhType, lhScopeRule, lhTypeLogLabel, storedLhScopeRule } from './lh-scope.js';
+import { formatLhTypes, isLhItem, isUnknownLhRegion, isUnknownLhType, lhRegionLogLabel, lhScopeRule, lhTypeLogLabel, lhTypeRule, storedLhScopeRule } from './lh-scope.js';
 import {
   decodeServiceKey,
   defaultSleep,
@@ -75,16 +75,26 @@ export function dedupeNotices(notices) {
 
 // LH 범위 밖 공고(분양이 아니거나 대상 지역 밖, src/lh-scope.js)를 가른다. 청약홈 공고는 그대로 둔다.
 // 관심을 체크한 행이 있는 공고는 빼지 않고 보통 공고처럼 다룬다. 관심 여부는 실행 시작 때 읽은 값이다.
-// 옮길 행은 이번 실행에 범위 밖으로 빠진 공고의 행과, 수집되지 않았어도 저장된 값으로 범위 밖인 행이다. 관심 행은 남기고 센다.
+// 옮길 행은 이번 실행에 범위 밖으로 빠진 공고의 행과, 이번 실행에 수집되지 않았고 저장된 값으로 범위 밖인 행이다.
+// 이번 실행에 수집되어 남은 공고의 행은 저장된 값으로 다시 판정하지 않는다(옮겼다가 다시 만들지 않게). 관심 행은 남기고 센다.
+// saleRegions는 유형 규칙을 통과한 LH 공고의 공급지역별 건수다(지역 규칙 전, lh_sale_regions 로그).
 export function splitLhScope(notices, rows, config) {
-  const counts = { lh_out_of_scope_skipped: 0, lh_out_of_scope_type: 0, lh_out_of_scope_area: 0, lh_out_of_scope_archived: 0, lh_out_of_scope_kept_interest: 0, lh_type_unknown: 0 };
+  const counts = { lh_out_of_scope_skipped: 0, lh_out_of_scope_type: 0, lh_out_of_scope_area: 0, lh_out_of_scope_archived: 0, lh_out_of_scope_kept_interest: 0, lh_type_unknown: 0, lh_region_unknown: 0 };
   const outKeys = new Set();
+  const keptKeys = new Set();
   const kept = [];
+  const saleRegions = new Map();
   for (const notice of notices) {
-    // 모르는 유형은 빼지 않고 지역 규칙만 본다. 건수만 남긴다.
+    if (isLhItem(notice) && !lhTypeRule(notice, config.lh ?? {})) {
+      const label = lhRegionLogLabel(notice.region);
+      saleRegions.set(label, (saleRegions.get(label) ?? 0) + 1);
+    }
+    // 모르는 유형과 빈 공급지역은 빼지 않는다. 건수만 남긴다.
     if (isUnknownLhType(notice, config)) counts.lh_type_unknown += 1;
+    if (isUnknownLhRegion(notice, config)) counts.lh_region_unknown += 1;
     const reason = lhScopeRule(notice, config);
     if (reason) outKeys.add(notice.key);
+    else keptKeys.add(notice.key);
     if (!reason || rows.get(notice.key)?.interest) {
       kept.push(notice);
       continue;
@@ -94,11 +104,12 @@ export function splitLhScope(notices, rows, config) {
   }
   const archiveRows = [];
   for (const row of rows.values()) {
+    if (keptKeys.has(row.key)) continue;
     if (!outKeys.has(row.key) && !storedLhScopeRule(row, config)) continue;
     if (row.interest) counts.lh_out_of_scope_kept_interest += 1;
     else archiveRows.push(row);
   }
-  return { notices: kept, archiveRows, counts };
+  return { notices: kept, archiveRows, counts, saleRegions };
 }
 
 export function selectUrgent(records, today, alertRegions) {
@@ -360,7 +371,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         lookbackDays: config.lookbackDays,
         lookaheadDays: config.lh.lookaheadDays,
         excludeKeywords: config.lh.excludeTypeKeywords,
-        keepKeywords: config.lh.forceSaleKeywords ?? [],
+        // LH 범위 기능이 꺼져 있으면 예전처럼 토지임대부도 토지 제외에 걸린다.
+        keepKeywords: config.lh.filterSaleArea ? (config.lh.forceSaleKeywords ?? []) : [],
         sleep,
         onRow: (row) => {
           const label = lhTypeLogLabel(row);
@@ -659,6 +671,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`recommend profile=${profileStatus} recommended=${recommendCounts.recommended} none=${recommendCounts.none}`);
   // LH 유형 값(`상위/세부`)별 건수. 분류 이름만 남기고 공고 이름은 남기지 않는다(src/lh-scope.js의 lhTypeLogLabel).
   log(`lh_types ${formatLhTypes(lhTypeCounts) || 'none'}`);
+  // 유형 규칙을 통과한 LH 공고의 공급지역별 건수. 지역 값 형식을 확인하는 용도이고 지역 이름만 남긴다.
+  log(`lh_sale_regions ${formatLhTypes(lhScope.saleRegions) || 'none'}`);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);

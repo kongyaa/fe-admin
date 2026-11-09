@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { normalizeLh } from '../src/sources/lh.js';
 import { ENDPOINTS, normalizeDetail } from '../src/sources/applyhome.js';
-import { formatLhTypes, isLhItem, isUnknownLhType, lhAreaRule, lhScopeRule, lhTypeClass, lhTypeLogLabel, lhTypeRule, storedLhScopeRule } from '../src/lh-scope.js';
+import { formatLhTypes, isLhItem, isUnknownLhRegion, isUnknownLhType, lhAreaRule, lhScopeRule, lhTypeClass, lhTypeLogLabel, lhTypeRule, storedLhScopeRule } from '../src/lh-scope.js';
 import { restrictedType } from '../src/market-estimate.js';
 import { rentalRule } from '../src/rental.js';
 import { splitLhScope } from '../src/main.js';
@@ -101,8 +101,8 @@ test('a 경기 notice outside the districts and other 시도 are dropped as area
   for (const name of ['고양창릉 A4 공공분양', '부천대장 A1 공공분양', '남양주 진접2 공공분양', '하남 감일 공공분양', '구리 인창 공공분양']) {
     assert.equal(lhScopeRule(lhNotice('분양주택 공공분양', name, '경기'), config), 'area', name);
   }
-  for (const region of ['인천', '부산', '세종', '충남', null]) {
-    assert.equal(lhScopeRule(lhNotice('분양주택 공공분양', '어느 지구 공공분양', region), config), 'area', String(region));
+  for (const region of ['인천', '부산', '세종', '충남']) {
+    assert.equal(lhScopeRule(lhNotice('분양주택 공공분양', '어느 지구 공공분양', region), config), 'area', region);
   }
   assert.equal(lhScopeRule(lhNotice('분양주택 공공분양', '인천계양 A2 공공분양', '인천'), config), 'area');
 });
@@ -148,9 +148,13 @@ test('splitLhScope keeps checked rows and counts by reason', () => {
     lhNotice('분양주택 공공분양', '어느 공고', '부산', { key: 'LH-checked' }),
     // 모르는 유형은 남기고 센다. 서울이라 지역 규칙도 통과한다.
     lhNotice('기타', '어느 공고', '서울', { key: 'LH-unknown' }),
+    // 공급지역이 빈 공고는 남기고 센다.
+    lhNotice('분양주택 공공분양', '어느 공고', null, { key: 'LH-noregion' }),
     { key: '1-1', kind: 'apt', source: '청약홈', typeLabel: 'APT', name: '단지', region: '부산' },
   ];
   const rows = new Map([
+    // 이번 실행에 수집되어 남은 공고의 행은 저장된 값(임대, 부산)이 낡았어도 다시 판정하지 않는다.
+    ['LH-in', { id: 'i', key: 'LH-in', interest: false, name: '예전 이름', typeLabel: '임대주택 국민임대', region: '부산' }],
     ['LH-area', { id: 'a', key: 'LH-area', interest: false, name: '어느 공고', typeLabel: null, region: null }],
     ['LH-checked', { id: 'c', key: 'LH-checked', interest: true, name: '어느 공고', typeLabel: null, region: null }],
     ['LH-old', { id: 'o', key: 'LH-old', interest: false, name: '다른 공고', typeLabel: '분양주택 공공분양', region: '대구' }],
@@ -158,9 +162,70 @@ test('splitLhScope keeps checked rows and counts by reason', () => {
     ['1-1', { id: 'x', key: '1-1', interest: false, name: '단지', typeLabel: 'APT', region: '부산' }],
   ]);
   const result = splitLhScope(notices, rows, config);
-  assert.deepEqual(result.notices.map((item) => item.key), ['LH-in', 'LH-checked', 'LH-unknown', '1-1']);
+  assert.deepEqual(result.notices.map((item) => item.key), ['LH-in', 'LH-checked', 'LH-unknown', 'LH-noregion', '1-1']);
   assert.deepEqual(result.archiveRows.map((row) => row.id), ['a', 'o']);
-  assert.deepEqual(result.counts, { lh_out_of_scope_skipped: 2, lh_out_of_scope_type: 1, lh_out_of_scope_area: 1, lh_out_of_scope_archived: 0, lh_out_of_scope_kept_interest: 2, lh_type_unknown: 1 });
+  assert.deepEqual(result.counts, { lh_out_of_scope_skipped: 2, lh_out_of_scope_type: 1, lh_out_of_scope_area: 1, lh_out_of_scope_archived: 0, lh_out_of_scope_kept_interest: 2, lh_type_unknown: 1, lh_region_unknown: 1 });
+  // 유형 규칙을 통과한 LH 공고만 지역별로 센다(선택형 공고와 청약홈 공고는 빠진다).
+  assert.equal(formatLhTypes(result.saleRegions), '부산=2,서울=2,-=1');
+});
+
+test('a stored row of a collected, kept notice is never archived on stale stored values', () => {
+  const notice = lhNotice('분양주택 공공분양', '서울 공공분양', '서울', { key: 'LH-in' });
+  for (const stale of [{ typeLabel: '임대주택 국민임대', region: '서울' }, { typeLabel: '분양주택 공공분양', region: '부산' }, { typeLabel: '분양주택', name: '뉴홈 선택형' }]) {
+    const rows = new Map([['LH-in', { id: 'i', key: 'LH-in', interest: false, name: '예전 이름', ...stale }]]);
+    assert.notEqual(storedLhScopeRule(rows.get('LH-in'), config), null, JSON.stringify(stale));
+    const result = splitLhScope([notice], rows, config);
+    assert.deepEqual(result.archiveRows, [], JSON.stringify(stale));
+    assert.deepEqual(result.notices.map((item) => item.key), ['LH-in']);
+  }
+  // 수집되지 않았으면 같은 행은 옮긴다.
+  const rows = new Map([['LH-in', { id: 'i', key: 'LH-in', interest: false, name: '예전 이름', typeLabel: '분양주택 공공분양', region: '부산' }]]);
+  assert.deepEqual(splitLhScope([], rows, config).archiveRows.map((row) => row.id), ['i']);
+});
+
+test('an empty region is kept as unknown, for notices and stored rows', () => {
+  for (const region of [null, '']) {
+    const item = lhNotice('분양주택 공공분양', '어느 지구 공공분양', region);
+    assert.equal(lhAreaRule(item, lh), null, String(region));
+    assert.equal(lhScopeRule(item, config), null, String(region));
+    assert.equal(isUnknownLhRegion(item, config), true, String(region));
+  }
+  // 분양이 아니면 지역과 관계없이 빠지고 지역 미상으로 세지 않는다.
+  assert.equal(lhScopeRule(lhNotice('임대주택 국민임대', '공고', null), config), 'type');
+  assert.equal(isUnknownLhRegion(lhNotice('임대주택 국민임대', '공고', null), config), false);
+  assert.equal(isUnknownLhRegion(lhNotice('분양주택 공공분양', '공고', '부산'), config), false);
+  // CNP_CD_NM이 빈 원본 행
+  for (const cnp of ['', undefined, '  ']) {
+    const raw = normalizeLh({ PAN_ID: 'e', PAN_NM: '어느 지구 공공분양', UPP_AIS_TP_NM: '분양주택', AIS_TP_CD_NM: '공공분양', CNP_CD_NM: cnp, PAN_NT_ST_DT: '2026.11.01', CLSG_DT: '2026.11.20' }, lh.excludeTypeKeywords, lh.forceSaleKeywords);
+    assert.equal(raw.region, null, String(cnp));
+    assert.equal(lhScopeRule(raw, config), null, String(cnp));
+    assert.equal(isUnknownLhRegion(raw, config), true, String(cnp));
+  }
+  assert.equal(storedLhScopeRule({ key: 'LH-1', typeLabel: '분양주택 공공분양', name: '공고', region: null }, config), null);
+});
+
+test('선택형 in a combined 뉴:홈 name is kept when a sale type is named with it', () => {
+  const type = '분양주택 공공분양';
+  const kept = [
+    '하남교산 A2BL 뉴:홈 공공분양주택 입주자모집공고(나눔형·선택형)',
+    '하남교산 A2BL 뉴:홈 입주자모집공고(일반형·선택형)',
+    '하남교산 A2BL 뉴:홈 입주자모집공고(나눔형, 선택형)',
+    // 이름에 공공분양이 있으면 선택형만 적혀 있어도 남는다(lh.nameExcludeUnless에서 공공분양을 빼면 빠진다).
+    '하남교산 A2BL 뉴:홈 공공분양주택 입주자모집공고(선택형)',
+  ];
+  for (const name of kept) assert.equal(lhScopeRule(lhNotice(type, name, '경기'), config), null, name);
+  const dropped = [
+    '하남교산 A2BL 뉴:홈 입주자모집공고(선택형)',
+    '하남교산 A3BL 뉴:홈 선택형 공공임대주택 입주자모집공고',
+  ];
+  for (const name of dropped) assert.equal(lhScopeRule(lhNotice(type, name, '경기'), config), 'type', name);
+  // 유형에 선택형이 있으면 이름과 관계없이 뺀다.
+  assert.equal(lhTypeRule(lhNotice('분양주택 선택형', '뉴:홈 공공분양주택(나눔형·선택형)'), lh), 'type');
+  // 예외는 설정이다. 비우면 이름의 선택형은 늘 뺀다.
+  const strict = { ...lh, nameExcludeUnless: {} };
+  assert.equal(lhTypeRule(lhNotice(type, kept[0]), strict), 'type');
+  // 다른 제외 단어는 예외가 없다.
+  assert.equal(lhTypeRule(lhNotice(type, '공공분양 나눔형 분양전환'), lh), 'type');
 });
 
 test('an unknown non-empty type is kept and counted, and the area rule still applies', () => {
@@ -183,20 +248,30 @@ test('an unknown non-empty type is kept and counted, and the area rule still app
   assert.equal(storedLhScopeRule({ key: 'LH-1', typeLabel: '기타', name: '공고', region: '부산' }, config), 'area');
 });
 
-test('토지임대부 분양 is a sale before the non-sale words, and the rental filter keeps it', () => {
-  const cases = [
-    ['분양주택 토지임대부', '공공분양 입주자모집'],
-    ['토지임대부', '입주자모집'],
-    ['토지', '토지임대부 분양주택 입주자모집'],
-    ['분양주택 공공분양', '토지 임대부 분양주택'],
-    ['', '토지임대부 분양주택'],
-  ];
-  for (const [type, name] of cases) {
+test('토지임대부 in the type is a sale only when the rest of the type is not non-sale', () => {
+  // 유형에서 토지임대부를 지운 나머지를 본다.
+  const sales = [['분양주택 토지임대부', '공공분양 입주자모집'], ['토지임대부', '입주자모집'], ['공공분양 토지임대부', '공고']];
+  for (const [type, name] of sales) {
     const item = lhNotice(type, name);
     assert.equal(lhTypeClass(item, lh), 'sale', `${type} / ${name}`);
     assert.equal(lhScopeRule(item, config), null, `${type} / ${name}`);
     assert.equal(lhScopeRule({ ...item, region: '부산' }, config), 'area', `${type} / ${name}`);
   }
+  for (const type of ['임대주택 토지임대부', '토지 토지임대부', '상가 토지임대부']) {
+    assert.equal(lhTypeClass(lhNotice(type, '공고'), lh), 'drop', type);
+  }
+  // 이름의 토지임대부는 유형 판정을 바꾸지 않는다(유형이 분양이거나 비었으면 원래 남는다).
+  assert.equal(lhTypeClass(lhNotice('분양주택 공공분양', '토지임대부 분양주택'), lh), 'sale');
+  assert.equal(lhTypeClass(lhNotice('', '토지임대부 분양주택'), lh), 'empty');
+  // 검토에서 찾은 두 경우: 토지 용지 공고와 임대 공고는 이름에 토지임대부가 있어도 뺀다.
+  assert.equal(lhTypeRule(lhNotice('토지 공동주택용지', '토지임대부 분양주택 용지 공급'), lh), 'type');
+  assert.equal(lhTypeRule(lhNotice('토지 공동주택용지', '토지임대부 분양주택'), lh), 'type');
+  assert.equal(lhTypeRule(lhNotice('임대주택 국민임대', '토지임대부 분양주택'), lh), 'type');
+  const rentalOff = { ...config, excludeRental: false };
+  assert.equal(rentalRule({ kind: 'lh', typeLabel: '임대주택 국민임대', name: '토지임대부 분양주택' }, rentalOff), null);
+  assert.equal(lhScopeRule(lhNotice('임대주택 국민임대', '토지임대부 분양주택'), rentalOff), 'type');
+  // 용지는 이름만으로도 뺀다.
+  assert.equal(lhTypeRule(lhNotice('', '하남교산 공동주택 용지 공급'), lh), 'type');
   // 임대 필터가 먼저 돌므로 거기서도 빠지면 안 된다.
   for (const [type, name] of [['분양주택 토지임대부', '공고'], ['토지임대부', '공고'], ['분양주택 공공분양', '토지임대부 분양주택']]) {
     assert.equal(rentalRule({ kind: 'lh', typeLabel: type, name }, config), null, `${type} / ${name}`);
@@ -204,13 +279,16 @@ test('토지임대부 분양 is a sale before the non-sale words, and the rental
   // 예외 말을 지워도 남는 임대 단어는 그대로 본다.
   assert.equal(rentalRule({ kind: 'lh', typeLabel: '토지임대부 국민임대', name: '공고' }, config), 'type_keyword');
   assert.equal(rentalRule({ kind: 'lh', typeLabel: 'LH', name: '토지임대부 옆 영구임대' }, config), 'name_keyword');
-  // 수집 단계의 토지·상가 제외(lh.excludeTypeKeywords)도 토지임대부는 빼지 않는다.
-  const raw = (upper, detail, name) => normalizeLh({ PAN_ID: 'l', PAN_NM: name, UPP_AIS_TP_NM: upper, AIS_TP_CD_NM: detail, CNP_CD_NM: '서울특별시' }, lh.excludeTypeKeywords, lh.forceSaleKeywords);
+  // 수집 단계의 토지·상가 제외(lh.excludeTypeKeywords)는 유형의 토지임대부만 지우고 본다. 이름은 보지 않는다.
+  const raw = (upper, detail, name, keep = lh.forceSaleKeywords) => normalizeLh({ PAN_ID: 'l', PAN_NM: name, UPP_AIS_TP_NM: upper, AIS_TP_CD_NM: detail, CNP_CD_NM: '서울특별시' }, lh.excludeTypeKeywords, keep);
   assert.notEqual(raw('분양주택', '토지임대부', '공고'), null);
-  assert.notEqual(raw('토지', '토지임대부', '공고'), null);
-  assert.notEqual(raw('토지', '', '토지 임대부 분양주택'), null);
-  assert.equal(raw('토지', '공동주택용지', '용지 공급'), null);
+  assert.notEqual(raw(undefined, '토지임대부', '공고'), null);
+  assert.equal(raw('토지', '토지임대부', '공고'), null);
+  assert.equal(raw('토지', '', '토지임대부 분양주택'), null);
+  assert.equal(raw('토지', '공동주택용지', '토지임대부 분양주택'), null);
   assert.equal(raw('상가', '단지내상가', '상가 입찰'), null);
+  // 예외가 없으면(LH 범위 기능이 꺼진 경우 main.js가 빈 목록을 넘긴다) 예전처럼 토지임대부도 뺀다.
+  assert.equal(raw('분양주택', '토지임대부', '공고', []), null);
   // 제외 단어는 여전히 먼저다.
   assert.equal(lhTypeRule(lhNotice('분양주택 토지임대부', '뉴홈 선택형'), lh), 'type');
   // 판별은 제한 유형(대상 외)이 된다. LH 공고는 원래 판별 대상이 아니고, 이름으로 제한 유형이 잡힌다.
