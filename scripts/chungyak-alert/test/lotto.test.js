@@ -388,7 +388,7 @@ test('repeated 무순위 rounds need a confident estimate', async () => {
 });
 
 test('an unknown round keeps the 하 or no-estimate rule', async () => {
-  for (const name of ['합성단지 무순위', '합성단지(14차)', '', undefined]) {
+  for (const name of ['합성단지 무순위', '합성단지 14차', '', undefined]) {
     const weak = await evaluate(remainder(name), { data: trades(5, 1100) });
     assert.equal(weak.status, STATUS.LOTTO, String(name));
     assert.equal(weak.repeatedRound, undefined);
@@ -396,14 +396,34 @@ test('an unknown round keeps the 하 or no-estimate rule', async () => {
   }
 });
 
-test('parseRemainderRound reads the round only after 무순위, 사후 or 잔여', () => {
+test('a trailing (N차) is read as the round, and a low one keeps the outcome', async () => {
+  // 청약홈 공고문 파일명처럼 키워드 없이 이름 끝 괄호에 차수가 있다.
+  const repeated = await evaluate(remainder('합성단지(14차)'), { data: trades(5, 1100) });
+  assert.equal(repeated.status, STATUS.NOT);
+  assert.equal(repeated.repeatedRound, 14);
+  assert.ok(repeated.reason.startsWith('수도권 무순위·잔여세대 14차 반복 공급; '));
+
+  // 단지 차수일 수 있는 "단지(2차)"는 2차로 읽지만 기준(3차) 미만이라 판정은 예전과 같다.
+  assert.equal(parseRemainderRound('합성단지(2차)'), 2);
+  for (const data of [trades(5, 1100), []]) {
+    const phase = await evaluate(remainder('합성단지(2차)'), { data });
+    assert.equal(phase.status, STATUS.LOTTO);
+    assert.equal(phase.repeatedRound, undefined);
+  }
+});
+
+test('parseRemainderRound reads the round after 무순위, 사후 or 잔여, or in a trailing (N차)', () => {
   assert.equal(parseRemainderRound('합성단지 무순위(사후)(14차)'), 14);
   assert.equal(parseRemainderRound('합성단지 사후무순위 3차'), 3);
   assert.equal(parseRemainderRound('합성단지 무순위 14 차'), 14);
   assert.equal(parseRemainderRound('합성단지 잔여세대(5차)'), 5);
   assert.equal(parseRemainderRound('합성단지 2차 무순위(사후)(3차)'), 3);
-  // 키워드 없는 차수는 단지 차수일 수 있어 모른다.
-  assert.equal(parseRemainderRound('합성단지(2차)'), null);
+  assert.equal(parseRemainderRound('합성 단지(14차)'), 14);
+  assert.equal(parseRemainderRound('합성 단지 (14 차) '), 14);
+  // 괄호 없는 단지 차수, 끝이 아닌 괄호 차수는 모른다.
+  assert.equal(parseRemainderRound('합성단지 2차'), null);
+  assert.equal(parseRemainderRound('합성단지(2차) 101동'), null);
+  assert.equal(parseRemainderRound('합성단지(0차)'), null);
   assert.equal(parseRemainderRound('합성단지 2차 무순위(사후)'), null);
   assert.equal(parseRemainderRound('합성단지 무순위 2026년 1차'), null);
   assert.equal(parseRemainderRound('합성단지 무순위(0차)'), null);

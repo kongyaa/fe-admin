@@ -45,11 +45,13 @@ function flagTrigger(notice, lotto) {
   return null;
 }
 
-// 무순위 공고명의 차수. 청약홈 API에는 차수 필드가 없어 공고명(HOUSE_NM)에서만 읽는다.
-// "무순위(사후)(14차)", "사후무순위 3차"처럼 무순위·사후·잔여 뒤에 오는 숫자만 본다.
-// "빌리브센트하이(2차)"처럼 키워드 없이 붙은 차수는 단지 차수일 수 있어 모르는 것(null)으로 둔다.
+// 무순위(houseSecd 04) 공고명의 차수. 청약홈 API에는 차수 필드가 없어 공고명(HOUSE_NM)에서만 읽는다.
+// "무순위(사후)(14차)", "사후무순위 3차"처럼 무순위·사후·잔여 뒤의 숫자와, 청약홈 공고문 파일명의
+// "단지명(14차)"처럼 이름 끝 괄호 안의 차수를 본다. 끝 괄호는 "단지(2차)" 같은 단지 차수와 구분하지 못하지만
+// 낮은 차수는 remainderMaxRound(3) 미만이라 판정이 바뀌지 않는다. 괄호 없는 "단지 2차"는 모르는 것(null)이다.
 export function parseRemainderRound(name) {
-  const match = /(?:무순위|사후|잔여)\D{0,10}?(\d{1,3})\s*차/.exec(String(name ?? ''));
+  const text = String(name ?? '');
+  const match = /(?:무순위|사후|잔여)\D{0,10}?(\d{1,3})\s*차/.exec(text) ?? /\((\d{1,3})\s*차\)\s*$/.exec(text);
   const round = match ? Number(match[1]) : null;
   return round > 0 ? round : null;
 }
