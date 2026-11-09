@@ -139,6 +139,9 @@ export function parseExistingPage(page) {
     name: (props[P.name]?.title ?? []).map((part) => part.plain_text).join(''),
     // 임대 정리에 쓴다(src/rental.js).
     typeLabel: props[P.type]?.select?.name ?? null,
+    // LH 범위 정리에 쓴다(src/lh-scope.js).
+    region: props[P.region]?.select?.name ?? null,
+    source: props[P.source]?.select?.name ?? null,
     link: props[P.link]?.url ?? null,
     walkMinutes: Number.isFinite(walk) && walk >= 0 ? walk : null,
     recommendTrack: props[P.recommendTrack]?.select?.name ?? null,

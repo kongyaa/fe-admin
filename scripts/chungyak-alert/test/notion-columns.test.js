@@ -380,12 +380,243 @@ test('a failed rental archive reaches the error mail after the alerts and the re
   assert.ok(!mail.text.includes('body-secret') && !mail.text.includes('id-LH-old'));
 });
 
+test('a collected, kept notice is updated in place even when its stored type looks like a rental', async () => {
+  // 저장된 유형은 예전 값(임대)이지만 이번 실행에 분양으로 수집되었다. 청약홈 행도 같다.
+  const fake = notionFake({
+    pages: [
+      storedLh('LH-s1', '임대주택 국민임대', '예전 이름', { region: '서울' }),
+      stored('7-7', '공공지원민간임대', '무순위 단지', { start: THU, end: THU }),
+      // 수집되지 않은 임대 행은 그대로 옮긴다.
+      stored('LH-old', '임대주택 행복주택', '행복주택 단지'),
+    ],
+  });
+  const h = harness(fake, { rows: [remainderRow], lhRows: [lhRow('s1', '분양주택', '공공분양', '서울 공공분양')] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(archivedIds(fake), ['id-LH-old']);
+  for (const id of ['id-LH-s1', 'id-7-7']) assert.ok(rowWrites(fake).some((call) => call.method === 'PATCH' && call.path === `/pages/${id}`), id);
+  assert.equal(fake.state.created, 0);
+  assert.ok(summary(h).includes(' rental_archived=1 '), summary(h));
+
+  // dry-run 후보 수도 같다.
+  const dry = harness(notionFake({ pages: [storedLh('LH-s1', '임대주택 국민임대', '예전 이름', { region: '서울' }), stored('LH-old', '임대주택 행복주택', '행복주택 단지')] }), { rows: [remainderRow], lhRows: [lhRow('s1', '분양주택', '공공분양', '서울 공공분양')] });
+  await run({ argv: ['--dry-run'], env: dry.env, deps: dry.deps });
+  assert.ok(dry.logs.includes('dry-run rental_archive_candidates=1'), dry.logs.join('|'));
+});
+
 test('with excludeRental off rental notices are stored as before and nothing is archived', async () => {
   const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
   const fake = rentalWorld();
-  const h = harness(fake, { ...rentalSources, config: { ...fileConfig, excludeRental: false } });
+  // LH 범위 필터도 임대 LH 공고를 빼므로 함께 끈다. 켜 둔 경우는 아래 LH 범위 테스트가 본다.
+  const h = harness(fake, { ...rentalSources, config: { ...fileConfig, excludeRental: false, lh: { ...fileConfig.lh, filterSaleArea: false } } });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.deepEqual(archivedIds(fake), []);
   for (const key of ['LH-r1', '9-9', 'LH-s1', '7-7']) assert.ok(writtenKeys(fake).includes(key), key);
   assert.ok(summary(h).includes(' rental_skipped=0 '));
+});
+
+// ---------- LH 범위(분양, 대상 지역) ----------
+const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+const lhSaleRow = (id, name, cnp = '서울특별시', upper = '분양주택', detail = '공공분양') => ({ ...lhRow(id, upper, detail, name), CNP_CD_NM: cnp });
+const storedLh = (key, typeLabel, name, { region = null, interest = false, start = '2026-11-10', end = '2026-12-01', source = 'LH' } = {}) => page(key, {
+  start,
+  end,
+  extra: {
+    유형: { select: typeLabel ? { name: typeLabel } : null },
+    주택명: { title: [{ plain_text: name }] },
+    공급지역: { select: region ? { name: region } : null },
+    소스: { select: source ? { name: source } : null },
+    관심: { checkbox: interest },
+  },
+});
+// 로그와 오류 메일에 나오면 안 되는 공고 이름
+const LH_NAMES = ['하남 교산', '고양창릉', '부산 공공분양', '선택형', '부산 관심', '광주 공공분양', '어느 공고'];
+const busanRemainder = { ...remainderRow, HOUSE_MANAGE_NO: '8', PBLANC_NO: '8', HOUSE_NM: '부산 무순위 단지', SUBSCRPT_AREA_CODE_NM: '부산', HSSPLY_ADRES: '부산광역시 해운대구 우동 1' };
+const lhWorld = (extra = {}) => notionFake({
+  pages: [
+    // 수집되지 않았고 저장된 값으로 지역 밖인 행 → 옮긴다.
+    storedLh('LH-busan', '분양주택 공공분양', '부산 공공분양 단지', { region: '부산' }),
+    // 이번 실행에 지역 밖으로 빠진 공고의 행. 저장된 값은 읽을 수 없어도 옮긴다.
+    storedLh('LH-goyang', null, '고양창릉 A4 공공분양'),
+    // 지역 밖이지만 관심을 체크한 행 → 남기고 센다.
+    storedLh('LH-keep', '분양주택 공공분양', '부산 관심 단지', { region: '부산', interest: true }),
+    // 이번에 선택형으로 빠질 공고지만 관심을 체크했다 → 보통 공고처럼 갱신한다.
+    storedLh('LH-select', '분양주택 공공분양', '뉴홈 선택형 공고', { region: '서울', interest: true }),
+    // 공급지역이 없어 지역을 판정할 수 없는 행 → 남긴다.
+    storedLh('LH-noregion', '분양주택 공공분양', '어느 공고'),
+    // 이름이 없어 키로 저장된 행 → 남긴다.
+    storedLh('LH-nameless', null, 'LH-nameless', { region: '광주' }),
+    // 범위 안 행
+    storedLh('LH-seoul', '분양주택 공공분양', '서울 공공분양', { region: '서울' }),
+    // 청약홈 행은 지역과 관계없이 건드리지 않는다.
+    storedLh('5-5', 'APT', '광주 공공분양 단지', { region: '광주', source: '청약홈' }),
+  ],
+  ...extra,
+});
+const lhSources = {
+  rows: [remainderRow, busanRemainder],
+  lhRows: [
+    lhSaleRow('seoul', '서울 공공분양'),
+    lhSaleRow('gyosan', '하남 교산 A1 공공분양', '경기도'),
+    lhSaleRow('goyang', '고양창릉 A4 공공분양', '경기도'),
+    lhSaleRow('busan2', '부산 공공분양 2단지', '부산광역시'),
+    lhSaleRow('select', '뉴홈 선택형 공고'),
+    lhSaleRow('select2', '뉴홈 선택형 공고 2'),
+    // 유형을 읽을 수 없는 서울 공고는 남긴다.
+    lhSaleRow('blank', '유형 없는 공고', '서울특별시', '', ''),
+  ],
+};
+
+test('out-of-scope LH notices are skipped and their stored rows go to the trash after the alerts', async () => {
+  const fake = lhWorld();
+  const h = harness(fake, lhSources);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(summary(h).includes(' lh_out_of_scope_skipped=3 lh_out_of_scope_type=1 lh_out_of_scope_area=2 lh_out_of_scope_archived=2 lh_out_of_scope_kept_interest=2'), summary(h));
+  assert.deepEqual(archivedIds(fake), ['id-LH-busan', 'id-LH-goyang']);
+  const keys = writtenKeys(fake);
+  for (const key of ['LH-seoul', 'LH-gyosan', 'LH-blank', 'LH-select', '7-7', '8-8']) assert.ok(keys.includes(key), key);
+  for (const key of ['LH-goyang', 'LH-busan2', 'LH-select2', 'LH-busan', 'LH-keep', 'LH-noregion', 'LH-nameless', '5-5']) assert.ok(!keys.includes(key), key);
+  // 범위 밖 공고로는 알림을 보내지 않는다. 서울 무순위 로또 알림 한 건만 간다.
+  assert.deepEqual(h.kakao.map((message) => message.text.slice(0, 7)), ['[로또 청약]']);
+  const lastRowWrite = fake.calls.lastIndexOf(rowWrites(fake).at(-1));
+  const firstArchive = fake.calls.findIndex((call) => call.body?.archived === true);
+  assert.ok(lastRowWrite < firstArchive);
+  assert.equal(errorMail(h), undefined);
+  const logs = h.logs.join('\n');
+  for (const name of LH_NAMES) assert.ok(!logs.includes(name), name);
+  assert.ok(!logs.includes('id-'));
+});
+
+test('dry-run counts LH out-of-scope candidates without any write or message', async () => {
+  const fake = lhWorld();
+  const h = harness(fake, lhSources);
+  assert.equal(await run({ argv: ['--dry-run'], env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(writes(fake), []);
+  assert.equal(h.kakao.length, 0);
+  assert.equal(h.mails.length, 0);
+  assert.ok(h.logs.includes('dry-run lh_out_of_scope_archive_candidates=2'), h.logs.join('|'));
+  assert.ok(summary(h).includes(' lh_out_of_scope_skipped=3 lh_out_of_scope_type=1 lh_out_of_scope_area=2 lh_out_of_scope_archived=0 lh_out_of_scope_kept_interest=2'), summary(h));
+  const logs = h.logs.join('\n');
+  for (const name of LH_NAMES) assert.ok(!logs.includes(name), name);
+});
+
+test('a failed LH archive reaches the error mail after the alerts and the rest are still moved', async () => {
+  const fake = lhWorld({ intercept: (call) => (call.path === '/pages/id-LH-busan' && call.body?.archived ? new Response('body-secret', { status: 403 }) : null) });
+  const h = harness(fake, lhSources);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  // 알림은 이미 나갔다.
+  assert.deepEqual(h.kakao.map((message) => message.text.slice(0, 7)), ['[로또 청약]']);
+  assert.ok(summary(h).includes(' lh_out_of_scope_archived=1 '), summary(h));
+  assert.deepEqual(archivedIds(fake), ['id-LH-busan', 'id-LH-goyang']);
+  const mail = errorMail(h);
+  assert.ok(mail.text.includes('lh_out_of_scope_archive_failed x1'));
+  assert.ok(!mail.text.includes('body-secret') && !mail.text.includes('id-LH-busan'));
+  for (const name of LH_NAMES) assert.ok(!mail.text.includes(name) && !h.logs.join('\n').includes(name), name);
+});
+
+test('with excludeRental off the LH filter still drops LH rental notices and rows', async () => {
+  const fake = rentalWorld();
+  const h = harness(fake, { ...rentalSources, config: { ...fileConfig, excludeRental: false } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // 임대 LH 공고(LH-r1)는 유형으로 빠지고, 저장된 임대 LH 행(LH-old, LH-r1)은 옮긴다. 청약홈 임대는 저장한다.
+  assert.deepEqual(archivedIds(fake), ['id-LH-old', 'id-LH-r1']);
+  for (const key of ['9-9', 'LH-s1', '7-7']) assert.ok(writtenKeys(fake).includes(key), key);
+  assert.ok(!writtenKeys(fake).includes('LH-r1'));
+  assert.ok(summary(h).includes(' lh_out_of_scope_skipped=1 lh_out_of_scope_type=1 lh_out_of_scope_area=0 lh_out_of_scope_archived=2 '), summary(h));
+});
+
+test('every run logs the LH type labels by count, without notice names', async () => {
+  for (const argv of [[], ['--dry-run']]) {
+    const fake = lhWorld();
+    const h = harness(fake, lhSources);
+    await run({ argv, env: h.env, deps: h.deps });
+    const line = h.logs.find((item) => item.startsWith('lh_types '));
+    assert.equal(line, 'lh_types 분양주택/공공분양=6,-/-=1', argv.join(' '));
+    const names = lhSources.lhRows.map((row) => row.PAN_NM);
+    for (const name of names) assert.ok(!line.includes(name), name);
+    // 유형 규칙을 통과한 공고(선택형 둘 제외)의 공급지역별 건수
+    const regionLine = h.logs.find((item) => item.startsWith('lh_sale_regions '));
+    assert.equal(regionLine, 'lh_sale_regions 경기=2,서울=2,부산=1', argv.join(' '));
+    for (const name of names) assert.ok(!regionLine.includes(name), name);
+    for (const name of [...names, ...LH_NAMES]) assert.ok(!h.logs.join('\n').includes(name), name);
+  }
+  // LH 조회가 없으면 none이다.
+  const empty = harness(notionFake(), { rows: [remainderRow] });
+  await run({ env: empty.env, deps: empty.deps });
+  assert.ok(empty.logs.includes('lh_types none'), empty.logs.join('|'));
+  assert.ok(empty.logs.includes('lh_sale_regions none'), empty.logs.join('|'));
+});
+
+test('unknown LH types and 토지임대부 sales are stored; unknown types are counted', async () => {
+  const fake = notionFake();
+  const h = harness(fake, {
+    rows: [remainderRow],
+    lhRows: [
+      lhSaleRow('unknown', '어느 공고', '서울특별시', '공공주택', '기타'),
+      lhSaleRow('unknown-busan', '어느 공고', '부산광역시', '공공주택', '기타'),
+      lhSaleRow('land', '어느 공고', '서울특별시', '분양주택', '토지임대부'),
+      lhSaleRow('land-name', '토지임대부 분양주택', '서울특별시'),
+      // 유형이 토지인 행은 이름에 토지임대부가 있어도 수집 단계에서 빠진다.
+      lhSaleRow('land-plot', '토지임대부 분양주택 용지 공급', '서울특별시', '토지', '공동주택용지'),
+      // 공급지역이 빈 분양 공고는 남기고 센다.
+      lhSaleRow('noregion', '어느 공고', ''),
+    ],
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const keys = writtenKeys(fake);
+  for (const key of ['LH-unknown', 'LH-land', 'LH-land-name', 'LH-noregion']) assert.ok(keys.includes(key), key);
+  for (const key of ['LH-unknown-busan', 'LH-land-plot']) assert.ok(!keys.includes(key), key);
+  assert.ok(summary(h).includes(' rental_skipped=0 '), summary(h));
+  assert.ok(summary(h).includes(' lh_out_of_scope_skipped=1 lh_out_of_scope_type=0 lh_out_of_scope_area=1 '), summary(h));
+  assert.ok(summary(h).includes(' lh_type_unknown=2 lh_region_unknown=1'), summary(h));
+  assert.ok(h.logs.includes('lh_types 공공주택/기타=2,분양주택/공공분양=2,분양주택/토지임대부=1,토지/공동주택용지=1'), h.logs.join('|'));
+  assert.ok(h.logs.includes('lh_sale_regions 서울=3,-=1,부산=1'), h.logs.join('|'));
+});
+
+test('with the LH filter off 토지임대부 types fall back to the old 토지 exclusion at collection', async () => {
+  const fake = notionFake();
+  const h = harness(fake, {
+    rows: [remainderRow],
+    lhRows: [lhSaleRow('land', '어느 공고', '서울특별시', '분양주택', '토지임대부'), lhSaleRow('busan', '어느 공고', '부산광역시')],
+    config: { ...fileConfig, lh: { ...fileConfig.lh, filterSaleArea: false } },
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(!writtenKeys(fake).includes('LH-land'));
+  assert.ok(writtenKeys(fake).includes('LH-busan'));
+});
+
+test('an LH rental with a 토지임대부 name is dropped by the LH filter when excludeRental is off', async () => {
+  const fake = notionFake();
+  const h = harness(fake, {
+    rows: [remainderRow],
+    lhRows: [lhSaleRow('rent', '토지임대부 분양주택 인근 국민임대', '서울특별시', '임대주택', '국민임대')],
+    config: { ...fileConfig, excludeRental: false },
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.ok(!writtenKeys(fake).includes('LH-rent'));
+  assert.ok(summary(h).includes(' rental_skipped=0 '), summary(h));
+  assert.ok(summary(h).includes(' lh_out_of_scope_skipped=1 lh_out_of_scope_type=1 '), summary(h));
+  // 분양이 아니라 지역 건수에 들어가지 않는다.
+  assert.ok(h.logs.includes('lh_sale_regions none'), h.logs.join('|'));
+});
+
+test('a collected, kept LH notice is updated in place even when its stored values look out of scope', async () => {
+  // 저장된 값만 보면 지역 밖(부산)이고 이름에 선택형이 있다. 임대 정리는 저장된 유형을 보므로 임대 아닌 유형으로 둔다.
+  const fake = notionFake({ pages: [storedLh('LH-seoul', '분양주택 공공분양', '예전 뉴홈 선택형 이름', { region: '부산' })] });
+  const h = harness(fake, { rows: [remainderRow], lhRows: [lhSaleRow('seoul', '서울 공공분양')] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(archivedIds(fake), []);
+  // 새로 만들지 않고 저장된 행을 갱신한다.
+  assert.ok(rowWrites(fake).some((call) => call.method === 'PATCH' && call.path === '/pages/id-LH-seoul'));
+  assert.equal(fake.state.created, 1);
+  assert.ok(summary(h).includes(' lh_out_of_scope_archived=0 '), summary(h));
+  assert.ok(summary(h).includes(' rental_archived=0 '), summary(h));
+});
+
+test('with the LH filter off nothing is skipped or archived for scope', async () => {
+  const fake = lhWorld();
+  const h = harness(fake, { ...lhSources, config: { ...fileConfig, lh: { ...fileConfig.lh, filterSaleArea: false } } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(archivedIds(fake), []);
+  for (const key of ['LH-goyang', 'LH-busan2', 'LH-select2']) assert.ok(writtenKeys(fake).includes(key), key);
+  assert.ok(summary(h).includes(' lh_out_of_scope_skipped=0 '), summary(h));
 });

@@ -40,9 +40,12 @@ export function extractPanId(row) {
   return /(?:PAN_ID|panId)["']?\s*[:=]\s*["']?([\w-]+)/.exec(url)?.[1] ?? null;
 }
 
-export function normalizeLh(row, excludeKeywords) {
+// 유형의 keepKeywords(토지임대부 등)는 지우고 excludeKeywords(토지, 상가)를 본다. 이름은 보지 않는다.
+// main.js는 lh.filterSaleArea가 켜져 있을 때만 keepKeywords를 넘긴다.
+export function normalizeLh(row, excludeKeywords, keepKeywords = []) {
   const type = `${row.UPP_AIS_TP_NM ?? ''} ${row.AIS_TP_CD_NM ?? ''}`;
-  if (excludeKeywords.some((word) => type.includes(word))) return null;
+  const rest = keepKeywords.reduce((text, word) => (word ? text.split(word).join(' ') : text), type);
+  if (excludeKeywords.some((word) => rest.includes(word))) return null;
   const panId = extractPanId(row);
   if (!panId) return null;
   const start = normalizeDate(row.PAN_NT_ST_DT ?? row.PAN_DT);
@@ -65,7 +68,8 @@ export function normalizeLh(row, excludeKeywords) {
   });
 }
 
-export async function collectLh({ fetch, key, today, lookbackDays, lookaheadDays, excludeKeywords, sleep }) {
+// onRow는 거르기 전의 원본 행마다 불린다. 유형 값 건수 로그(lh_types)에 쓴다.
+export async function collectLh({ fetch, key, today, lookbackDays, lookaheadDays, excludeKeywords, keepKeywords = [], sleep, onRow = () => {} }) {
   const dotted = (date) => date.replace(/-/g, '.');
   const notices = [];
   let seen = 0;
@@ -86,7 +90,8 @@ export async function collectLh({ fetch, key, today, lookbackDays, lookaheadDays
     }
     const rows = extractRows(body);
     for (const row of rows) {
-      const notice = normalizeLh(row, excludeKeywords);
+      onRow(row);
+      const notice = normalizeLh(row, excludeKeywords, keepKeywords);
       if (notice) notices.push(notice);
     }
     seen += rows.length;
