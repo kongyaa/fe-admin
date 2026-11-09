@@ -436,8 +436,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   }
   // 이미 저장된 임대 행은 이번 실행에서 다루지 않고 알림 뒤에 휴지통으로 옮긴다. 관심 체크도 예외가 아니다.
   // 이번 실행에 임대로 빠진 공고의 행은 저장된 유형과 관계없이 옮긴다.
+  // 이번 실행에 수집되어 남은(임대가 아닌) 공고의 행은 저장된 값으로 다시 보지 않는다. 낡은 유형 때문에 옮겼다가 다시 만들지 않게 한다.
   const rentalKeys = new Set(collected.filter((notice) => isRental(notice, config)).map((notice) => notice.key));
-  const rentalRows = [...(dryRunRows ?? existing).values()].filter((row) => rentalKeys.has(row.key) || isRental(row, config));
+  const rentalKeptKeys = new Set(notices.map((notice) => notice.key));
+  const rentalRows = [...(dryRunRows ?? existing).values()].filter((row) => rentalKeys.has(row.key) || (!rentalKeptKeys.has(row.key) && isRental(row, config)));
   for (const row of rentalRows) {
     existing.delete(row.key);
     dryRunRows?.delete(row.key);

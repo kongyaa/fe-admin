@@ -19,7 +19,7 @@ function typeText(item) {
   return label === 'LH' ? '' : label;
 }
 
-// 이름의 제외 단어. lh.nameExcludeUnless에 적힌 단어(선택형 → 나눔형, 일반형, 공공분양)가 이름에 함께 있으면 제외하지 않는다.
+// 이름의 제외 단어. lh.nameExcludeUnless에 적힌 단어(선택형 → 나눔형, 일반형)가 이름에 함께 있으면 제외하지 않는다.
 // `뉴:홈 공공분양주택 입주자모집공고(나눔형·선택형)`처럼 분양과 선택형을 함께 모집하는 공고를 남기려는 것이다.
 function nameExcluded(name, lh) {
   return (lh.excludeKeywords ?? []).some((word) => hasWord(name, word) && !hasAny(name, lh.nameExcludeUnless?.[word]));

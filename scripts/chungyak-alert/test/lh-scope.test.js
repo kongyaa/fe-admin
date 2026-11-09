@@ -210,11 +210,11 @@ test('선택형 in a combined 뉴:홈 name is kept when a sale type is named wit
     '하남교산 A2BL 뉴:홈 공공분양주택 입주자모집공고(나눔형·선택형)',
     '하남교산 A2BL 뉴:홈 입주자모집공고(일반형·선택형)',
     '하남교산 A2BL 뉴:홈 입주자모집공고(나눔형, 선택형)',
-    // 이름에 공공분양이 있으면 선택형만 적혀 있어도 남는다(lh.nameExcludeUnless에서 공공분양을 빼면 빠진다).
-    '하남교산 A2BL 뉴:홈 공공분양주택 입주자모집공고(선택형)',
   ];
   for (const name of kept) assert.equal(lhScopeRule(lhNotice(type, name, '경기'), config), null, name);
   const dropped = [
+    // 선택형 단독 공고는 공공분양주택이라고 적혀 있어도 뺀다.
+    '하남교산 A2BL 뉴:홈 공공분양주택 입주자모집공고(선택형)',
     '하남교산 A2BL 뉴:홈 입주자모집공고(선택형)',
     '하남교산 A3BL 뉴:홈 선택형 공공임대주택 입주자모집공고',
   ];

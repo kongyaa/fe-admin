@@ -380,6 +380,29 @@ test('a failed rental archive reaches the error mail after the alerts and the re
   assert.ok(!mail.text.includes('body-secret') && !mail.text.includes('id-LH-old'));
 });
 
+test('a collected, kept notice is updated in place even when its stored type looks like a rental', async () => {
+  // 저장된 유형은 예전 값(임대)이지만 이번 실행에 분양으로 수집되었다. 청약홈 행도 같다.
+  const fake = notionFake({
+    pages: [
+      storedLh('LH-s1', '임대주택 국민임대', '예전 이름', { region: '서울' }),
+      stored('7-7', '공공지원민간임대', '무순위 단지', { start: THU, end: THU }),
+      // 수집되지 않은 임대 행은 그대로 옮긴다.
+      stored('LH-old', '임대주택 행복주택', '행복주택 단지'),
+    ],
+  });
+  const h = harness(fake, { rows: [remainderRow], lhRows: [lhRow('s1', '분양주택', '공공분양', '서울 공공분양')] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(archivedIds(fake), ['id-LH-old']);
+  for (const id of ['id-LH-s1', 'id-7-7']) assert.ok(rowWrites(fake).some((call) => call.method === 'PATCH' && call.path === `/pages/${id}`), id);
+  assert.equal(fake.state.created, 0);
+  assert.ok(summary(h).includes(' rental_archived=1 '), summary(h));
+
+  // dry-run 후보 수도 같다.
+  const dry = harness(notionFake({ pages: [storedLh('LH-s1', '임대주택 국민임대', '예전 이름', { region: '서울' }), stored('LH-old', '임대주택 행복주택', '행복주택 단지')] }), { rows: [remainderRow], lhRows: [lhRow('s1', '분양주택', '공공분양', '서울 공공분양')] });
+  await run({ argv: ['--dry-run'], env: dry.env, deps: dry.deps });
+  assert.ok(dry.logs.includes('dry-run rental_archive_candidates=1'), dry.logs.join('|'));
+});
+
 test('with excludeRental off rental notices are stored as before and nothing is archived', async () => {
   const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
   const fake = rentalWorld();
