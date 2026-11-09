@@ -395,8 +395,12 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     dryRunRows?.delete(row.key);
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0 };
   const records = [];
+  // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
+  const unapplicableRows = [];
+  // --print에 표시를 붙여 보여 줄, 저장하지 않고 뺀 공고
+  const unapplicableNotices = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
   const presale = createPresaleClient({ fetch: fetchFn, key: dataKey, sleep, now, budgetMs: config.market.presale.budgetMs, onSoft: addSoftError });
@@ -456,6 +460,20 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       const stored = previous ?? dryRunRows?.get(notice.key);
       if (stored?.lotto === STATUS.LOTTO && [STATUS.NOT, STATUS.OUT_OF_SCOPE].includes(evaluation.status)) counts.lotto_demoted += 1;
     }
+    // 신청할 수 없는 공고(src/recommend.js의 unapplicableReason)는 저장하지 않고 로또·주간 알림에서도 뺀다. 건수와 사유 종류만 남긴다.
+    // 관심을 체크한 행은 보통 공고처럼 갱신하고 로또·주간 알림도 그대로 둔다. 접수가 끝나면 주간 정리가 옮긴다.
+    const unapplicable = evaluation?.unapplicable ?? null;
+    if (unapplicable) {
+      const stored = previous ?? dryRunRows?.get(notice.key);
+      if (!stored?.interest) {
+        counts.unapplicable_skipped += 1;
+        counts[`unapplicable_${unapplicable}`] += 1;
+        if (stored) unapplicableRows.push(stored);
+        unapplicableNotices.push({ notice, status: evaluation.status, unapplicable });
+        continue;
+      }
+      counts.unapplicable_kept_interest += 1;
+    }
     const record = {
       notice,
       status: evaluation?.status ?? carriedStatus(notice, previous, config),
@@ -464,6 +482,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       shortReason: evaluation?.shortReason ?? evaluation?.reason ?? null,
       urgentDate: previous?.urgentDate ?? null,
       pageId: previous?.id ?? null,
+      // 관심 체크로 남긴 신청할 수 없는 공고. --print 표시에만 쓴다.
+      unapplicable,
     };
     if (store) {
       try {
@@ -477,6 +497,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
     records.push(record);
   }
+  // 방어용이다. 접수 종료일이 지난 행은 판별 전에 건너뛰어 지금은 주간 정리 대상과 겹치지 않지만, 겹치더라도 두 번 옮기지 않게 뺀다.
+  for (const row of unapplicableRows) existing.delete(row.key);
 
   // 주간 메일은 발송 기록이 필요해 Notion이 정상일 때만 보낸다.
   let weeklyDone = false;
@@ -535,6 +557,21 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
+  // 신청할 수 없는 공고의 저장된 행을 휴지통으로 옮긴다. 이번 실행에 수집된 공고의 행만이고, 관심 체크 행은 위에서 남겼다.
+  // 임대 행처럼 알림 뒤라 실패해도 발송을 막지 않는다.
+  if (store) {
+    for (const row of unapplicableRows) {
+      try {
+        await store.archivePage(row.id);
+        counts.unapplicable_archived += 1;
+      } catch (error) {
+        notionFailed = true;
+        addError('unapplicable_archive_failed');
+        addError(safeError(error));
+      }
+    }
+  }
+
   if (flags.dryRun) {
     const lotto = records.filter((record) => record.status === STATUS.LOTTO).length;
     const urgent = selectUrgent(records, today, config.alertRegions);
@@ -545,10 +582,14 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     log(`dry-run lotto=${lotto} urgent_candidates=${urgent.length}${interest}`);
     // 휴지통으로 옮길 저장된 임대 행 수. Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run rental_archive_candidates=${rentalRows.length}`);
+    // 휴지통으로 옮길 신청할 수 없는 공고의 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
+    if (dryRunRows) log(`dry-run unapplicable_archive_candidates=${unapplicableRows.length}`);
   }
   if (flags.print) {
-    for (const { notice, status } of records) {
-      log(`${status ?? '-'} | ${notice.region ?? '-'} | ${notice.typeLabel} | ${notice.name} | ${notice.overallStart ?? '-'} ~ ${notice.overallEnd ?? '-'}`);
+    // 로컬 조회 전용이다(Actions에서는 꺼진다). 신청할 수 없는 공고도 표시를 붙여 보여 준다.
+    for (const { notice, status, unapplicable } of [...records, ...unapplicableNotices]) {
+      const mark = unapplicable ? ` (unapplicable:${unapplicable})` : '';
+      log(`${status ?? '-'} | ${notice.region ?? '-'} | ${notice.typeLabel} | ${notice.name} | ${notice.overallStart ?? '-'} ~ ${notice.overallEnd ?? '-'}${mark}`);
     }
   }
 

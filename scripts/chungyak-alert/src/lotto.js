@@ -9,7 +9,7 @@ import {
   meetsPriceRule,
   restrictedType,
 } from './market-estimate.js';
-import { recommendTrack } from './recommend.js';
+import { recommendTrack, unapplicableReason } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
 
@@ -147,6 +147,7 @@ async function readPresale(getPresale, code, months) {
 // getModels/getTrades 실패는 판정을 막지 않고 onError로 모은다. getPresale과 aptInfo는 실패해도 신뢰도만 낮춘다.
 // 판정에 추천 전형을 붙인다. 프로필이 없으면 recommendation 필드를 두지 않아 Notion의 추천 열을 건드리지 않는다.
 // 추천 문구는 저장되는 판별 근거에만 붙이고, 카카오톡의 짧은 근거에는 넣지 않는다. 프로필 내용은 어디에도 적지 않는다.
+// 프로필이 있으면 신청할 수 없는 공고인지(unapplicable: null, 'region', 'ended')도 붙인다. 주택형 조회가 실패하면 자료를 모르는 것으로 본다.
 export async function evaluateLotto(notice, options) {
   let models = null;
   let modelsFailed = false;
@@ -160,8 +161,10 @@ export async function evaluateLotto(notice, options) {
     if (!models) modelsFailed = true;
     return models;
   };
-  const evaluation = await evaluatePrice(notice, { ...options, getModels });
-  if (!options.profile) return evaluation;
+  const priced = await evaluatePrice(notice, { ...options, getModels });
+  if (!options.profile) return priced;
+  const unapplicable = unapplicableReason({ notice, models: modelsFailed ? null : models, profile: options.profile, config: options.config, today: options.today });
+  const evaluation = { ...priced, unapplicable };
   // APT 주택형 조회가 실패하면 특별공급 세대를 몰라 저장된 추천을 그대로 둔다. 실행마다 추천이 바뀌지 않게 한다.
   if (notice.kind === 'apt' && modelsFailed) {
     const kept = '(추천: 조회 실패로 이전 값 유지)';
