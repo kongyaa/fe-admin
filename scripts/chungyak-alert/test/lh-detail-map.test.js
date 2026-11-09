@@ -95,6 +95,11 @@ test('schedule rows map to applyhome stage names, unknown labels are kept and th
   assert.equal(lhStageName('1순위 해당지역'), '1순위 해당지역');
   assert.equal(lhStageName('일반공급(1 순위)'), '1순위 일반공급(1 순위)');
   assert.equal(lhStageName('2순위'), '2순위');
+  assert.equal(lhStageName('무순위'), '무순위');
+  assert.equal(lhStageName('잔여세대'), '잔여세대');
+  assert.equal(lhStageName('추가 모집'), '추가 모집');
+  assert.equal(lhStageName('일반공급 추가접수'), '일반공급 추가접수');
+  assert.equal(lhStageName('무순위 1순위'), '1순위 무순위 1순위');
   assert.equal(lhStageName('일반공급'), '1순위 일반공급');
   assert.equal(lhStageName('Extra<b>'), '접수');
   assert.equal(lhStageName(null), '접수');
@@ -112,7 +117,7 @@ test('schedule rows map to applyhome stage names, unknown labels are kept and th
     { name: '특별공급', start: '2026-12-01', end: '2026-12-03' },
     { name: '1순위 일반공급 1순위', start: '2026-12-08', end: '2026-12-09' },
     { name: '2순위 일반공급 2순위', start: '2026-12-10', end: '2026-12-10' },
-    { name: '특별공급 무순위 추가접수', start: '2026-12-15', end: '2026-12-15' },
+    { name: '무순위 추가접수', start: '2026-12-15', end: '2026-12-15' },
   ]);
   assert.equal(winnerDate, '2026-12-27');
   assert.deepEqual(failed, ['ACP_DTTM', 'PZWR_ANC_DT']);

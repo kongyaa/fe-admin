@@ -117,7 +117,7 @@ export const cleanLhLabel = (value) => String(value ?? '').replace(/[^가-힣0-9
 
 // 청약 접수 대상(HS_SBSC_ACP_TRG_CD_NM)을 청약홈과 같은 앞부분을 가진 단계 이름으로 바꾼다. Notion의 특별공급 접수일, 1순위 접수일,
 // 2순위 접수일 열이 이 앞부분으로 채워지고, 같은 앞부분이 여럿이면 가장 이른 시작일이 쓰인다(notion-store의 buildProperties).
-// 1순위·2순위가 있으면 그 순위, 순위 없는 일반공급은 1순위, 그 밖의 이름(신혼부부, 다자녀, 생애최초 등 특별공급 유형)은 특별공급이다.
+// 1순위·2순위가 있으면 그 순위, 무순위·잔여·추가는 이름 그대로, 순위 없는 일반공급은 1순위, 그 밖의 이름(신혼부부, 다자녀, 생애최초 등 특별공급 유형)은 특별공급이다.
 // 이름은 버리지 않고 앞부분 뒤에 붙인다(`특별공급 신혼부부`). 이미 그 앞부분으로 시작하면 그대로 둔다. 이름이 없으면 `접수`다.
 export function lhStageName(label) {
   const name = cleanLhLabel(label);
@@ -126,6 +126,8 @@ export function lhStageName(label) {
   const prefixed = (prefix) => (text.startsWith(prefix) ? name : `${prefix} ${name}`);
   if (text.includes('1순위')) return prefixed('1순위');
   if (text.includes('2순위')) return prefixed('2순위');
+  // 무순위·잔여·추가 접수는 특별공급이 아니라 이름 그대로 단계로 둔다(Notion 순위 열에 넣지 않는다).
+  if (['무순위', '잔여', '추가'].some((word) => text.includes(word))) return name;
   if (text.includes('일반')) return prefixed('1순위');
   return prefixed('특별공급');
 }
