@@ -6,6 +6,8 @@
   "rentalExceptKeywords": ["토지임대부"],
   "lh": {
     "lookaheadDays": 90,
+    "detailMaxCalls": 10,
+    "detailTimeoutMs": 10000,
     "excludeTypeKeywords": ["토지", "상가"],
     "filterSaleArea": true,
     "saleTypes": ["분양주택", "공공분양", "신혼희망타운", "뉴홈", "나눔형", "일반형"],

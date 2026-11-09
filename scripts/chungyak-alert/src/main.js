@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { collectApplyhome, createModelLookup } from './sources/applyhome.js';
 import { collectLh } from './sources/lh.js';
+import { createLhDetailClient, probeLhSchemas } from './sources/lh-detail.js';
 import { createAptInfoClient } from './sources/apt-info.js';
 import { createMolitClient, createPresaleClient } from './sources/molit.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
@@ -451,6 +452,16 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     existing.delete(row.key);
     dryRunRows?.delete(row.key);
   }
+  // LH 상세·공급 API 응답 구조 조사. 범위 안 LH 공고마다 두 API를 lh.detailMaxCalls까지 부르고, 모든 모드에서 읽기만 한다.
+  // 결과는 저장, 알림, 판별에 쓰지 않고 필드 이름만 로그(lh_detail_schema, lh_supply_schema)에 남긴다. 실패는 soft로만 센다.
+  const lhDetail = createLhDetailClient({
+    fetch: fetchFn,
+    key: dataKey,
+    sleep,
+    limits: { maxCalls: config.lh.detailMaxCalls ?? 0, timeoutMs: config.lh.detailTimeoutMs ?? 10000 },
+    onSoft: addSoftError,
+  });
+  if (dataKey) await probeLhSchemas(lhScope.notices.filter((notice) => isLhItem(notice) && !lhScopeRule(notice, config)), lhDetail);
 
   const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts };
   const records = [];
@@ -676,6 +687,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`lh_types ${formatLhTypes(lhTypeCounts) || 'none'}`);
   // 유형 규칙을 통과한 LH 공고의 공급지역별 건수. 지역 값 형식을 확인하는 용도이고 지역 이름만 남긴다.
   log(`lh_sale_regions ${formatLhTypes(lhScope.saleRegions) || 'none'}`);
+  // LH 상세·공급 응답의 블록과 필드 이름. 값은 남기지 않는다(src/sources/lh-detail.js의 formatSchemaLine).
+  for (const line of lhDetail.schemaLines()) log(line);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);

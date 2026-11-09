@@ -40,6 +40,16 @@ export function extractPanId(row) {
   return /(?:PAN_ID|panId)["']?\s*[:=]\s*["']?([\w-]+)/.exec(url)?.[1] ?? null;
 }
 
+// 상세·공급 API(src/sources/lh-detail.js)의 요청 값. 목록 응답 행의 값을 바꾸지 않고 둔다. 없으면 null이다.
+// PAN_ID만 행에 없을 때 DTL_URL에서 읽은 값을 쓴다. Notion에는 쓰지 않는다(notion-store의 buildProperties가 읽지 않는다).
+export const LH_CODE_FIELDS = ['PAN_ID', 'SPL_INF_TP_CD', 'CCR_CNNT_SYS_DS_CD', 'UPP_AIS_TP_CD', 'AIS_TP_CD'];
+
+export function extractLhCodes(row, panId = extractPanId(row)) {
+  const codes = Object.fromEntries(LH_CODE_FIELDS.map((field) => [field, row[field] ?? null]));
+  codes.PAN_ID ??= panId;
+  return codes;
+}
+
 // 유형의 keepKeywords(토지임대부 등)는 지우고 excludeKeywords(토지, 상가)를 본다. 이름은 보지 않는다.
 // main.js는 lh.filterSaleArea가 켜져 있을 때만 keepKeywords를 넘긴다.
 export function normalizeLh(row, excludeKeywords, keepKeywords = []) {
@@ -63,6 +73,7 @@ export function normalizeLh(row, excludeKeywords, keepKeywords = []) {
     url: row.DTL_URL ?? null,
     noticeStatus: row.PAN_SS ?? null,
     flags: {},
+    lhCodes: extractLhCodes(row, panId),
     // 날짜가 없으면 단계를 만들지 않아 알림 대상에서 빠진다.
     stages: start && end ? [{ name: '공고~마감', start, end }] : [],
   });
