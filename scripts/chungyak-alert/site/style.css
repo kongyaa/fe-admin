@@ -111,7 +111,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .tile-name { white-space: nowrap; }
 .tile b { font-family: var(--font-mono); font-size: .8rem; font-weight: 500; }
-.tile.zero { color: var(--muted); opacity: .7; }
+.tile.zero { color: var(--muted); } /* 불투명도를 낮추면 글자 대비가 4.5:1 아래로 떨어진다 */
 .tile.has { background: var(--zone-soft); border-color: var(--zone); }
 .tile.hot { background: var(--line-soft); border-color: var(--line); }
 .tile[aria-pressed="true"] { outline: 2px solid var(--plan); outline-offset: 1px; font-weight: 700; }
@@ -238,3 +238,5 @@ button, input, select { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: no-preference) {
   .item, .tile, .town, .seg button { transition: background-color .15s, border-color .15s; }
 }
+/* 테마를 바꾸는 순간에는 전환 효과를 끈다(배경만 천천히 바뀌어 글자색과 어긋나지 않게, app.js switchTheme) */
+html.theme-switching *, html.theme-switching *::before, html.theme-switching *::after { transition: none !important; }

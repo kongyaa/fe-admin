@@ -9,7 +9,7 @@ const pipeline = await import('../src/pipeline/expected-window.js');
 const {
   BUCKET_ORDER, BUCKET_INFO, bucketOf, compareProjects, dataFile, ganttBars, idFromHash, kstYmd, latestAnnounce, matchesFilters,
   monthsBetween, safeHttpUrl, shortDistrict, sortProjects, spanOf, tileClass, tileStats, whenMatches, windowLabel, windowRange,
-  THEME_KEY, THEME_CHOICES, normalizeTheme, colorSchemeFor, readTheme, writeTheme,
+  THEME_KEY, THEME_CHOICES, normalizeTheme, colorSchemeFor, readTheme, writeTheme, applyTheme, isThemeStorageKey,
 } = app;
 
 const today = '2026-11';
@@ -267,12 +267,61 @@ function fakeStorage(initial = {}, { blocked = false } = {}) {
   };
 }
 
-test('normalizeTheme: only light/dark are kept, anything else is system', () => {
+test('normalizeTheme: only exact light/dark are kept, anything else is system (same rule as theme-init.js)', () => {
   assert.deepEqual(THEME_CHOICES, ['system', 'light', 'dark']);
   assert.equal(normalizeTheme('light'), 'light');
   assert.equal(normalizeTheme('dark'), 'dark');
-  assert.equal(normalizeTheme(' DARK '), 'dark');
-  for (const v of ['system', '', null, undefined, 'auto', 'blue', 1, {}]) assert.equal(normalizeTheme(v), 'system', String(v));
+  for (const v of ['system', ' DARK ', 'Dark', 'light ', '', null, undefined, 'auto', 'blue', 1, {}]) {
+    assert.equal(normalizeTheme(v), 'system', String(v));
+  }
+  // theme-init.js 도 같은 값만 고정한다
+  assert.deepEqual(runThemeInit(fakeStorage({ [THEME_KEY]: ' DARK ' })), { theme: null, scheme: 'light dark' });
+});
+
+/** 가짜 DOM 요소: 속성만 흉내 낸다 */
+function fakeEl(attrs = {}) {
+  const map = new Map(Object.entries(attrs));
+  return {
+    map,
+    getAttribute: (k) => (map.has(k) ? map.get(k) : null),
+    setAttribute: (k, v) => map.set(k, String(v)),
+    removeAttribute: (k) => map.delete(k),
+  };
+}
+
+test('applyTheme: data-theme add/remove, color-scheme meta, aria-pressed sync', () => {
+  const root = fakeEl();
+  const meta = fakeEl({ content: 'light dark' });
+  const buttons = THEME_CHOICES.map((choice) => fakeEl({ 'data-theme-choice': choice, 'aria-pressed': String(choice === 'system') }));
+  const pressed = () => buttons.filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.getAttribute('data-theme-choice'));
+
+  assert.equal(applyTheme('dark', { root, meta, buttons }), 'dark');
+  assert.equal(root.getAttribute('data-theme'), 'dark');
+  assert.equal(meta.getAttribute('content'), 'dark');
+  assert.deepEqual(pressed(), ['dark']);
+
+  assert.equal(applyTheme('light', { root, meta, buttons }), 'light');
+  assert.equal(root.getAttribute('data-theme'), 'light');
+  assert.equal(meta.getAttribute('content'), 'light');
+  assert.deepEqual(pressed(), ['light']);
+
+  assert.equal(applyTheme('system', { root, meta, buttons }), 'system');
+  assert.equal(root.map.has('data-theme'), false);
+  assert.equal(meta.getAttribute('content'), 'light dark');
+  assert.deepEqual(pressed(), ['system']);
+
+  // 모르는 값은 시스템. 메타·버튼이 없어도 예외 없이 root 만 맞춘다
+  root.setAttribute('data-theme', 'dark');
+  assert.equal(applyTheme('blue', { root, meta: null }), 'system');
+  assert.equal(root.map.has('data-theme'), false);
+});
+
+test('isThemeStorageKey: theme key or a full clear only', () => {
+  assert.equal(isThemeStorageKey(THEME_KEY), true);
+  assert.equal(isThemeStorageKey(null), true); // localStorage.clear()
+  assert.equal(isThemeStorageKey('other-key'), false);
+  assert.equal(isThemeStorageKey(undefined), false);
+  assert.equal(isThemeStorageKey(''), false);
 });
 
 test('colorSchemeFor matches the color-scheme meta values', () => {
