@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { STATUS, evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
+import { STATUS, evaluateLotto, keepPreviousLotto, parseRemainderRound } from '../src/lotto.js';
 import { estimateBestMargin } from '../src/market-estimate.js';
 import { createMolitClient } from '../src/sources/molit.js';
 
@@ -298,4 +298,133 @@ test('MOLIT failure gives 판별 불가, and a previous 로또 is kept', async (
   assert.equal(keepPreviousLotto(evaluation, STATUS.LOTTO).status, STATUS.LOTTO);
   assert.equal(keepPreviousLotto(evaluation, STATUS.NOT).status, STATUS.UNDETERMINED);
   assert.equal(keepPreviousLotto({ status: STATUS.NOT }, STATUS.LOTTO).status, STATUS.NOT);
+});
+
+// 조건형 로또 후보의 가격 확인. 공고명과 거래는 모두 합성 값이다.
+const remainder = (name = '합성단지 무순위') => apt({ kind: 'remainder', houseSecd: '04', name });
+const capped = () => apt({ flags: { priceCap: true, publicDistrict: false } });
+
+test('trigger with a confident non-negative margin is 로또 with the price text', async () => {
+  // 109200 - 100000 - 1500 - 3300 = 4400. 가격 기준(3억, 20%)에는 못 미치지만 마진이 0 이상이다.
+  for (const notice of [remainder(), capped()]) {
+    const result = await evaluate(notice, { data: two(5, 1300) });
+    assert.equal(result.confidence, '중');
+    assert.equal(result.margin, 4400);
+    assert.equal(result.status, STATUS.LOTTO);
+    assert.ok(/^(수도권 무순위·잔여세대|분양가상한제 적용); 안전 마진 0\.4억/.test(result.reason), result.reason);
+  }
+});
+
+test('trigger with a confident negative margin is 아님 with the no-advantage reason', async () => {
+  const result = await evaluate(remainder(), { data: two(5, 1100) });
+  assert.equal(result.confidence, '중');
+  assert.equal(result.margin, -12400);
+  assert.equal(result.status, STATUS.NOT);
+  assert.ok(result.reason.startsWith('수도권 무순위·잔여세대 해당이나 시세 대비 이점 없음; 안전 마진 -1.2억'), result.reason);
+  assert.ok(result.shortReason.startsWith('수도권 무순위·잔여세대 해당이나 시세 이점 없음; 안전 마진 -1.2억'), result.shortReason);
+  assert.ok(!result.shortReason.includes('비교 단지'));
+
+  const district = await evaluate(apt({ flags: { priceCap: false, publicDistrict: true } }), { data: two(5, 1100) });
+  assert.equal(district.status, STATUS.NOT);
+  assert.ok(district.reason.startsWith('공공주택지구 해당이나 시세 대비 이점 없음; '));
+});
+
+test('trigger with a 하 estimate or no estimate stays 로또', async () => {
+  const weak = await evaluate(remainder(), { data: trades(5, 1100) });
+  assert.equal(weak.confidence, '하');
+  assert.ok(weak.margin < 0);
+  assert.equal(weak.status, STATUS.LOTTO);
+  assert.ok(weak.reason.startsWith('수도권 무순위·잔여세대; 안전 마진'));
+
+  const none = await evaluate(capped(), { data: [] });
+  assert.equal(none.estimate, null);
+  assert.equal(none.status, STATUS.LOTTO);
+  assert.equal(none.reason, '분양가상한제 적용');
+});
+
+test('불법행위 재공급 stays 로또 with a confident negative margin unless its price check is turned on', async () => {
+  const resupply = apt({ kind: 'remainder', houseSecd: '06', name: '합성단지 재공급(14차)' });
+  assert.equal(config.lotto.triggerPriceCheck.resupply, false);
+  const result = await evaluate(resupply, { data: two(5, 1100) });
+  assert.equal(result.confidence, '중');
+  assert.equal(result.margin, -12400);
+  assert.equal(result.status, STATUS.LOTTO);
+  assert.ok(result.reason.startsWith('수도권 불법행위 재공급; '));
+
+  const checked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, resupply: true } };
+  assert.equal((await evaluate(resupply, { data: two(5, 1100), overrides: checked })).status, STATUS.NOT);
+  // 반대로 끄면 예전처럼 시세와 무관하게 로또다.
+  const unchecked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, remainder: false } };
+  assert.equal((await evaluate(remainder(), { data: two(5, 1100), overrides: unchecked })).status, STATUS.LOTTO);
+});
+
+test('repeated 무순위 rounds need a confident estimate', async () => {
+  assert.equal(config.lotto.remainderMaxRound, 3);
+  const repeated = remainder('합성단지 무순위(사후)(14차)');
+
+  const weak = await evaluate(repeated, { data: trades(5, 1100) });
+  assert.equal(weak.confidence, '하');
+  assert.equal(weak.status, STATUS.NOT);
+  assert.equal(weak.repeatedRound, 14);
+  assert.ok(weak.reason.startsWith('수도권 무순위·잔여세대 14차 반복 공급; 안전 마진 -1.2억'), weak.reason);
+  assert.ok(weak.shortReason.startsWith('수도권 무순위·잔여세대 14차 반복 공급; 안전 마진'));
+
+  const none = await evaluate(repeated, { data: [] });
+  assert.equal(none.status, STATUS.NOT);
+  assert.equal(none.reason, '수도권 무순위·잔여세대 14차 반복 공급; 시세 추정 없음(실거래 표본 부족)');
+  assert.equal(none.shortReason, '수도권 무순위·잔여세대 14차 반복 공급; 시세 추정 없음');
+
+  // 가격 기준을 넘으면 그대로 로또다. 신뢰할 수 있는 양수 마진도 로또다.
+  const rich = await evaluate(repeated, { data: two(5, 2200) });
+  assert.equal(rich.confidence, '중');
+  assert.equal(rich.margin, 80000);
+  assert.equal(rich.status, STATUS.LOTTO);
+  assert.equal((await evaluate(repeated, { data: two(5, 1300) })).status, STATUS.LOTTO);
+  assert.equal((await evaluate(repeated, { data: two(5, 1100) })).status, STATUS.NOT);
+
+  // 기준 차수 미만이거나 끄면 신뢰도 하에서도 로또다.
+  assert.equal((await evaluate(remainder('합성단지 무순위(2차)'), { data: trades(5, 1100) })).status, STATUS.LOTTO);
+  assert.equal((await evaluate(repeated, { data: [], overrides: { remainderMaxRound: null } })).status, STATUS.LOTTO);
+});
+
+test('an unknown round keeps the 하 or no-estimate rule', async () => {
+  for (const name of ['합성단지 무순위', '합성단지(14차)', '', undefined]) {
+    const weak = await evaluate(remainder(name), { data: trades(5, 1100) });
+    assert.equal(weak.status, STATUS.LOTTO, String(name));
+    assert.equal(weak.repeatedRound, undefined);
+    assert.equal((await evaluate(remainder(name), { data: [] })).status, STATUS.LOTTO, String(name));
+  }
+});
+
+test('parseRemainderRound reads the round only after 무순위, 사후 or 잔여', () => {
+  assert.equal(parseRemainderRound('합성단지 무순위(사후)(14차)'), 14);
+  assert.equal(parseRemainderRound('합성단지 사후무순위 3차'), 3);
+  assert.equal(parseRemainderRound('합성단지 무순위 14 차'), 14);
+  assert.equal(parseRemainderRound('합성단지 잔여세대(5차)'), 5);
+  assert.equal(parseRemainderRound('합성단지 2차 무순위(사후)(3차)'), 3);
+  // 키워드 없는 차수는 단지 차수일 수 있어 모른다.
+  assert.equal(parseRemainderRound('합성단지(2차)'), null);
+  assert.equal(parseRemainderRound('합성단지 2차 무순위(사후)'), null);
+  assert.equal(parseRemainderRound('합성단지 무순위 2026년 1차'), null);
+  assert.equal(parseRemainderRound('합성단지 무순위(0차)'), null);
+  assert.equal(parseRemainderRound(''), null);
+  assert.equal(parseRemainderRound(null), null);
+  assert.equal(parseRemainderRound(undefined), null);
+});
+
+test('a previous 로또 is dropped by a confident no-advantage or a repeated round', async () => {
+  const confident = await evaluate(remainder(), { data: two(5, 1100) });
+  assert.equal(keepPreviousLotto(confident, STATUS.LOTTO).status, STATUS.NOT);
+
+  // 반복 공급의 아님은 신뢰도 하 추정이 있어도 이전 로또를 유지하지 않는다. 추정이 없을 때와 같다.
+  const weakRound = await evaluate(remainder('합성단지 무순위(사후)(14차)'), { data: trades(5, 1100) });
+  assert.equal(weakRound.confidence, '하');
+  assert.equal(keepPreviousLotto(weakRound, STATUS.LOTTO).status, STATUS.NOT);
+  const noneRound = await evaluate(remainder('합성단지 무순위(사후)(14차)'), { data: [] });
+  assert.equal(keepPreviousLotto(noneRound, STATUS.LOTTO).status, STATUS.NOT);
+
+  // 가격 기준만 보는 공고의 신뢰도 하 아님은 예전처럼 이전 로또를 유지한다.
+  const weakPlain = await evaluate(apt(), { data: trades(5, 1100) });
+  assert.equal(weakPlain.status, STATUS.NOT);
+  assert.equal(keepPreviousLotto(weakPlain, STATUS.LOTTO).status, STATUS.LOTTO);
 });

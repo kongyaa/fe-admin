@@ -21,7 +21,9 @@
     "includeResupply": true,
     "includeArbitrary": false,
     "includePriceCap": true,
-    "includePublicDistrict": true
+    "includePublicDistrict": true,
+    "triggerPriceCheck": { "remainder": true, "resupply": false, "arbitrary": true, "priceCap": true, "publicDistrict": true },
+    "remainderMaxRound": 3
   },
   "recommendation": {
     "localResidenceYears": 2
