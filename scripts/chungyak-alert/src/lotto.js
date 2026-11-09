@@ -264,7 +264,7 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
       lowConfidenceNegative: true,
     };
   }
-  const round = key ==='remainder' ? parseRemainderRound(notice.name) : null;
+  const round = key === 'remainder' ? parseRemainderRound(notice.name) : null;
   const maxRound = maxRoundOf(lotto);
   if (round !== null && maxRound !== null && round >= maxRound) {
     const head = `${label} ${round}차 반복 공급`;

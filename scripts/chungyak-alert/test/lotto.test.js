@@ -698,3 +698,66 @@ test('the 하 margin-rate floor is off when missing or null, and a bad value is 
   assert.equal(looser.status, STATUS.NOT);
   assert.ok(looser.reason.includes('(신뢰도 하, 마진율 ≤ -12.5%)'), looser.reason);
 });
+
+// 주택형이 모두 신뢰도 하(각각 단지 1곳)인 조건형 공고. 059A는 5억, 084A는 15억이다.
+// 059A: 마진 = amount - 50000 - 1500 - 550, 084A: 마진 = amount - 150000 - 1500 - 4950.
+const weakPair = (amount59, amount84) => [
+  ...trades(5, 0, { area: 59, amount: amount59, jibun: 'b1' }),
+  ...trades(5, 0, { area: 84, amount: amount84, jibun: 'a1' }),
+];
+const pairModels = [{ houseType: '059A', area: 59, price: 50000 }, { houseType: '084A', area: 84, price: 150000 }];
+
+test('with only 하 types a price-checked trigger looks at the best margin rate, not the largest margin', async () => {
+  // 059A -3020(-6.04%), 084A -4500(-3%). 금액은 059A가 크지만 마진율은 084A가 높다.
+  const mild = await evaluate(remainder(), { models: pairModels, data: weakPair(49030, 151950) });
+  assert.equal(mild.confidence, '하');
+  assert.equal(mild.margin, -4500);
+  assert.equal(mild.marginRate, -0.03);
+  assert.ok(mild.reason.includes('(084A, 신뢰도 하)'), mild.reason);
+  assert.equal(mild.status, STATUS.LOTTO);
+
+  // 둘 다 -5% 이하면 아님이다. 084A -9000(-6%).
+  const clear = await evaluate(remainder(), { models: pairModels, data: weakPair(49030, 147450) });
+  assert.equal(clear.marginRate, -0.06);
+  assert.equal(clear.status, STATUS.NOT);
+  assert.equal(clear.lowConfidenceNegative, true);
+
+  // 조건 없는 공고는 예전처럼 마진 금액이 큰 059A다.
+  const plain = await evaluate(apt(), { models: pairModels, data: weakPair(49030, 151950) });
+  assert.equal(plain.margin, -3020);
+  assert.ok(plain.reason.includes('(059A, 신뢰도 하)'), plain.reason);
+});
+
+test('estimateBestMargin breaks an all-하 tie by margin rate only when asked, after the price rule', () => {
+  const data = weakPair(49030, 151950);
+  assert.equal(best(pairModels, data).houseType, '059A');
+  const preferred = best(pairModels, data, { preferConfident: true });
+  assert.equal(preferred.houseType, '084A');
+  assert.equal(preferred.confidence, '하');
+
+  // 가격 기준을 넘는 하 주택형이 마진율이 더 높은 다른 하 주택형보다 먼저다.
+  // 084A(20억): 240000 - 200000 - 1500 - 6600 = 31900(3억 넘음, 마진율 약 16%). 059A(3억): 36800 - 30000 - 1500 - 330 = 4970(약 16.6%).
+  const richModels = [{ houseType: '059A', area: 59, price: 30000 }, { houseType: '084A', area: 84, price: 200000 }];
+  const richData = [
+    ...trades(5, 0, { area: 59, amount: 36800, jibun: 'b1' }),
+    ...trades(5, 0, { area: 84, amount: 240000, jibun: 'a1' }),
+  ];
+  const rich = best(richModels, richData, { preferConfident: true });
+  assert.equal(rich.houseType, '084A');
+  assert.equal(rich.margin, 31900);
+  // 059A의 마진율이 더 높아도 가격 기준을 넘는 084A가 먼저다.
+  assert.ok(rich.marginRate < 4970 / 30000);
+});
+
+test('a repeated round keeps a 하 type that meets the price rule over a higher-rate 하 type', async () => {
+  const richModels = [{ houseType: '059A', area: 59, price: 30000 }, { houseType: '084A', area: 84, price: 200000 }];
+  const richData = [
+    ...trades(5, 0, { area: 59, amount: 36800, jibun: 'b1' }),
+    ...trades(5, 0, { area: 84, amount: 240000, jibun: 'a1' }),
+  ];
+  const result = await evaluate(remainder('합성단지 무순위(사후)(14차)'), { models: richModels, data: richData });
+  assert.equal(result.confidence, '하');
+  assert.equal(result.margin, 31900);
+  assert.equal(result.status, STATUS.LOTTO);
+  assert.equal(result.repeatedRound, undefined);
+});
