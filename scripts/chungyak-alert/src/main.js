@@ -11,7 +11,7 @@ import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } f
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
 import { parseProfile } from './recommend.js';
 import { isRental } from './rental.js';
-import { lhScopeRule, storedLhScopeRule } from './lh-scope.js';
+import { formatLhTypes, isUnknownLhType, lhScopeRule, lhTypeLogLabel, storedLhScopeRule } from './lh-scope.js';
 import {
   decodeServiceKey,
   defaultSleep,
@@ -77,10 +77,12 @@ export function dedupeNotices(notices) {
 // 관심을 체크한 행이 있는 공고는 빼지 않고 보통 공고처럼 다룬다. 관심 여부는 실행 시작 때 읽은 값이다.
 // 옮길 행은 이번 실행에 범위 밖으로 빠진 공고의 행과, 수집되지 않았어도 저장된 값으로 범위 밖인 행이다. 관심 행은 남기고 센다.
 export function splitLhScope(notices, rows, config) {
-  const counts = { lh_out_of_scope_skipped: 0, lh_out_of_scope_type: 0, lh_out_of_scope_area: 0, lh_out_of_scope_archived: 0, lh_out_of_scope_kept_interest: 0 };
+  const counts = { lh_out_of_scope_skipped: 0, lh_out_of_scope_type: 0, lh_out_of_scope_area: 0, lh_out_of_scope_archived: 0, lh_out_of_scope_kept_interest: 0, lh_type_unknown: 0 };
   const outKeys = new Set();
   const kept = [];
   for (const notice of notices) {
+    // 모르는 유형은 빼지 않고 지역 규칙만 본다. 건수만 남긴다.
+    if (isUnknownLhType(notice, config)) counts.lh_type_unknown += 1;
     const reason = lhScopeRule(notice, config);
     if (reason) outKeys.add(notice.key);
     if (!reason || rows.get(notice.key)?.interest) {
@@ -337,6 +339,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   let notionFailed = false;
   let applyhomeResult = { notices: [], errors: [], failedAll: true };
   let lhNotices = [];
+  // LH 유형 값별 원본 행 수. 유형 값이 실응답으로 확인되지 않아 매 실행 로그로 본다.
+  const lhTypeCounts = new Map();
   let urgentLost = false;
 
   if (dataKey) {
@@ -356,7 +360,12 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         lookbackDays: config.lookbackDays,
         lookaheadDays: config.lh.lookaheadDays,
         excludeKeywords: config.lh.excludeTypeKeywords,
+        keepKeywords: config.lh.forceSaleKeywords ?? [],
         sleep,
+        onRow: (row) => {
+          const label = lhTypeLogLabel(row);
+          lhTypeCounts.set(label, (lhTypeCounts.get(label) ?? 0) + 1);
+        },
       });
     } catch (error) {
       addError(safeError(error));
@@ -648,6 +657,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} ${umdFormatCounts(molit.stats(), presale.stats())} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   // 추천 기능 상태와 건수만 남긴다. 프로필 내용은 남기지 않는다.
   log(`recommend profile=${profileStatus} recommended=${recommendCounts.recommended} none=${recommendCounts.none}`);
+  // LH 유형 값(`상위/세부`)별 건수. 분류 이름만 남기고 공고 이름은 남기지 않는다(src/lh-scope.js의 lhTypeLogLabel).
+  log(`lh_types ${formatLhTypes(lhTypeCounts) || 'none'}`);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);

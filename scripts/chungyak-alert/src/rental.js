@@ -13,7 +13,9 @@ const SALE_TYPE_WORDS = ['분양주택', '공공분양', '민간분양', '신혼
 export function rentalRule(item, config) {
   if (!config.excludeRental) return null;
   const keywords = config.rentalKeywords ?? [];
-  const label = String(item.typeLabel ?? '').trim();
+  // 토지임대부 분양처럼 임대 단어가 들어 있어도 분양인 말(rentalExceptKeywords)은 지우고 본다.
+  const strip = (value) => (config.rentalExceptKeywords ?? []).reduce((text, word) => (word ? text.split(word).join(' ') : text), String(value ?? ''));
+  const label = strip(item.typeLabel).trim();
   // 청약홈 공공지원민간임대 엔드포인트
   if (item.kind === 'pblrent') return 'kind';
   // LH 상위 유형(UPP_AIS_TP_NM)이 임대주택인 공고. typeLabel은 '상위 유형 세부 유형'이다.
@@ -23,7 +25,7 @@ export function rentalRule(item, config) {
   if (APPLYHOME_SALE_LABELS.has(label)) return null;
   if (SALE_TYPE_WORDS.some((word) => label.includes(word))) return null;
   // 유형으로 정할 수 없을 때만 이름을 본다.
-  if (keywords.some((word) => String(item.name ?? '').includes(word))) return 'name_keyword';
+  if (keywords.some((word) => strip(item.name).includes(word))) return 'name_keyword';
   return null;
 }
 

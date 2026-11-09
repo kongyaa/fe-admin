@@ -439,7 +439,7 @@ const lhSources = {
     lhSaleRow('select', '뉴홈 선택형 공고'),
     lhSaleRow('select2', '뉴홈 선택형 공고 2'),
     // 유형을 읽을 수 없는 서울 공고는 남긴다.
-    lhSaleRow('blank', '유형 없는 공고', '서울특별시', undefined, undefined),
+    lhSaleRow('blank', '유형 없는 공고', '서울특별시', '', ''),
   ],
 };
 
@@ -499,6 +499,44 @@ test('with excludeRental off the LH filter still drops LH rental notices and row
   for (const key of ['9-9', 'LH-s1', '7-7']) assert.ok(writtenKeys(fake).includes(key), key);
   assert.ok(!writtenKeys(fake).includes('LH-r1'));
   assert.ok(summary(h).includes(' lh_out_of_scope_skipped=1 lh_out_of_scope_type=1 lh_out_of_scope_area=0 lh_out_of_scope_archived=2 '), summary(h));
+});
+
+test('every run logs the LH type labels by count, without notice names', async () => {
+  for (const argv of [[], ['--dry-run']]) {
+    const fake = lhWorld();
+    const h = harness(fake, lhSources);
+    await run({ argv, env: h.env, deps: h.deps });
+    const line = h.logs.find((item) => item.startsWith('lh_types '));
+    assert.equal(line, 'lh_types 분양주택/공공분양=6,-/-=1', argv.join(' '));
+    const names = lhSources.lhRows.map((row) => row.PAN_NM);
+    for (const name of names) assert.ok(!line.includes(name), name);
+    for (const name of [...names, ...LH_NAMES]) assert.ok(!h.logs.join('\n').includes(name), name);
+  }
+  // LH 조회가 없으면 none이다.
+  const empty = harness(notionFake(), { rows: [remainderRow] });
+  await run({ env: empty.env, deps: empty.deps });
+  assert.ok(empty.logs.includes('lh_types none'), empty.logs.join('|'));
+});
+
+test('unknown LH types and 토지임대부 sales are stored; unknown types are counted', async () => {
+  const fake = notionFake();
+  const h = harness(fake, {
+    rows: [remainderRow],
+    lhRows: [
+      lhSaleRow('unknown', '어느 공고', '서울특별시', '공공주택', '기타'),
+      lhSaleRow('unknown-busan', '어느 공고', '부산광역시', '공공주택', '기타'),
+      lhSaleRow('land', '어느 공고', '서울특별시', '분양주택', '토지임대부'),
+      lhSaleRow('land-name', '토지임대부 분양주택', '서울특별시', '토지', '토지임대부'),
+    ],
+  });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const keys = writtenKeys(fake);
+  for (const key of ['LH-unknown', 'LH-land', 'LH-land-name']) assert.ok(keys.includes(key), key);
+  assert.ok(!keys.includes('LH-unknown-busan'));
+  assert.ok(summary(h).includes(' rental_skipped=0 '), summary(h));
+  assert.ok(summary(h).includes(' lh_out_of_scope_skipped=1 lh_out_of_scope_type=0 lh_out_of_scope_area=1 '), summary(h));
+  assert.ok(summary(h).includes(' lh_type_unknown=2'), summary(h));
+  assert.ok(h.logs.includes('lh_types 공공주택/기타=2,분양주택/토지임대부=1,토지/토지임대부=1'), h.logs.join('|'));
 });
 
 test('with the LH filter off nothing is skipped or archived for scope', async () => {
