@@ -1823,11 +1823,133 @@ test('a notice with no recommendation clears the stored columns when the profile
   // 일반 1순위 기타지역(11/7)은 있으므로 그 날짜가 추천이다.
   await run({ env: h.env, deps: h.deps });
   assert.deepEqual(h.store.state.upserts[0].properties['추천 접수일'], { date: { start: '2026-11-07' } });
+  // 고른 구분(기타지역)의 접수일이 공고에 없으면 추천은 비우지만 공고는 빼지 않는다.
+  const noDate = harness({ fetch: recommendWorld({ specials: {}, dates: { GNRL_RNK1_ETC_AREA_RCPTDE: '', GNRL_RNK1_ETC_AREA_ENDDE: '' } }), env: { CHUNGYAK_PROFILE: '{"residenceSido":"인천","residenceYears":3,"specialTracks":[]}' } });
+  await run({ env: noDate.env, deps: noDate.deps });
+  assert.deepEqual(noDate.store.state.upserts[0].properties['추천 전형'], { select: null });
+  assert.deepEqual(noDate.store.state.upserts[0].properties['추천 접수일'], { date: null });
+  assert.ok(noDate.logs.includes('recommend profile=ok recommended=0 none=1'));
+  assert.ok(summaryOf(noDate).includes(' unapplicable_skipped=0 '), summaryOf(noDate));
+  // 거주 시도로 대상이 아닌 공고는 추천을 비우는 대신 저장하지 않는다.
   const outside = harness({ fetch: recommendWorld(), env: { CHUNGYAK_PROFILE: '{"residenceSido":"부산","residenceYears":5}' } });
   await run({ env: outside.env, deps: outside.deps });
-  assert.deepEqual(outside.store.state.upserts[0].properties['추천 전형'], { select: null });
-  assert.deepEqual(outside.store.state.upserts[0].properties['추천 접수일'], { date: null });
+  assert.deepEqual(outside.store.state.upserts, []);
   assert.ok(outside.logs.includes('recommend profile=ok recommended=0 none=1'));
+  assert.ok(summaryOf(outside).includes(' unapplicable_skipped=1 unapplicable_region=1 unapplicable_ended=0 '), summaryOf(outside));
+});
+
+// ---------- 신청할 수 없는 공고 ----------
+// 서울 APT이고 실거래가 높아 로또다. 특별공급 11/3, 1순위 11/4, 2순위 기타지역 THU(11/5)라
+// 프로필이 없으면 2순위 접수일에 로또 알림이 가고, 인천 거주 가짜 프로필(PROFILE_JSON)에는 신청할 전형이 모두 끝난 공고다.
+const summaryOf = (h) => h.logs.find((line) => line.startsWith('collected='));
+const ENDED_DATES = {
+  SPSPLY_RCEPT_BGNDE: '2026-11-03', SPSPLY_RCEPT_ENDDE: '2026-11-03',
+  GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-04', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-04',
+  GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-04', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-04',
+  GNRL_RNK2_ETC_AREA_RCPTDE: THU, GNRL_RNK2_ETC_AREA_ENDDE: THU,
+};
+const endedRow = (no = '8', name = '끝난공고단지') => aptRow({ HOUSE_MANAGE_NO: no, PBLANC_NO: no, HOUSE_NM: name, ...ENDED_DATES });
+// parseExistingPage가 돌려주는 모양의 저장된 행
+const savedRow = (key, extra = {}) => [key, { id: `page-${key}`, key, name: '저장된 단지', lotto: '로또', urgentDate: null, interest: false, start: '2026-11-03', end: THU, ...extra }];
+// 같은 날 특별공급이 시작하는 신청할 수 있는 로또 공고(7-7)와 끝난 공고 둘(8-8 저장됨, 9-9 저장됨·관심 체크)
+function unapplicableWorld({ archive = async () => {} } = {}) {
+  const store = fakeStore(new Map([savedRow('8-8'), savedRow('9-9', { interest: true })]));
+  const events = [];
+  const h = harness({ store, fetch: worldFetch({ rows: [aptRow(), endedRow('8'), endedRow('9', '관심끝난단지')] }).fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  h.deps.sendKakao = async (message) => { events.push('kakao'); h.kakao.push(message); };
+  store.archivePage = async (id) => {
+    events.push(`archive ${id}`);
+    await archive(id);
+  };
+  return { h, events };
+}
+
+test('without a valid profile no notice is dropped and the ended one still alerts on its 2순위 date', async () => {
+  for (const env of [{}, { CHUNGYAK_PROFILE: '{bad' }, { CHUNGYAK_PROFILE: '{"residenceSido":"인천"}' }]) {
+    const h = harness({ fetch: worldFetch({ rows: [endedRow()] }).fetch, env });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    assert.deepEqual(h.store.state.upserts.map((item) => item.key), ['8-8']);
+    assert.equal(h.kakao.length, 1);
+    assert.ok(summaryOf(h).includes(' unapplicable_skipped=0 unapplicable_region=0 unapplicable_ended=0 unapplicable_archived=0 unapplicable_kept_interest=0'), summaryOf(h));
+  }
+});
+
+test('a notice whose tracks have all ended is not stored and is left out of the lotto alert and the weekly mail', async () => {
+  const off = harness({ fetch: worldFetch({ rows: [endedRow()] }).fetch, argv: ['--force-weekly'] });
+  assert.equal(await run({ argv: off.argv, env: off.env, deps: off.deps }), 0);
+  assert.ok(JSON.stringify(off.mails).includes('끝난공고단지'));
+
+  const h = harness({ fetch: worldFetch({ rows: [endedRow()] }).fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON }, argv: ['--force-weekly'] });
+  assert.equal(await run({ argv: h.argv, env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(h.store.state.upserts, []);
+  assert.deepEqual(h.kakao, []);
+  // 주간 메일은 갔지만 그 공고는 없다.
+  assert.equal(h.mails.length, 1);
+  assert.ok(!JSON.stringify(h.mails).includes('끝난공고단지'));
+  assert.ok(summaryOf(h).includes(' unapplicable_skipped=1 unapplicable_region=0 unapplicable_ended=1 unapplicable_archived=0 unapplicable_kept_interest=0'), summaryOf(h));
+  // 로그에는 건수만 있고 공고 이름은 없다.
+  assert.ok(!h.logs.join('\n').includes('끝난공고단지'));
+  assertNoProfile(h, PROFILE_JSON);
+});
+
+test('a notice outside the profile region is not stored and gets no lotto alert', async () => {
+  const h = harness({ fetch: worldFetch().fetch, env: { CHUNGYAK_PROFILE: '{"residenceSido":"부산","residenceYears":5}' } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(h.store.state.upserts, []);
+  assert.deepEqual(h.kakao, []);
+  assert.ok(summaryOf(h).includes(' unapplicable_skipped=1 unapplicable_region=1 unapplicable_ended=0 '), summaryOf(h));
+  // 같은 공고가 프로필 없이는 저장되고 로또 알림이 간다.
+  const off = harness({ fetch: worldFetch().fetch });
+  await run({ env: off.env, deps: off.deps });
+  assert.equal(off.store.state.upserts.length, 1);
+  assert.equal(off.kakao.length, 1);
+});
+
+test('a stored unapplicable row goes to the trash after the alerts, and a checked 관심 row is kept', async () => {
+  const { h, events } = unapplicableWorld();
+  h.argv = ['--force-weekly'];
+  assert.equal(await run({ argv: h.argv, env: h.env, deps: h.deps }), 0);
+  // 신청할 수 있는 7-7의 로또 알림이 먼저이고, 그 뒤에 8-8만 옮긴다.
+  assert.deepEqual(events, ['kakao', 'archive page-8-8']);
+  // 관심 행은 갱신하지만 로또·주간 알림에는 넣지 않는다.
+  assert.deepEqual(h.store.state.upserts.map((item) => item.key), ['7-7', '9-9']);
+  const weekly = JSON.stringify(h.mails);
+  assert.ok(weekly.includes('비밀공고단지'));
+  assert.ok(!weekly.includes('끝난공고단지') && !weekly.includes('관심끝난단지'));
+  assert.ok(summaryOf(h).includes(' unapplicable_skipped=1 unapplicable_region=0 unapplicable_ended=1 unapplicable_archived=1 unapplicable_kept_interest=1'), summaryOf(h));
+});
+
+test('a failed archive of an unapplicable row reaches the error mail without blocking the alerts', async () => {
+  const { h, events } = unapplicableWorld({ archive: async () => { throw new Error('notion down'); } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 1);
+  assert.deepEqual(events, ['kakao', 'archive page-8-8']);
+  assert.equal(h.kakao.length, 1);
+  const mail = errorMail(h);
+  assert.ok(mail.text.includes('unapplicable_archive_failed x1'), mail.text);
+  assert.ok(!mail.text.includes('notion down'));
+  assert.ok(summaryOf(h).includes(' unapplicable_archived=0 '), summaryOf(h));
+});
+
+test('dry-run sends and archives nothing and logs only the candidate count', async () => {
+  const { h, events } = unapplicableWorld();
+  assert.equal(await run({ argv: ['--dry-run'], env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(events, []);
+  assert.deepEqual(h.store.state.upserts, []);
+  assert.ok(h.logs.includes('dry-run unapplicable_archive_candidates=1'), h.logs.join('|'));
+  assert.ok(summaryOf(h).includes(' unapplicable_skipped=1 unapplicable_region=0 unapplicable_ended=1 unapplicable_archived=0 unapplicable_kept_interest=1'), summaryOf(h));
+  // dry-run도 신청할 수 있는 공고만 로또 후보로 센다.
+  assert.ok(h.logs.includes('dry-run lotto=1 urgent_candidates=1 interest_candidates=0'), h.logs.join('|'));
+});
+
+test('a 세종 notice is kept for a profile in another region and recommends 1순위 기타지역', async () => {
+  const sejong = aptRow({ SUBSCRPT_AREA_CODE_NM: '세종', HSSPLY_ADRES: '세종특별자치시 나성동 1', GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-06', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-06', GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-07', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-07' });
+  const h = harness({ fetch: worldFetch({ rows: [sejong] }).fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ properties }] = h.store.state.upserts;
+  assert.deepEqual(properties['추천 전형'], { select: { name: '1순위' } });
+  assert.deepEqual(properties['추천 접수일'], { date: { start: '2026-11-07' } });
+  assert.ok(properties['판별 근거'].rich_text[0].text.content.endsWith('\n추천: 1순위 기타지역 11/7 (세대주·청약통장 요건 확인)'));
+  assert.ok(summaryOf(h).includes(' unapplicable_skipped=0 '), summaryOf(h));
 });
 
 const interestRow = (extra = {}) => new Map([['7-7', {
