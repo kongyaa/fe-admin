@@ -416,9 +416,9 @@ const lhListRow = (extra = {}) => ({
 });
 
 const xml = (items) => `<response><header><resultCode>000</resultCode></header><body><items>${items.map((item) => `<item>${item}</item>`).join('')}</items><totalCount>${items.length}</totalCount></body></response>`;
-const tradeXml = (unit) => xml(['a1', 'a2'].flatMap((jibun) => Array.from({ length: 5 }, () => `<aptNm>비교${jibun}</aptNm><dealAmount>${(unit * 84).toLocaleString('en-US')}</dealAmount><excluUseAr>84</excluUseAr><floor>10</floor><umdNm>마곡동</umdNm><jibun>${jibun}</jibun><buildYear>2026</buildYear><dealingGbn>중개거래</dealingGbn><dealYear>2026</dealYear><dealMonth>9</dealMonth><dealDay>3</dealDay>`)));
+const tradeXml = (unit, jibuns = ['a1', 'a2']) => xml(jibuns.flatMap((jibun) => Array.from({ length: 5 }, () => `<aptNm>비교${jibun}</aptNm><dealAmount>${(unit * 84).toLocaleString('en-US')}</dealAmount><excluUseAr>84</excluUseAr><floor>10</floor><umdNm>마곡동</umdNm><jibun>${jibun}</jibun><buildYear>2026</buildYear><dealingGbn>중개거래</dealingGbn><dealYear>2026</dealYear><dealMonth>9</dealMonth><dealDay>3</dealDay>`)));
 
-function runHarness({ unit = 2200, rows = [lhListRow()], detail = () => Response.json(detailBody()), supply = () => Response.json(supplyBody()), existing = new Map(), runConfig = config } = {}) {
+function runHarness({ unit = 2200, jibuns, rows = [lhListRow()], detail = () => Response.json(detailBody()), supply = () => Response.json(supplyBody()), existing = new Map(), runConfig = config } = {}) {
   const calls = [];
   const fetch = async (url) => {
     const text = String(url);
@@ -426,7 +426,7 @@ function runHarness({ unit = 2200, rows = [lhListRow()], detail = () => Response
     if (text.includes('lhLeaseNoticeDtlInfo1')) return detail(text);
     if (text.includes('lhLeaseNoticeSplInfo1')) return supply(text);
     if (text.includes('lhLeaseNoticeInfo1')) return Response.json([{ dsSch: [{}] }, { dsList: rows.map((row) => ({ ...row, ALL_CNT: rows.length })) }]);
-    if (text.includes('RTMSDataSvcAptTrade')) return new Response(tradeXml(unit));
+    if (text.includes('RTMSDataSvcAptTrade')) return new Response(tradeXml(unit, jibuns));
     if (text.includes('apis.data.go.kr/1613000')) return new Response(xml([]));
     return Response.json({ totalCount: 0, data: [] });
   };
@@ -610,4 +610,27 @@ test('malformed values in all four parsers only add lh_parse_failed soft kinds',
   const [{ notice, evaluation }] = h.state.upserts;
   assert.equal(notice.stages[0].name, '공고~마감');
   assert.equal(evaluation.reason, 'LH 공급 정보 없음 (공고중)');
+});
+
+test('a full run drops a stored 로또 when a 하 estimate is clearly negative', async () => {
+  // 비교 단지 1곳(신뢰도 하), 마진율이 lotto.lowConfidenceMinMarginRate(-5%)보다 낮다.
+  const existing = () => new Map([['LH-m1', { id: 'page-LH-m1', key: 'LH-m1', lotto: STATUS.LOTTO, urgentDate: null, end: '2026-11-20', name: '마곡 공공분양주택 입주자모집공고' }]]);
+  const h = runHarness({ unit: 1100, jibuns: ['a1'], existing: existing() });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ evaluation, properties }] = h.state.upserts;
+  assert.equal(evaluation.confidence, '하');
+  assert.ok(evaluation.marginRate <= -0.05, String(evaluation.marginRate));
+  assert.equal(evaluation.status, STATUS.NOT);
+  assert.equal(evaluation.lowConfidenceNegative, true);
+  assert.ok(evaluation.reason.startsWith('LH 공공분양(분양가상한제) 해당이나 시세 대비 이점 없음(신뢰도 하, 마진율 ≤ -5%); '), evaluation.reason);
+  assert.equal(properties['로또 여부'].select.name, STATUS.NOT);
+  assert.equal(h.kakao.length, 0);
+  assert.ok(summaryOf(h).includes(' lotto_demoted=1 '), summaryOf(h));
+  assert.ok(lineOf(h, 'market').endsWith(' soft=none'), lineOf(h, 'market'));
+
+  // 규칙을 끄면(null) 예전처럼 놓치지 않게 로또다.
+  const off = runHarness({ unit: 1100, jibuns: ['a1'], existing: existing(), runConfig: { ...config, lotto: { ...config.lotto, lowConfidenceMinMarginRate: null } } });
+  assert.equal(await run({ env: off.env, deps: off.deps }), 0);
+  assert.equal(off.state.upserts[0].evaluation.status, STATUS.LOTTO);
+  assert.ok(summaryOf(off).includes(' lotto_demoted=0 '), summaryOf(off));
 });

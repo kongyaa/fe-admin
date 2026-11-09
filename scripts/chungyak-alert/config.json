@@ -42,7 +42,8 @@
     "includePriceCap": true,
     "includePublicDistrict": true,
     "triggerPriceCheck": { "remainder": true, "resupply": false, "arbitrary": true, "priceCap": true, "publicDistrict": true },
-    "remainderMaxRound": 3
+    "remainderMaxRound": 3,
+    "lowConfidenceMinMarginRate": -0.05
   },
   "recommendation": {
     "localResidenceYears": 2,

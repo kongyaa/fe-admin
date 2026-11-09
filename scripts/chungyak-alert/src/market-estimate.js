@@ -604,12 +604,24 @@ export const qualifiesByPrice = (candidate, lotto) => meetsPriceRule(candidate, 
 // preferConfident(가격을 확인하는 조건형 로또 후보)이면 그 사이에 신뢰도 중 이상 주택형 중 마진이 가장 큰 것을 둔다.
 // 신뢰도 하인 주택형의 마진이 더 커도 중 이상 주택형을 가리지 않게 한다. 조건 없는 공고는 예전 순서라
 // 신뢰도 하인 큰 마진이 남아 keepPreviousLotto의 보호를 받는다.
+// preferConfident인데 주택형이 모두 신뢰도 하이면, 가격 기준을 넘는 주택형 중 마진이 가장 큰 것, 없으면 마진율이
+// 가장 높은 것을 고른다. 마진 금액으로 고르면 싼 주택형의 나쁜 마진율이 비싼 주택형의 조금 음수인 마진율을 가려
+// 신뢰도 하 마진율 하한(lotto.lowConfidenceMinMarginRate)에 걸리기 때문이다. 마진율이 없으면 마진 금액으로 비교한다.
+const betterRate = (candidate, current) => {
+  if (Number.isFinite(candidate.marginRate) && Number.isFinite(current.marginRate) && candidate.marginRate !== current.marginRate) {
+    return candidate.marginRate > current.marginRate;
+  }
+  return candidate.margin > current.margin;
+};
+
 export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, preferConfident = false, lotto, market, today }) {
   const context = { market, lotto, today };
   const inputs = { stations, stationLookupFailed, presaleOk };
   let best = null;
   let bestConfident = null;
   let bestQualifying = null;
+  let bestLowMeeting = null;
+  let bestLowRate = null;
   for (const model of models) {
     if (!(model.area > 0) || !(model.price > 0)) continue;
     const same = sameComplexRows(rows, subject, model.area, context);
@@ -623,6 +635,12 @@ export function estimateBestMargin({ models, rows, subject, stations = new Map()
     if (qualifiesByPrice(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) {
       bestQualifying = candidate;
     }
+    if (candidate.confidence === CONFIDENCE.LOW) {
+      if (meetsPriceRule(candidate, lotto) && (!bestLowMeeting || candidate.margin > bestLowMeeting.margin)) bestLowMeeting = candidate;
+      if (!bestLowRate || betterRate(candidate, bestLowRate)) bestLowRate = candidate;
+    }
   }
-  return bestQualifying ?? (preferConfident ? bestConfident : null) ?? best;
+  if (bestQualifying) return bestQualifying;
+  if (!preferConfident) return best;
+  return bestConfident ?? bestLowMeeting ?? bestLowRate ?? best;
 }
