@@ -434,10 +434,12 @@ function applicantResult({ notice, models, applicant, household, config, today, 
   return { applicant, index, candidate, remarks, checks: [...new Set(checks)] };
 }
 
-// 공고 단위 추천 고르기: 접수일이 가장 이른 신청자, 같으면 특별공급, 그다음 신청자 순서다.
+// 공고 단위 추천 고르기: 접수일이 가장 이른 신청자, 같으면 특별공급, 특별공급끼리는 SPECIAL_TRACKS 순서
+// (신생아, 신혼부부, 생애최초), 그다음 신청자 순서다.
 export function chooseApplicant(results) {
   const isSpecial = (result) => (result.candidate.kind === 'special' ? 1 : 0);
-  return [...results].sort((a, b) => a.candidate.date.localeCompare(b.candidate.date) || isSpecial(b) - isSpecial(a) || a.index - b.index)[0] ?? null;
+  const trackRank = (result) => (result.candidate.kind === 'special' ? SPECIAL_TRACKS.indexOf(result.candidate.specialTrack) : -1);
+  return [...results].sort((a, b) => a.candidate.date.localeCompare(b.candidate.date) || isSpecial(b) - isSpecial(a) || trackRank(a) - trackRank(b) || a.index - b.index)[0] ?? null;
 }
 
 // 추천 전형 열의 짧은 이름. v1은 이름표가 없어 예전과 같다.
