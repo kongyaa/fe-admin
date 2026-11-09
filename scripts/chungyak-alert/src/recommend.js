@@ -23,6 +23,8 @@ const GENERAL_STAGES = {
 // v2 신청자 수와 이름표 길이 상한. 이름표는 Notion 글자에만 쓰고 로그에는 적지 않는다.
 const MAX_APPLICANTS = 4;
 const MAX_LABEL_LENGTH = 6;
+// 이름표에는 판별 근거의 구분자(공백, 쉼표, 쌍반점, 빗금, 가운뎃점)를 쓰지 않는다.
+const LABEL_PATTERN = /^[^\s,;/·]+$/;
 const PROFILE_KEYS = ['applicants', 'household'];
 const APPLICANT_KEYS = ['label', 'birthYear', 'residenceSido', 'residenceYears', 'account', 'specialTracks', 'pregnant', 'childBirths'];
 const ACCOUNT_KEYS = ['joined', 'payments', 'depositManwon'];
@@ -62,15 +64,17 @@ function v1Applicant(value) {
 function parseApplicant(value) {
   if (!onlyKeys(value, APPLICANT_KEYS)) return null;
   const label = typeof value.label === 'string' ? value.label.trim() : '';
-  const account = value.account;
+  // account: null은 통장 값을 모두 모른다는 뜻이다.
+  const account = value.account === null ? {} : value.account;
   const tracks = value.specialTracks ?? [];
   const childBirths = value.childBirths ?? [];
-  const valid = label !== ''
+  const valid = LABEL_PATTERN.test(label)
     && Array.from(label).length <= MAX_LABEL_LENGTH
     && Number.isInteger(value.birthYear)
     && value.birthYear >= 1900
     && value.birthYear <= 2100
     && validResidence(value)
+    && SIDO.includes(value.residenceSido.trim())
     && onlyKeys(account, ACCOUNT_KEYS)
     && nullable(account.joined, isMonth)
     && nullable(account.payments, (payments) => Number.isInteger(payments) && payments >= 0)
@@ -157,24 +161,39 @@ const NEWBORN_MONTHS = 24;
 // 신혼부부: 혼인신고일부터 공고일까지 7년 이내
 const NEWLYWED_YEARS = 7;
 
-// 모르는 값(v1의 null)은 막지 않는다. v1은 예전처럼 적힌 전형을 그대로 쓴다.
-export function specialTrackValid(track, { applicant, household, at }) {
+const keep = (...notes) => ({ valid: true, notes });
+const DROP = { valid: false, notes: [] };
+
+// 특별공급 하나의 시점 요건. 결과는 { valid, notes }이고 notes는 막지 않고 확인을 안내할 항목이다.
+// 확실히 아닐 때만 뺀다. 모르는 값(v1의 null)은 막지 않고, v1은 예전처럼 적힌 전형을 그대로 쓴다.
+// 공고일(announceDate)이 없으면 실행일로 기간을 재지 않고 전형을 남긴 채 공고일 확인('공고일')을 적는다.
+// 신혼부부: 민영은 혼인신고한 신혼부부만 받는다. 국민·공공(구분을 모르는 공고 포함)은 예비신혼부부와 한부모도 받아 미혼이어도 남긴다.
+// 혼인했는데 신고일을 모르면 남기고 혼인신고일 확인을 적는다.
+export function specialTrackCheck(track, { applicant, household, notice, today }) {
+  const dateKnown = Boolean(notice.announceDate);
+  const at = noticeBaseDate(notice, today);
   if (track === '신생아') {
-    if (applicant.pregnant === null || applicant.childBirths === null) return true;
-    if (applicant.pregnant) return true;
+    if (applicant.pregnant === null || applicant.childBirths === null) return keep();
+    if (applicant.pregnant) return keep();
+    if (applicant.childBirths.length === 0) return DROP;
+    if (!dateKnown) return keep('공고일');
     const base = monthIndex(at);
-    return applicant.childBirths.some((month) => monthIndex(month) <= base && monthIndex(month) >= base - NEWBORN_MONTHS);
+    return applicant.childBirths.some((month) => monthIndex(month) <= base && monthIndex(month) >= base - NEWBORN_MONTHS) ? keep() : DROP;
   }
   if (track === '신혼부부') {
-    if (household?.married === null || household?.married === undefined) return true;
+    const married = household?.married;
+    if (married === null || married === undefined) return keep();
+    if (married === false) return notice.sector === '민영' ? DROP : keep('예비신혼부부 여부');
     const registered = household.marriageRegistered;
-    return Boolean(registered) && registered <= at && addYears(registered, NEWLYWED_YEARS) >= at;
+    if (!registered) return keep('혼인신고일');
+    if (!dateKnown) return keep('공고일');
+    return registered <= at && addYears(registered, NEWLYWED_YEARS) >= at ? keep() : DROP;
   }
   // 생애최초의 다른 요건은 보지 않는다.
-  return true;
+  return keep();
 }
 
-export const validSpecialTracks = ({ applicant, household, at }) => applicant.specialTracks.filter((track) => specialTrackValid(track, { applicant, household, at }));
+export const specialTrackValid = (track, options) => specialTrackCheck(track, options).valid;
 
 // ---------- 민영 예치금 ----------
 // 예치금 기준(만원)은 config.json의 recommendation.privateDeposit이다. 신청자 거주 시도와 공고의 가장 작은 전용면적으로 고른다.
@@ -207,18 +226,21 @@ export function depositCheck({ notice, models, applicant, config }) {
 
 // ---------- 가점 추정 ----------
 // 민영 일반 1순위 가점제의 대략 값이다. 공고문과 청약홈 가점 계산기로 확인해야 한다.
-// 무주택 기간: 만 30세(출생 연도+30년 1월 1일로 근사)부터, 그 전에 혼인신고를 했으면 혼인신고일부터 센다.
+// 만 30세를 그해 1월 1일로, 통장과 출생을 월 단위로 근사해 실제보다 높게 나오는 쪽이다.
+// 무주택 기간: 만 30세(출생 연도+30년 1월 1일로 근사)부터, 그 전에 혼인신고를 했으면 혼인신고일부터 센다. 신고일을 모르면 30세부터다.
 // 미혼이고 30세 전이면 0점, 1년 미만 2점, 이후 1년마다 2점, 최대 32점.
-// 부양가족: 혼인신고한 배우자와 이미 태어난 자녀(태아 제외). 5점 + 1명마다 5점, 최대 35점.
+// 부양가족: 배우자(혼인했고 신고일이 공고일 뒤가 아님)와 이미 태어난 자녀(태아 제외). 5점 + 1명마다 5점, 최대 35점.
 // 통장 가입 기간: 6개월 미만 1점, 1년 미만 2점, 이후 2점 + 다 채운 해 수, 최대 17점. 가입 월을 모르면 빼고 account는 null이다.
 export function estimatePoints({ applicant, household, at }) {
   if (!Number.isInteger(applicant?.birthYear) || !at) return null;
-  const registered = household?.marriageRegistered && household.marriageRegistered <= at ? household.marriageRegistered : null;
+  const date = household?.marriageRegistered ?? null;
+  const registered = date && date <= at ? date : null;
+  const spouse = household?.married === true && !(date && date > at);
   const thirty = `${applicant.birthYear + 30}-01-01`;
   const start = registered && registered < thirty ? registered : thirty;
   const homeless = start > at ? 0 : Math.min(32, 2 + 2 * fullYears(start, at));
   const children = (applicant.childBirths ?? []).filter((month) => monthIndex(month) <= monthIndex(at)).length;
-  const dependents = Math.min(35, 5 + 5 * ((registered ? 1 : 0) + children));
+  const dependents = Math.min(35, 5 + 5 * ((spouse ? 1 : 0) + children));
   const joined = applicant.account?.joined ?? null;
   let account = null;
   if (joined) {
@@ -289,7 +311,8 @@ const CHECKS = '세대주·청약통장 요건 확인';
 // ---------- 신청자별 후보 ----------
 // 신청자 한 명이 접수할 수 있는 첫 후보(특별공급, 일반 1순위 순). 없으면 null이다.
 // 결과의 kind는 'special', 'general', 'remainder'이고 track은 짧은 이름, name은 판별 근거에 적는 이름이다.
-function applicantCandidate({ notice, models, applicant, household, config, today }) {
+// tracks는 시점 요건과 통장으로 거른 뒤의 특별공급이다.
+function applicantCandidate({ notice, models, applicant, tracks, config, today }) {
   if (!eligibleRegion(notice, applicant)) return null;
   if (notice.kind !== 'apt') {
     const main = mainStageOf(notice);
@@ -300,11 +323,10 @@ function applicantCandidate({ notice, models, applicant, household, config, toda
   const category = residenceCategory(notice, applicant, config.recommendation);
   const generalStage = stageOf(notice, GENERAL_STAGES[category]);
   const general = isOpen(generalStage, today) ? { track: `1순위 ${category}`, stage: generalStage } : null;
-  const tracks = validSpecialTracks({ applicant, household, at: noticeBaseDate(notice, today) });
   const special = pickSpecialTrack(models, tracks);
   const specialStage = stageOf(notice, '특별공급');
   if (special && isOpen(specialStage, today)) {
-    return { kind: 'special', track: specialLabel(special.track), name: `${special.track} 특별공급`, date: specialStage.start, end: specialStage.end ?? null, units: special.units, general };
+    return { kind: 'special', specialTrack: special.track, track: specialLabel(special.track), name: `${special.track} 특별공급`, date: specialStage.start, end: specialStage.end ?? null, units: special.units, general };
   }
   if (!general) return null;
   return { kind: 'general', track: GENERAL_LABEL, name: general.track, date: general.stage.start, end: general.stage.end ?? null, category };
@@ -352,6 +374,66 @@ function accountChecks({ notice, applicant, deposit }) {
   return items;
 }
 
+const monthsSince = (joined, at) => monthIndex(at) - monthIndex(joined);
+// 1순위 통장 요건의 확인 기준(개월). 수도권은 규제지역이면 24개월이라, 규제 여부를 따지지 않고 24개월 미만이면 확인을 적는다.
+const RANK1_MONTHS = { capital: 24, other: 12 };
+const ACCOUNT_MIN_MONTHS = 6;
+const MIN_PAYMENTS = { special: 6, rank1: 12 };
+
+// 아는 통장 값으로 확실히 신청할 수 없는 것만 거른다. 결과는 { block, noSpecial }이고 각각 판별 근거에 적을 말이다.
+// block: 가입 6개월 미만이라 특별공급도 1순위도 안 된다. noSpecial: 국민 공고에서 납입 6회 미만이라 특별공급이 안 된다.
+export function accountGate({ notice, applicant, at }) {
+  const none = { block: null, noSpecial: null };
+  if (!applicant.account || notice.kind !== 'apt') return none;
+  const { joined, payments } = applicant.account;
+  if (joined && monthsSince(joined, at) < ACCOUNT_MIN_MONTHS) return { block: '통장 6개월 미만', noSpecial: null };
+  if (notice.sector === '국민' && payments !== null && payments < MIN_PAYMENTS.special) return { block: null, noSpecial: '납입 6회 미만(특별공급 제외)' };
+  return none;
+}
+
+// 1순위를 추천할 때 아는 통장 값이 기준에 못 미칠 수 있으면 막지 않고 확인을 적는다.
+function rank1AccountChecks({ notice, applicant, at }) {
+  if (!applicant.account || notice.kind !== 'apt') return [];
+  const { joined, payments } = applicant.account;
+  const need = CAPITAL_AREA.includes(notice.region) ? RANK1_MONTHS.capital : RANK1_MONTHS.other;
+  const items = [];
+  if (joined && monthsSince(joined, at) < need) items.push('통장 가입기간');
+  if (notice.sector === '국민' && payments !== null && payments < MIN_PAYMENTS.rank1) items.push('납입 12회 미만');
+  return items;
+}
+
+// 신청자 한 명의 결과. 대상이 아니면 null이고, 아니면 { applicant, index, candidate, remarks, checks }이다.
+// candidate가 null이면 통장·예치금 때문에 신청할 수 없고 remarks에 그 까닭이 있다.
+// remarks는 판별 근거에 그대로 적는 말, checks는 '확인:' 뒤에 적는 항목이다.
+function applicantResult({ notice, models, applicant, household, config, today, index }) {
+  const at = noticeBaseDate(notice, today);
+  const trackChecks = new Map(applicant.specialTracks.map((track) => [track, specialTrackCheck(track, { applicant, household, notice, today })]));
+  const tracks = applicant.specialTracks.filter((track) => trackChecks.get(track).valid);
+  const first = applicantCandidate({ notice, models, applicant, tracks, config, today });
+  if (!first) return null;
+  const gate = accountGate({ notice, applicant, at });
+  const deposit = depositCheck({ notice, models, applicant, config });
+  const remarks = [];
+  let candidate = first;
+  if (gate.block) {
+    remarks.push(gate.block);
+    candidate = null;
+  } else if (gate.noSpecial && first.kind === 'special') {
+    remarks.push(gate.noSpecial);
+    candidate = applicantCandidate({ notice, models, applicant, tracks: [], config, today });
+  }
+  // 예치금이 모자라면 민영 1순위와 민영 특별공급 모두 신청할 수 없다.
+  if (candidate && deposit.short !== null) {
+    remarks.push(`예치금 ${deposit.short}만 부족`);
+    candidate = null;
+  }
+  if (!candidate) return remarks.length > 0 ? { applicant, index, candidate: null, remarks, checks: [] } : null;
+  const checks = [...accountChecks({ notice, applicant, deposit })];
+  if (candidate.kind === 'special') checks.push(...trackChecks.get(candidate.specialTrack).notes);
+  if (candidate.kind === 'general') checks.push(...rank1AccountChecks({ notice, applicant, at }));
+  return { applicant, index, candidate, remarks, checks: [...new Set(checks)] };
+}
+
 // 공고 단위 추천 고르기: 접수일이 가장 이른 신청자, 같으면 특별공급, 그다음 신청자 순서다.
 export function chooseApplicant(results) {
   const isSpecial = (result) => (result.candidate.kind === 'special' ? 1 : 0);
@@ -363,7 +445,7 @@ export const recommendLabel = (label, track) => (label ? `${label} ${track}` : t
 
 // 공고 하나의 추천. 결과는 { recommendation, text }이다.
 // recommendation은 { track, date, end, text } 또는 null이고, text는 판별 근거에 붙일 줄(없으면 null)이다.
-// v2에서 예치금 때문에 아무도 신청할 수 없으면 recommendation은 null이고 text에 부족액을 적는다.
+// v2에서 통장·예치금 때문에 아무도 신청할 수 없으면 recommendation은 null이고 text에 그 까닭을 적는다.
 export function recommendForProfile({ notice, models, profile, config, today }) {
   const none = { recommendation: null, text: null };
   const target = toProfile(profile);
@@ -372,14 +454,9 @@ export function recommendForProfile({ notice, models, profile, config, today }) 
   if (restrictedType(notice, config.market)) return none;
   const at = noticeBaseDate(notice, today);
   const results = target.applicants
-    .map((applicant, index) => {
-      const candidate = applicantCandidate({ notice, models, applicant, household: target.household, config, today });
-      if (!candidate) return null;
-      return { applicant, index, candidate, deposit: depositCheck({ notice, models, applicant, config }) };
-    })
+    .map((applicant, index) => applicantResult({ notice, models, applicant, household: target.household, config, today, index }))
     .filter(Boolean);
-  // 예치금이 모자라면 민영 1순위와 민영 특별공급 모두 신청할 수 없다.
-  const able = results.filter((result) => result.deposit.short === null);
+  const able = results.filter((result) => result.candidate);
   const chosen = chooseApplicant(able);
 
   if (target.version === 1) {
@@ -393,13 +470,12 @@ export function recommendForProfile({ notice, models, profile, config, today }) 
     const points = showPoints ? estimatePoints({ applicant: result.applicant, household: target.household, at }) : null;
     return { label: result.applicant.label, segment: segmentText(result.candidate, points), points };
   });
-  const shortages = results.filter((result) => result.deposit.short !== null).map((result) => `${result.applicant.label} 예치금 ${result.deposit.short}만 부족`);
+  const remarks = results.flatMap((result) => result.remarks.map((remark) => `${result.applicant.label} ${remark}`));
   const checks = able
-    .map((result) => ({ label: result.applicant.label, items: accountChecks({ notice, applicant: result.applicant, deposit: result.deposit }) }))
-    .filter((item) => item.items.length > 0)
-    .map((item) => `${item.label} ${item.items.join('·')}`);
-  if (!chosen && shortages.length === 0) return none;
-  const parts = [chosen ? `추천: ${joinSegments(segments)}` : '추천 없음', ...shortages];
+    .filter((result) => result.checks.length > 0)
+    .map((result) => `${result.applicant.label} ${result.checks.join('·')}`);
+  if (!chosen && remarks.length === 0) return none;
+  const parts = [chosen ? `추천: ${joinSegments(segments)}` : '추천 없음', ...remarks];
   if (checks.length > 0) parts.push(`확인: ${checks.join(', ')}`);
   if (chosen && notice.kind === 'apt') parts.push(CHECKS);
   if (segments.some((item) => item.points)) parts.push('가점은 추정');
@@ -467,7 +543,7 @@ function applicantUnapplicable({ notice, models, applicant, config, today }) {
 // 신청자 정보가 없거나, 추천을 계산하지 않는 종류(LH, 오피스텔 등)거나, 제한 유형이거나, 지역을 확신할 수 없으면 빼지 않는다.
 // 추천의 지역 규칙(eligibleRegion)으로 대상이 아니지만 확실하지 않은 공고는 접수 종료도 보지 않고 남긴다.
 // models가 null이면 주택형 자료를 모르는 것으로 보고 특별공급 세대가 있을 수 있다고 본다.
-// 예치금 부족과 특별공급 시점 요건으로는 빼지 않는다(2순위와 공고문 확인이 남는다).
+// 통장·예치금 부족과 특별공급 시점 요건으로는 빼지 않는다(2순위와 공고문 확인이 남는다).
 export function unapplicableReason({ notice, models, profile, config, today }) {
   const target = toProfile(profile);
   if (!target) return null;

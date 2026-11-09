@@ -6,6 +6,7 @@ import { buildProperties } from '../src/notion-store.js';
 import { buildKakaoText } from '../src/notify-kakao.js';
 import { ENDPOINTS, normalizeDetail, supplySector } from '../src/sources/applyhome.js';
 import {
+  accountGate,
   chooseApplicant,
   depositCheck,
   depositRequirement,
@@ -14,6 +15,7 @@ import {
   recommendForProfile,
   recommendLabel,
   recommendTrack,
+  specialTrackCheck,
   specialTrackValid,
   toProfile,
   unapplicableReason,
@@ -76,6 +78,22 @@ test('a v2 profile is parsed into normalized applicants and household', () => {
   assert.deepEqual(trimmed.household, { married: true, marriageRegistered: '2024-05-01' });
   // 혼인했지만 신고일을 모르면 null이다.
   assert.deepEqual(profileOf({ applicants: [A], household: { married: true } }).household, { married: true, marriageRegistered: null });
+  // account: null은 통장 값을 모두 모른다는 뜻이다.
+  assert.deepEqual(profileOf({ applicants: [{ ...A, account: null }], household: HOUSEHOLD }).applicants[0].account, { joined: null, payments: null, depositManwon: null });
+  // 이름표는 6자 이하이고 구분자만 없으면 된다.
+  for (const label of ['A', '신청자B', '가나다라마바', 'A-1', 'B_2']) assert.equal(parse({ applicants: [{ ...A, label }], household: HOUSEHOLD }).status, 'ok', label);
+});
+
+test('labels must be short and free of separators, and residences must be short SIDO names', () => {
+  for (const label of ['A B', 'A,B', 'A;B', 'A/B', 'A·B', 'A\tB', '가나다라마바사']) {
+    assert.deepEqual(parse({ applicants: [{ ...A, label }], household: HOUSEHOLD }), { profile: null, status: 'invalid' }, label);
+  }
+  for (const residenceSido of ['인천광역시', '서울특별시', 'Incheon', '경기도']) {
+    assert.deepEqual(parse({ applicants: [{ ...A, residenceSido }], household: HOUSEHOLD }), { profile: null, status: 'invalid' }, residenceSido);
+  }
+  assert.equal(profileOf({ applicants: [{ ...A, residenceSido: ' 부산 ' }], household: HOUSEHOLD }).applicants[0].residenceSido, '부산');
+  // v1은 예전처럼 시도 이름을 검사하지 않는다.
+  assert.equal(parse({ residenceSido: '인천광역시', residenceYears: 3 }).status, 'ok');
 });
 
 test('an invalid v2 profile turns the feature off', () => {
@@ -94,7 +112,7 @@ test('an invalid v2 profile turns the feature off', () => {
     { applicants: [{ ...A, residenceSido: '' }], household: HOUSEHOLD },
     { applicants: [{ ...A, residenceYears: -1 }], household: HOUSEHOLD },
     { applicants: [{ ...A, account: undefined }], household: HOUSEHOLD },
-    { applicants: [{ ...A, account: null }], household: HOUSEHOLD },
+    { applicants: [{ ...A, account: [] }], household: HOUSEHOLD },
     { applicants: [{ ...A, account: { ...A.account, joined: '2019-3' } }], household: HOUSEHOLD },
     { applicants: [{ ...A, account: { ...A.account, joined: '2019-13' } }], household: HOUSEHOLD },
     { applicants: [{ ...A, account: { ...A.account, payments: -1 } }], household: HOUSEHOLD },
@@ -145,7 +163,7 @@ test('a v1 profile keeps its recommendations and texts unchanged', () => {
 // ---------- 특별공급 시점 요건 ----------
 test('신생아 is valid while pregnant or with a child born within 2 years of the 공고일', () => {
   const at = '2026-11-10';
-  const valid = (patch) => specialTrackValid('신생아', { applicant: { ...B, ...patch }, household: HOUSEHOLD, at });
+  const valid = (patch) => specialTrackValid('신생아', { applicant: { ...B, ...patch }, household: HOUSEHOLD, notice: apt({ announceDate: at }), today });
   assert.equal(valid({ pregnant: true, childBirths: [] }), true);
   assert.equal(valid({ pregnant: false, childBirths: [] }), false);
   // 출생 월이 공고월로부터 24개월 안이면 맞다.
@@ -161,30 +179,66 @@ test('신생아 is valid while pregnant or with a child born within 2 years of t
 
 test('신혼부부 needs a registered marriage within 7 years of the 공고일', () => {
   const at = '2026-11-10';
-  const valid = (household) => specialTrackValid('신혼부부', { applicant: A, household, at });
-  assert.equal(valid(HOUSEHOLD), false);
-  assert.equal(valid({ married: true, marriageRegistered: null }), false);
+  const check = (household, sector = '민영') => specialTrackCheck('신혼부부', { applicant: A, household, notice: apt({ announceDate: at, sector }), today });
+  const valid = (household, sector) => check(household, sector).valid;
+  // 민영은 혼인신고한 신혼부부만 받는다.
+  assert.deepEqual(check(HOUSEHOLD), { valid: false, notes: [] });
   assert.equal(valid({ married: true, marriageRegistered: '2022-03-01' }), true);
   assert.equal(valid({ married: true, marriageRegistered: '2019-11-10' }), true);
   assert.equal(valid({ married: true, marriageRegistered: '2019-11-09' }), false);
   // 공고일 뒤 혼인신고는 아직 아니다.
   assert.equal(valid({ married: true, marriageRegistered: '2026-12-01' }), false);
+  // 혼인했는데 신고일을 모르면 남기고 확인을 적는다.
+  assert.deepEqual(check({ married: true, marriageRegistered: null }), { valid: true, notes: ['혼인신고일'] });
+  // 국민·공공과 구분을 모르는 공고는 예비신혼부부·한부모도 받아 미혼이어도 남긴다. 혼인했으면 7년을 본다.
+  for (const sector of ['국민', null]) {
+    assert.deepEqual(check(HOUSEHOLD, sector), { valid: true, notes: ['예비신혼부부 여부'] }, String(sector));
+    assert.equal(valid({ married: true, marriageRegistered: '2019-11-09' }, sector), false, String(sector));
+    assert.equal(valid({ married: true, marriageRegistered: '2022-03-01' }, sector), true, String(sector));
+    assert.deepEqual(check({ married: true, marriageRegistered: null }, sector), { valid: true, notes: ['혼인신고일'] }, String(sector));
+  }
   // v1은 혼인 여부를 몰라 예전처럼 적힌 대로 둔다.
-  assert.equal(valid({ married: null, marriageRegistered: null }), true);
+  assert.deepEqual(check({ married: null, marriageRegistered: null }), { valid: true, notes: [] });
   // 생애최초는 그대로 둔다.
-  assert.equal(specialTrackValid('생애최초', { applicant: A, household: HOUSEHOLD, at }), true);
+  assert.equal(specialTrackValid('생애최초', { applicant: A, household: HOUSEHOLD, notice: apt({ announceDate: at }), today }), true);
 });
 
-test('special tracks are checked at the 모집공고일, or today when it is missing', () => {
+test('신혼부부 for an unmarried couple is dropped on 민영 and kept with a note on 국민', () => {
+  const units = [model({ 신생아: 0, 신혼부부: 40, 생애최초: 0 })];
+  const profile = v2With({ specialTracks: ['신혼부부'] }, { specialTracks: [] });
+  assert.equal(recommend(apt(), units, profile).recommendation.track, '신청자A 1순위');
+  const national = recommend(apt({ sector: '국민' }), units, profile);
+  assert.equal(national.recommendation.track, '신청자A 특별(신혼부부)');
+  assert.ok(national.text.includes('확인: 신청자A 예비신혼부부 여부'), national.text);
+  // 혼인했는데 신고일을 모르면 민영에서도 남긴다.
+  const unknownDate = recommend(apt(), units, v2With({ specialTracks: ['신혼부부'] }, { specialTracks: [] }, { married: true, marriageRegistered: null }));
+  assert.equal(unknownDate.recommendation.track, '신청자A 특별(신혼부부)');
+  assert.ok(unknownDate.text.includes('확인: 신청자A 혼인신고일'), unknownDate.text);
+});
+
+test('without a 모집공고일 the 신혼부부 and 신생아 windows are not applied and the reason asks to check it', () => {
+  const units = [model({ 신생아: 30, 신혼부부: 40, 생애최초: 0 })];
+  const married = v2With({ specialTracks: ['신혼부부'] }, { specialTracks: [] }, { married: true, marriageRegistered: '2019-11-03' });
+  // 공고일(11/2) 기준으로는 7년 안이다.
+  assert.equal(recommend(apt(), units, married).recommendation.track, '신청자A 특별(신혼부부)');
+  assert.equal(recommend(apt({ announceDate: '2026-11-04' }), units, married).recommendation.track, '신청자A 1순위');
+  // 공고일이 없으면 실행일로 재지 않고 남긴다.
+  const noDate = recommend(apt({ announceDate: null }), units, married);
+  assert.equal(noDate.recommendation.track, '신청자A 특별(신혼부부)');
+  assert.ok(noDate.text.includes('확인: 신청자A 공고일'), noDate.text);
+  // 신생아도 같다. 자녀가 없고 임신도 아니면 공고일과 관계없이 뺀다.
+  const child = v2With({ specialTracks: [] }, { pregnant: false, childBirths: ['2020-01'], account: { ...B.account, depositManwon: 300 } });
+  assert.equal(recommend(apt(), units, child).recommendation.track, '신청자A 1순위');
+  assert.equal(recommend(apt({ announceDate: null }), units, child).recommendation.track, '신청자B 특별(신생아)');
+  const noChild = v2With({ specialTracks: [] }, { pregnant: false, childBirths: [], account: { ...B.account, depositManwon: 300 } });
+  assert.equal(recommend(apt({ announceDate: null }), units, noChild).recommendation.track, '신청자A 1순위');
+});
+
+test('special tracks are checked at the 모집공고일', () => {
   const units = [model({ 신생아: 30, 신혼부부: 40, 생애최초: 0 })];
   const notMarried = v2With({ specialTracks: ['신혼부부'] }, { specialTracks: ['신혼부부'] });
   // 신혼부부가 맞지 않으면 세대가 많아도 특별공급을 고르지 않고 1순위로 간다.
   assert.equal(recommend(apt(), units, notMarried).recommendation.track, '신청자A 1순위');
-  const married = v2With({ specialTracks: ['신혼부부'] }, { specialTracks: [] }, { married: true, marriageRegistered: '2019-11-03' });
-  // 공고일(11/2) 기준으로는 7년 안이다.
-  assert.equal(recommend(apt(), units, married).recommendation.track, '신청자A 특별(신혼부부)');
-  // 공고일이 없으면 실행일(11/5) 기준이라 7년이 지났다.
-  assert.equal(recommend(apt({ announceDate: null }), units, married).recommendation.track, '신청자A 1순위');
   // 임신 중인 신청자는 신생아 특별공급이다.
   const newborn = v2With({ specialTracks: [] }, { account: { ...B.account, depositManwon: 300 } });
   assert.equal(recommend(apt(), units, newborn).recommendation.track, '신청자B 특별(신생아)');
@@ -198,7 +252,7 @@ test('the 민영 deposit requirement follows the applicant residence and the are
   for (const sido of ['대구', '인천', '광주', '대전', '울산']) {
     assert.deepEqual([84, 100, 120, 200].map((area) => depositRequirement(sido, area, table)), [250, 400, 700, 1000], sido);
   }
-  for (const sido of ['경기', '세종', '제주', '강원', '인천광역시']) {
+  for (const sido of ['경기', '세종', '제주', '강원', '충북']) {
     assert.deepEqual([84, 100, 120, 200].map((area) => depositRequirement(sido, area, table)), [200, 300, 400, 500], sido);
   }
 });
@@ -250,6 +304,49 @@ test('unknown account values add a 확인 note instead of blocking', () => {
   assert.ok(national.text.includes('확인: 신청자A 통장 가입일·납입횟수, 신청자B 통장 가입일·납입횟수'), national.text);
   // 국민 공고에는 가점을 적지 않는다.
   assert.ok(!national.text.includes('가점'), national.text);
+});
+
+test('known 통장 values drop only what is certain and note the rest', () => {
+  const at = '2026-11-02';
+  const gate = (notice, account) => accountGate({ notice, applicant: { ...A, account: { ...A.account, ...account } }, at });
+  // 공고일에 가입 6개월 미만이면 특별공급도 1순위도 안 된다.
+  assert.deepEqual(gate(apt(), { joined: '2026-06' }), { block: '통장 6개월 미만', noSpecial: null });
+  assert.deepEqual(gate(apt(), { joined: '2026-05' }), { block: null, noSpecial: null });
+  // 국민 공고에서 납입 6회 미만이면 특별공급만 뺀다. 민영은 납입 횟수를 보지 않는다.
+  assert.deepEqual(gate(apt({ sector: '국민' }), { payments: 5 }), { block: null, noSpecial: '납입 6회 미만(특별공급 제외)' });
+  assert.deepEqual(gate(apt({ sector: '국민' }), { payments: 6 }), { block: null, noSpecial: null });
+  assert.deepEqual(gate(apt(), { payments: 0 }), { block: null, noSpecial: null });
+  // 모르는 값, APT가 아닌 공고는 막지 않는다.
+  assert.deepEqual(gate(apt({ sector: '국민' }), { joined: null, payments: null }), { block: null, noSpecial: null });
+  assert.deepEqual(gate(apt({ kind: 'remainder' }), { joined: '2026-10' }), { block: null, noSpecial: null });
+
+  // 신청자A가 가입 4개월이면 빠지고 신청자B가 추천된다.
+  const fresh = v2With({ account: { ...A.account, joined: '2026-07' } }, { account: { ...B.account, depositManwon: 300 } });
+  const blocked = recommend(apt(), UNITS, fresh);
+  assert.equal(blocked.recommendation.track, '신청자B 특별(신생아)');
+  assert.ok(blocked.text.includes('; 신청자A 통장 6개월 미만;'), blocked.text);
+  assert.ok(!blocked.text.includes('신청자A 생애최초'), blocked.text);
+  // 무순위는 통장을 보지 않는다.
+  const remainder = apt({ kind: 'remainder', houseSecd: '04', stages: [{ name: '무순위 접수', start: '2026-11-12', end: '2026-11-13' }] });
+  assert.equal(recommend(remainder, null, fresh).recommendation.text, '추천: 신청자A·신청자B 무순위 11/12');
+
+  // 1순위는 수도권 공고면 24개월, 그 밖이면 12개월 미만일 때 가입기간 확인을 적는다.
+  const general = (joined, notice = apt()) => recommend(notice, null, v2With({ specialTracks: [], account: { ...A.account, joined } }, { specialTracks: [], account: { ...B.account, joined: '2015-01', depositManwon: 300 } }));
+  assert.ok(general('2025-06').text.includes('확인: 신청자A 예치금(면적 미상)·통장 가입기간'), general('2025-06').text);
+  assert.ok(!general('2024-10').text.includes('통장 가입기간'), general('2024-10').text);
+  const busan = (joined) => recommend(apt({ region: '부산' }), null, v2With({ residenceSido: '부산', specialTracks: [], account: { ...A.account, joined } }, { residenceSido: '부산', specialTracks: [], account: { ...B.account, joined: '2015-01', depositManwon: 1000 } })).text;
+  assert.ok(!busan('2025-06').includes('통장 가입기간'), busan('2025-06'));
+  assert.ok(busan('2026-01').includes('신청자A 예치금(면적 미상)·통장 가입기간'), busan('2026-01'));
+
+  // 국민 공고에서 납입 5회면 특별공급을 빼고 1순위로 가며, 12회 미만이라 확인을 적는다.
+  const payments = (count) => recommend(apt({ sector: '국민' }), UNITS, v2With({ account: { ...A.account, payments: count } }, { specialTracks: [], account: { ...B.account, joined: '2015-01', payments: 30 } }));
+  const five = payments(5);
+  assert.equal(five.recommendation.track, '신청자A 1순위');
+  assert.ok(five.text.includes('; 신청자A 납입 6회 미만(특별공급 제외);'), five.text);
+  assert.ok(five.text.includes('확인: 신청자A 납입 12회 미만'), five.text);
+  const ten = payments(10);
+  assert.equal(ten.recommendation.track, '신청자A 특별(생애최초)');
+  assert.ok(!ten.text.includes('납입'), ten.text);
 });
 
 // ---------- 민영·국민 ----------
@@ -333,11 +430,15 @@ test('estimatePoints follows the 무주택, 부양가족 and 통장 rules', () =
   assert.deepEqual(points({ birthYear: 2000, account: { ...A.account, joined: null } }), { total: 5, homeless: 0, dependents: 5, account: null });
   // 1990년생은 2020-01-01부터 6년: 2 + 12 = 14점. 통장 2019-03부터 7년 8개월: 2 + 7 = 9점.
   assert.deepEqual(points({}), { total: 28, homeless: 14, dependents: 5, account: 9 });
-  // 30세가 되는 해는 1년 미만 2점이다.
-  assert.equal(points({ birthYear: 1996 }).homeless, 2);
+  // 30세가 되는 해는 1년 미만 2점이다(1994년생의 2024년).
+  assert.equal(estimatePoints({ applicant: { ...A, birthYear: 1994 }, household: HOUSEHOLD, at: '2024-11-10' }).homeless, 2);
   // 30세 전에 혼인신고를 했으면 신고일부터 센다. 배우자는 부양가족이다.
   const early = points({ birthYear: 2000 }, { married: true, marriageRegistered: '2024-05-01' });
   assert.deepEqual([early.homeless, early.dependents], [6, 10]);
+  // 혼인했는데 신고일을 모르면 배우자는 세고 무주택 기간은 30세부터다.
+  const unknownDate = points({ birthYear: 2000 }, { married: true, marriageRegistered: null });
+  assert.deepEqual([unknownDate.homeless, unknownDate.dependents], [0, 10]);
+  assert.deepEqual([points({}, { married: true, marriageRegistered: null }).homeless, points({}, { married: true, marriageRegistered: null }).dependents], [14, 10]);
   // 30세 뒤 혼인신고는 30세부터 센다.
   assert.equal(points({ birthYear: 1990 }, { married: true, marriageRegistered: '2025-05-01' }).homeless, 14);
   // 공고일 뒤 혼인신고는 아직 세지 않는다.

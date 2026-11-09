@@ -2112,6 +2112,21 @@ test('interest alerts go out on the freshly computed recommended date, overlayin
   assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
 });
 
+test('a v2 interest alert carries the labelled track, and the label stays out of the logs', async () => {
+  const stale = interestRow({ recommendTrack: '특별(생애최초)', recommendDate: '2026-11-04' });
+  const h = harness({ store: fakeStore(stale), fetch: recommendWorld({ dates: { HOUSE_DTL_SECD: '01', HOUSE_DTL_SECD_NM: '민영' } }), env: { CHUNGYAK_PROFILE: V2_PROFILE_JSON, GITHUB_ACTIONS: 'true' } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(h.store.state.upserts[0].properties['추천 전형'], { select: { name: '신청자A 특별(생애최초)' } });
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith('[관심 청약] '), h.kakao[0].text);
+  assert.ok(h.kakao[0].text.includes('\n신청자A 특별(생애최초) 오늘 접수 2026-11-05'), h.kakao[0].text);
+  // 카카오톡의 짧은 근거에는 추천 문구를 넣지 않는다.
+  assert.ok(!h.kakao[0].text.includes('예치금') && !h.kakao[0].text.includes('신청자B'), h.kakao[0].text);
+  assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
+  const logged = [...h.logs, ...h.written.filter((line) => !line.startsWith('::add-mask::'))].join('\n');
+  for (const secret of ['신청자A', '신청자B']) assert.ok(!logged.includes(secret), secret);
+});
+
 test('once the special supply has ended the next open 1순위 date is recommended and alerted on that day', async () => {
   // 특별공급 11/9, 1순위(해당지역·기타지역) 11/10. 11/10 실행이다.
   const dates = {
