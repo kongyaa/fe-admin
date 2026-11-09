@@ -1849,6 +1849,32 @@ test('a multi-line profile is masked line by line, so no line reaches the log un
   assertNoProfile(local, pretty);
 });
 
+// v2 신청자 정보(가짜 값). 이름표는 Notion의 추천 열과 판별 근거에만 쓰고 로그에는 남기지 않는다.
+const V2_PROFILE_JSON = JSON.stringify({
+  applicants: [
+    { label: '신청자A', birthYear: 1990, residenceSido: '인천', residenceYears: 3, account: { joined: '2019-03', payments: 40, depositManwon: 350 }, specialTracks: ['생애최초'] },
+    { label: '신청자B', birthYear: 1995, residenceSido: '인천', residenceYears: 3, account: { joined: null, payments: null, depositManwon: 200 }, specialTracks: ['신생아', '생애최초'], pregnant: true, childBirths: [] },
+  ],
+  household: { married: false, marriageRegistered: null },
+});
+
+test('a v2 run stores the labelled recommendation and never logs labels or profile values', async () => {
+  for (const env of [{ CHUNGYAK_PROFILE: V2_PROFILE_JSON, GITHUB_ACTIONS: 'true' }, { CHUNGYAK_PROFILE: JSON.stringify(JSON.parse(V2_PROFILE_JSON), null, 2) }]) {
+    // 민영 공고(HOUSE_DTL_SECD 01)라 신청자B는 예치금이 모자라고(인천 거주, 84㎡ → 250만), 신청자A의 생애최초가 추천된다.
+    const h = harness({ fetch: recommendWorld({ dates: { HOUSE_DTL_SECD: '01', HOUSE_DTL_SECD_NM: '민영' } }), env });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    const [{ properties }] = h.store.state.upserts;
+    assert.deepEqual(properties['추천 전형'], { select: { name: '신청자A 특별(생애최초)' } });
+    assert.deepEqual(properties['추천 접수일'], { date: { start: THU } });
+    const reason = properties['판별 근거'].rich_text[0].text.content;
+    assert.ok(reason.includes('\n추천: 신청자A 생애최초 특별공급 11/5 (20세대, 1순위 기타지역 11/7도 가능, 가점 약 28점); 신청자B 예치금 50만 부족; 세대주·청약통장 요건 확인; 가점은 추정'), reason);
+    assert.ok(h.logs.includes('recommend profile=ok recommended=1 none=0 version=2 applicants=2'), h.logs.join('\n'));
+    const logged = [...h.logs, ...h.written.filter((line) => !line.startsWith('::add-mask::'))].join('\n');
+    for (const secret of ['신청자A', '신청자B', '1990', '1995', '2019-03', '인천', 'depositManwon', 'birthYear', '예치금', '가점']) assert.ok(!logged.includes(secret), secret);
+    assert.equal(errorMail(h), undefined);
+  }
+});
+
 test('a missing or invalid profile turns the feature off without an error mail or Notion writes', async () => {
   for (const [value, status] of [[undefined, 'missing'], ['{bad', 'invalid'], ['{"residenceSido":"인천","residenceYears":3,"specialTracks":["다자녀"]}', 'invalid']]) {
     const env = value === undefined ? {} : { CHUNGYAK_PROFILE: value };
@@ -2084,6 +2110,21 @@ test('interest alerts go out on the freshly computed recommended date, overlayin
   assert.ok(!h.kakao[0].text.includes('특별공급 오늘'), h.kakao[0].text);
   assert.ok(h.kakao[0].text.includes('특별(생애최초) 오늘 접수 2026-11-05'), h.kakao[0].text);
   assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
+});
+
+test('a v2 interest alert carries the labelled track, and the label stays out of the logs', async () => {
+  const stale = interestRow({ recommendTrack: '특별(생애최초)', recommendDate: '2026-11-04' });
+  const h = harness({ store: fakeStore(stale), fetch: recommendWorld({ dates: { HOUSE_DTL_SECD: '01', HOUSE_DTL_SECD_NM: '민영' } }), env: { CHUNGYAK_PROFILE: V2_PROFILE_JSON, GITHUB_ACTIONS: 'true' } });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(h.store.state.upserts[0].properties['추천 전형'], { select: { name: '신청자A 특별(생애최초)' } });
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith('[관심 청약] '), h.kakao[0].text);
+  assert.ok(h.kakao[0].text.includes('\n신청자A 특별(생애최초) 오늘 접수 2026-11-05'), h.kakao[0].text);
+  // 카카오톡의 짧은 근거에는 추천 문구를 넣지 않는다.
+  assert.ok(!h.kakao[0].text.includes('예치금') && !h.kakao[0].text.includes('신청자B'), h.kakao[0].text);
+  assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: THU }]);
+  const logged = [...h.logs, ...h.written.filter((line) => !line.startsWith('::add-mask::'))].join('\n');
+  for (const secret of ['신청자A', '신청자B']) assert.ok(!logged.includes(secret), secret);
 });
 
 test('once the special supply has ended the next open 1순위 date is recommended and alerted on that day', async () => {

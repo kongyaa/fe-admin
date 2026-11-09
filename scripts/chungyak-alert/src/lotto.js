@@ -9,7 +9,7 @@ import {
   meetsPriceRule,
   restrictedType,
 } from './market-estimate.js';
-import { recommendTrack, unapplicableReason } from './recommend.js';
+import { recommendForProfile, unapplicableReason } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
 
@@ -184,9 +184,10 @@ export async function evaluateLotto(notice, options) {
     const kept = '(추천: 조회 실패로 이전 값 유지)';
     return { ...evaluation, reason: evaluation.reason ? `${evaluation.reason}\n${kept}` : kept };
   }
-  const recommendation = recommendTrack({ notice, models, profile: options.profile, config: options.config, today: options.today });
-  if (!recommendation) return { ...evaluation, recommendation: null };
-  return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${recommendation.text}` : recommendation.text };
+  // 추천이 없어도 v2 신청자 정보의 예치금 부족처럼 남길 말이 있으면 판별 근거에 붙인다.
+  const { recommendation, text } = recommendForProfile({ notice, models, profile: options.profile, config: options.config, today: options.today });
+  if (!text) return { ...evaluation, recommendation };
+  return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${text}` : text };
 }
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

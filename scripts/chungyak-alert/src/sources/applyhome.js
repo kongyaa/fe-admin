@@ -69,6 +69,20 @@ function buildStages(kind, row) {
   return [main, ...details].filter(Boolean);
 }
 
+// 민영·국민 구분. 스웨거상 APT 상세의 HOUSE_DTL_SECD(주택상세구분코드)와 HOUSE_DTL_SECD_NM(코드명)이다.
+// 스웨거에는 코드 값이 없다. 이름에 '민영'·'국민'이 있으면 그것을 쓰고, 이름이 없으면 01=민영, 03=국민으로 본다(가정).
+// 그 밖의 값이나 필드가 없으면 null(모름)이고, 모르면 예치금으로 막지 않는다.
+export function supplySector(row) {
+  const name = String(row.HOUSE_DTL_SECD_NM ?? '');
+  if (name.includes('민영')) return '민영';
+  if (name.includes('국민')) return '국민';
+  if (name.trim() !== '') return null;
+  const code = String(row.HOUSE_DTL_SECD ?? '').trim();
+  if (code === '01') return '민영';
+  if (code === '03') return '국민';
+  return null;
+}
+
 export function normalizeDetail(endpoint, row) {
   if (!row.HOUSE_MANAGE_NO || !row.PBLANC_NO) return null;
   const secd = String(row.SEARCH_HOUSE_SECD ?? row.HOUSE_SECD ?? '');
@@ -81,6 +95,7 @@ export function normalizeDetail(endpoint, row) {
     kind: endpoint.kind,
     mdlOp: endpoint.mdlOp,
     houseSecd: secd,
+    sector: supplySector(row),
     houseManageNo: String(row.HOUSE_MANAGE_NO),
     pblancNo: String(row.PBLANC_NO),
     typeLabel,

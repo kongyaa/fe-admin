@@ -669,8 +669,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`collected=${collected.length} ${Object.entries(counts).map(([name, value]) => `${name}=${value}`).join(' ')}`);
   log(`errors=${[...errors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
   log(`market apt_calls=${aptInfo.stats().calls} station_used=${marketCounts.stationUsed} station_no_input=${marketCounts.stationNoInput} station_no_data=${marketCounts.stationNoData} complex_outliers=${marketCounts.complexOutliers} confidence_high=${marketCounts.상} confidence_mid=${marketCounts.중} confidence_low=${marketCounts.하} ${umdFormatCounts(molit.stats(), presale.stats())} soft=${[...softErrors].map(([kind, count]) => `${kind}:${count}`).join(',') || 'none'}`);
-  // 추천 기능 상태와 건수만 남긴다. 프로필 내용은 남기지 않는다.
-  log(`recommend profile=${profileStatus} recommended=${recommendCounts.recommended} none=${recommendCounts.none}`);
+  // 추천 기능 상태와 건수만 남긴다. 프로필 내용과 신청자 이름표는 남기지 않는다. v2는 신청자 수만 덧붙인다.
+  const applicantCount = profile?.version === 2 ? ` version=2 applicants=${profile.applicants.length}` : '';
+  log(`recommend profile=${profileStatus} recommended=${recommendCounts.recommended} none=${recommendCounts.none}${applicantCount}`);
   // LH 유형 값(`상위/세부`)별 건수. 분류 이름만 남기고 공고 이름은 남기지 않는다(src/lh-scope.js의 lhTypeLogLabel).
   log(`lh_types ${formatLhTypes(lhTypeCounts) || 'none'}`);
   // 유형 규칙을 통과한 LH 공고의 공급지역별 건수. 지역 값 형식을 확인하는 용도이고 지역 이름만 남긴다.
