@@ -46,9 +46,10 @@ function flagTrigger(notice, lotto) {
 }
 
 // 무순위(houseSecd 04) 공고명의 차수. 청약홈 API에는 차수 필드가 없어 공고명(HOUSE_NM)에서만 읽는다.
-// "무순위(사후)(14차)", "사후무순위 3차"처럼 무순위·사후·잔여 뒤의 숫자와, 청약홈 공고문 파일명의
-// "단지명(14차)"처럼 이름 끝 괄호 안의 차수를 본다. 끝 괄호는 "단지(2차)" 같은 단지 차수와 구분하지 못하지만
-// 낮은 차수는 remainderMaxRound(3) 미만이라 판정이 바뀌지 않는다. 괄호 없는 "단지 2차"는 모르는 것(null)이다.
+// "무순위(사후)(14차)", "사후무순위 3차"처럼 무순위·사후·잔여 뒤의 숫자를 먼저 보고, 없으면 이름 끝 괄호의 차수를 본다.
+// 청약홈 무순위 공고명은 차수를 이름 끝 괄호에 둔다. 확인한 사례는 둘이다: 공고문 파일명 "단지명(14차) 무순위
+// 입주자모집공고문"과, 2차 단지가 없는 단일 단지의 무순위 공고명 "빌리브센트하이(2차)".
+// 단지 차수를 "단지(3차)"처럼 괄호로 적은 이름은 차수로 잘못 읽는다. 단지 차수는 보통 괄호 없이 적어 null이다.
 export function parseRemainderRound(name) {
   const text = String(name ?? '');
   const match = /(?:무순위|사후|잔여)\D{0,10}?(\d{1,3})\s*차/.exec(text) ?? /\((\d{1,3})\s*차\)\s*$/.exec(text);
@@ -188,9 +189,20 @@ export async function evaluateLotto(notice, options) {
   return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${recommendation.text}` : recommendation.text };
 }
 
+// lotto.triggerPriceCheck가 일반 객체가 아니면 없는 것(예전 동작)으로 보고, true인 조건만 가격을 확인한다.
+const priceCheckOn = (lotto, key) => {
+  const checks = lotto.triggerPriceCheck;
+  const plain = checks !== null && typeof checks === 'object' && !Array.isArray(checks);
+  return plain && checks[key] === true;
+};
+
+// remainderMaxRound가 0보다 큰 수일 때만 반복 공급 규칙을 쓴다. 0이나 null이면 끈다.
+const maxRoundOf = (lotto) => (Number.isFinite(lotto.remainderMaxRound) && lotto.remainderMaxRound > 0 ? lotto.remainderMaxRound : null);
+
 // 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다.
 // 신뢰도 중 이상 추정이 있으면 안전 마진 부호로 정한다(가격 기준을 넘으면 마진이 양수라 로또다).
-// 추정이 없거나 신뢰도 하이면 놓치지 않게 로또로 둔다. 단, 무순위가 remainderMaxRound차 이상이면 아님이다.
+// 추정이 없거나 신뢰도 하이면 놓치지 않게 로또로 둔다. 무순위가 remainderMaxRound차 이상이면 아님이지만,
+// 신뢰도 하 추정이라도 가격 기준을 넘으면 놓치지 않게 로또다.
 function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
   const { key, label } = trigger;
   const candidate = {
@@ -198,7 +210,7 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
     reason: best ? `${label}; ${priceText(best)}` : label,
     shortReason: best ? `${label}; ${shortPriceText(best)}` : label,
   };
-  if (!lotto.triggerPriceCheck?.[key]) return candidate;
+  if (!priceCheckOn(lotto, key)) return candidate;
   if (best && best.confidence !== CONFIDENCE.LOW) {
     if (best.margin >= 0) return candidate;
     return {
@@ -207,8 +219,10 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
       shortReason: `${label} 해당이나 시세 이점 없음; ${shortPriceText(best)}`,
     };
   }
+  if (best && meetsPriceRule(best, lotto)) return candidate;
   const round = key === 'remainder' ? parseRemainderRound(notice.name) : null;
-  if (round !== null && Number.isFinite(lotto.remainderMaxRound) && round >= lotto.remainderMaxRound) {
+  const maxRound = maxRoundOf(lotto);
+  if (round !== null && maxRound !== null && round >= maxRound) {
     const head = `${label} ${round}차 반복 공급`;
     return {
       status: STATUS.NOT,
@@ -338,7 +352,8 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
 // 이번 판정이 불가이거나, 신뢰도 하인 추정이 가격 기준만으로 로또를 빼려 하면 이전 로또를 유지한다.
 // 약한 추정 하나로 알림이 조용히 사라지지 않게 하려는 것이다.
 // 신뢰도 중 이상 추정으로 아님이 된 조건형 공고는 그대로 뺀다. 무순위 반복 공급으로 아님이 된 공고도
-// 추정이 아니라 차수로 정한 것이라 유지하지 않는다(추정이 없을 때와 똑같이 뺀다).
+// 추정이 아니라 차수로 정한 것이라 유지하지 않는다(추정이 없을 때와 똑같이 뺀다). 반복 공급이라도
+// 가격 기준을 넘는 추정은 신뢰도 하여도 로또라 여기까지 오지 않는다.
 export function keepPreviousLotto(evaluation, previousStatus) {
   if (previousStatus !== STATUS.LOTTO) return evaluation;
   const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE.LOW && !evaluation.repeatedRound;

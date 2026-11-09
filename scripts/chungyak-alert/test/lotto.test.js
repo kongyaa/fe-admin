@@ -403,7 +403,7 @@ test('a trailing (N차) is read as the round, and a low one keeps the outcome', 
   assert.equal(repeated.repeatedRound, 14);
   assert.ok(repeated.reason.startsWith('수도권 무순위·잔여세대 14차 반복 공급; '));
 
-  // 단지 차수일 수 있는 "단지(2차)"는 2차로 읽지만 기준(3차) 미만이라 판정은 예전과 같다.
+  // 2차 무순위(실제 사례: 2차 단지가 없는 단일 단지의 "…(2차)")는 기준(3차) 미만이라 예전처럼 로또다.
   assert.equal(parseRemainderRound('합성단지(2차)'), 2);
   for (const data of [trades(5, 1100), []]) {
     const phase = await evaluate(remainder('합성단지(2차)'), { data });
@@ -430,6 +430,56 @@ test('parseRemainderRound reads the round after 무순위, 사후 or 잔여, or 
   assert.equal(parseRemainderRound(''), null);
   assert.equal(parseRemainderRound(null), null);
   assert.equal(parseRemainderRound(undefined), null);
+  // 리뷰에서 찔러 본 이름들
+  assert.equal(parseRemainderRound('합성 e편한세상 3차'), null);
+  assert.equal(parseRemainderRound('합성자이(3차) 무순위'), null);
+  assert.equal(parseRemainderRound('합성 3차 무순위 (2차)'), 2);
+  assert.equal(parseRemainderRound('합성(2차) 사후접수 5차'), 5);
+  assert.equal(parseRemainderRound('합성 무순위 3차 (잔여 10세대)'), 3);
+  assert.equal(parseRemainderRound('무순위(계약취소 3세대)'), null);
+  assert.equal(parseRemainderRound('합성 1,2차 무순위'), null);
+  assert.equal(parseRemainderRound('합성단지(3BL)'), null);
+});
+
+// 주택형 두 개: 84㎡는 단지 2곳(신뢰도 중), 59㎡는 단지 1곳(신뢰도 하).
+const mixedModels = (price59) => [
+  { houseType: '084A', area: 84, price: 100000 },
+  { houseType: '059A', area: 59, price: price59 },
+];
+const mixedData = (unit84) => [...two(5, unit84), ...trades(5, 1000, { area: 59, amount: 59000, jibun: 'b1' })];
+
+test('a 하 model with a larger margin cannot hide a confident model', async () => {
+  // 84㎡ 중: 92400 - 100000 - 1500 - 3300 = -12400. 59㎡ 하: 59000 - 58000 - 1500 - 638 = -1138.
+  const loss = await evaluate(remainder(), { models: mixedModels(58000), data: mixedData(1100) });
+  assert.equal(loss.confidence, '중');
+  assert.equal(loss.margin, -12400);
+  assert.equal(loss.status, STATUS.NOT);
+
+  // 반복 공급. 84㎡ 중: 109200 - 104800 = 4400. 59㎡ 하: 59000 - 50000 - 1500 - 550 = 6950(가격 기준 미만).
+  const gain = await evaluate(remainder('합성단지(14차)'), { models: mixedModels(50000), data: mixedData(1300) });
+  assert.equal(gain.confidence, '중');
+  assert.equal(gain.margin, 4400);
+  assert.equal(gain.status, STATUS.LOTTO);
+});
+
+test('a repeated round with a 하 estimate that meets the price rule stays 로또', async () => {
+  const result = await evaluate(remainder('합성단지 무순위(사후)(14차)'), { data: trades(5, 2200) });
+  assert.equal(result.confidence, '하');
+  assert.equal(result.margin, 80000);
+  assert.equal(result.status, STATUS.LOTTO);
+  assert.equal(result.repeatedRound, undefined);
+  assert.ok(result.reason.startsWith('수도권 무순위·잔여세대; 안전 마진 8.0억'), result.reason);
+});
+
+test('bad trigger config falls back to the old behaviour', async () => {
+  const repeated = remainder('합성단지(14차)');
+  for (const remainderMaxRound of [0, -1, null, '3']) {
+    assert.equal((await evaluate(repeated, { data: [], overrides: { remainderMaxRound } })).status, STATUS.LOTTO, String(remainderMaxRound));
+  }
+  for (const triggerPriceCheck of [true, 'remainder', ['remainder'], null, { remainder: 'yes' }]) {
+    const result = await evaluate(remainder(), { data: two(5, 1100), overrides: { triggerPriceCheck } });
+    assert.equal(result.status, STATUS.LOTTO, JSON.stringify(triggerPriceCheck));
+  }
 });
 
 test('a previous 로또 is dropped by a confident no-advantage or a repeated round', async () => {
