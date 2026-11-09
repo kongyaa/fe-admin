@@ -9,6 +9,7 @@ import {
   meetsPriceRule,
   restrictedType,
 } from './market-estimate.js';
+import { hasLhModels } from './lh-detail-map.js';
 import { recommendForProfile, unapplicableReason } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
@@ -42,6 +43,8 @@ function flagTrigger(notice, lotto) {
     if (lotto.includePriceCap && notice.flags.priceCap) return flag('priceCap', '분양가상한제 적용');
     if (lotto.includePublicDistrict && notice.flags.publicDistrict) return flag('publicDistrict', '공공주택지구');
   }
+  // LH 공공분양은 분양가상한제 대상이다. flags.priceCap은 상세 정보를 덮을 때 분양 유형에만 켠다(src/lh-detail-map.js).
+  if (notice.kind === 'lh' && lotto.includePriceCap && notice.flags?.priceCap) return flag('priceCap', 'LH 공공분양(분양가상한제)');
   return null;
 }
 
@@ -165,9 +168,11 @@ async function readPresale(getPresale, code, months) {
 export async function evaluateLotto(notice, options) {
   let models = null;
   let modelsFailed = false;
+  // LH 주택형은 조회하지 않고 상세 정보를 덮을 때 읽어 둔 값(notice.models)을 쓴다. 없으면 null이다.
+  const source = notice.kind === 'lh' ? async () => notice.models ?? null : options.getModels;
   const getModels = async (target) => {
     try {
-      models = await options.getModels(target);
+      models = await source(target);
     } catch (error) {
       modelsFailed = true;
       throw error;
@@ -189,6 +194,13 @@ export async function evaluateLotto(notice, options) {
   if (!text) return { ...evaluation, recommendation };
   return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${text}` : text };
 }
+
+// LH 상세·공급 조회 상태별 판별 불가 사유.
+const LH_PENDING_REASONS = {
+  failed: 'LH 상세 조회 실패',
+  capped: 'LH 상세 조회 한도 초과',
+  supply_failed: 'LH 공급 정보 조회 실패',
+};
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -250,10 +262,6 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
   if (!config.alertRegions.includes(notice.region)) {
     return result(STATUS.OUT_OF_SCOPE, '알림 지역이 아님');
   }
-  if (notice.kind === 'lh') {
-    return result(STATUS.OUT_OF_SCOPE, `LH 공고는 판별 대상이 아님${notice.noticeStatus ? ` (${notice.noticeStatus})` : ''}`);
-  }
-
   // 판정 조건보다 먼저 본다. 저장된 추정 값이 남지 않도록 clearMarket으로 지우게 한다.
   const restricted = restrictedType(notice, market);
   if (restricted) {
@@ -269,6 +277,20 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
       clearMarket: true,
       averagePrice: averagePriceOf(restrictedModels),
     });
+  }
+
+  // LH 공고는 상세·공급 정보로 주택형과 단지 주소를 읽었을 때만 판별한다(조회 상태는 src/lh-detail-map.js의 lhDetailState).
+  // 조회가 실패했거나 상한에 걸리면 이번에는 모르는 것이라 판별 불가로 두어 저장된 로또를 유지한다(keepPreviousLotto).
+  // 자료가 없거나(요청 코드 없음, 쓸 수 있는 주택형 없음) 단지 주소를 찾지 못하면 예전처럼 대상 외다.
+  if (notice.kind === 'lh') {
+    const status = notice.noticeStatus ? ` (${notice.noticeStatus})` : '';
+    const pending = LH_PENDING_REASONS[notice.lhDetailState];
+    if (pending) return result(STATUS.UNDETERMINED, `${pending}${status}`);
+    if (!hasLhModels(notice.models)) {
+      if (notice.lhDetailState !== 'ok') return result(STATUS.OUT_OF_SCOPE, `LH 상세 정보 없음${status}`);
+      return result(STATUS.OUT_OF_SCOPE, `${notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음'}${status}`);
+    }
+    if (!resolveAddress(notice.address, notice.region).code) return result(STATUS.OUT_OF_SCOPE, `LH 단지 주소 미매핑${status}`);
   }
 
   const trigger = flagTrigger(notice, lotto);
@@ -346,6 +368,9 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
     : { topPrice };
   price.averagePrice = averagePrice;
 
+  // LH는 비교 단지가 없는 신도시 블록이 많아, 추정이 없으면 다른 분양가상한제 공고와 달리 로또로 두지 않고 판별 불가다.
+  // 신뢰도 하 추정은 다른 조건형 공고와 같다.
+  if (notice.kind === 'lh' && !best) return result(STATUS.UNDETERMINED, `LH 공공분양; 시세 추정 없음(${undetermined})`, price);
   if (trigger) {
     const { status, reason, ...extra } = decideTrigger(trigger, { notice, best, undetermined, lotto });
     return result(status, reason, { ...price, ...extra });

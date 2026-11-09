@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { collectApplyhome, createModelLookup } from './sources/applyhome.js';
 import { collectLh } from './sources/lh.js';
+import { createLhDetailClient } from './sources/lh-detail.js';
+import { createShapeLog, enrichLhNotices, formatShapeLine } from './lh-detail-map.js';
 import { createAptInfoClient } from './sources/apt-info.js';
 import { createMolitClient, createPresaleClient } from './sources/molit.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
@@ -39,6 +41,7 @@ export const SOURCES = [
   '국토부 아파트 분양권전매 실거래가 (data.go.kr 15126471): 같은 단지 시세와 비교 단지에 사용',
   '국토부 공동주택 단지 목록 (data.go.kr 15057332)과 기본 정보 (15058453): 비교 단지의 지하철역 거리에 사용',
   'LH 임대공고 조회: 분양 공고 중 서울과 지정 지구만 저장, 날짜가 없으면 알림 제외',
+  'LH 분양임대공고별 상세정보·공급정보 조회: LH 분양 공고의 접수 일정, 주택형, 단지 주소와 로또 판별에 사용',
   'SH·GH 공고: v2 예정',
 ];
 
@@ -451,8 +454,31 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     existing.delete(row.key);
     dryRunRows?.delete(row.key);
   }
+  // LH 상세·공급 API로 범위 안 LH 공고의 일정, 주택형, 단지 주소를 덮는다(src/lh-detail-map.js). 접수가 끝난 공고는 부르지 않는다.
+  // API마다 실행당 lh.detailMaxCalls까지 부르고, 모든 모드에서 읽기만 한다. 실패와 읽지 못한 값은 soft로만 세고 그 공고는 예전 동작이다.
+  const lhDetail = createLhDetailClient({
+    fetch: fetchFn,
+    key: dataKey,
+    sleep,
+    limits: { maxCalls: config.lh.detailMaxCalls ?? 0, timeoutMs: config.lh.detailTimeoutMs ?? 10000 },
+    onSoft: addSoftError,
+  });
+  const lhShapes = createShapeLog(config.lh.labelLogWords);
+  let scopedNotices = lhScope.notices;
+  let lhDetailCounts = { lh_detail_ok: 0, lh_schedule_parsed: 0, lh_models_parsed: 0, lh_models_unattached: 0, lh_model_rows_merged: 0, lh_detail_capped: 0, lh_supply_capped: 0 };
+  if (dataKey) {
+    const enriched = await enrichLhNotices(lhScope.notices, {
+      client: lhDetail,
+      isTarget: (notice) => isLhItem(notice) && !lhScopeRule(notice, config) && !isClosedNotice(notice, today),
+      lh: config.lh,
+      onSoft: addSoftError,
+      shapes: lhShapes,
+    });
+    scopedNotices = enriched.notices;
+    lhDetailCounts = enriched.counts;
+  }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0 };
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
@@ -467,7 +493,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const stationCountNames = { used: 'stationUsed', noInput: 'stationNoInput', noData: 'stationNoData' };
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
   const interestRows = new Map(dryRunRows ?? existing);
-  for (const notice of lhScope.notices) {
+  for (const notice of scopedNotices) {
     // 저장 대상 행은 원본의 최신 값으로 판단한다. 저장이 실패해도 같다. 로또 알림과 같은 기준이고, 옮겨진 날짜로 잘못 보내거나 놓치지 않는다.
     // 접수가 끝나 갱신하지 않는 행은 읽은 그대로 둔다. 이번 실행에 새로 만든 행은 아직 체크될 수 없어 넣지 않는다.
     const row = interestRows.get(notice.key);
@@ -503,6 +529,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         addError(safeError(error));
         evaluation = { status: STATUS.UNDETERMINED, reason: '판별 실패' };
       }
+      // 시세로 로또·아님을 정한 LH 공고 수. 대상 외와 판별 불가(조회 실패, 추정 없음)는 세지 않는다. 이전 판별 유지 전 값으로 센다.
+      if (isLhItem(notice) && [STATUS.LOTTO, STATUS.NOT].includes(evaluation.status)) counts.lh_evaluated += 1;
       // dry-run도 읽어 둔 행의 이전 상태로 같은 보호를 적용해 일반 실행과 건수가 같게 한다.
       evaluation = keepPreviousLotto(evaluation, (previous ?? dryRunRows?.get(notice.key))?.lotto);
       counts.evaluated += 1;
@@ -676,6 +704,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   log(`lh_types ${formatLhTypes(lhTypeCounts) || 'none'}`);
   // 유형 규칙을 통과한 LH 공고의 공급지역별 건수. 지역 값 형식을 확인하는 용도이고 지역 이름만 남긴다.
   log(`lh_sale_regions ${formatLhTypes(lhScope.saleRegions) || 'none'}`);
+  // LH 상세·공급 값의 모양(숫자 9, 한글 가, 영문 a)과 접수 대상 이름별 건수. 값 자체는 남기지 않는다(src/lh-detail-map.js).
+  log(formatShapeLine(lhShapes));
+  // 응답의 블록과 필드 이름. 구조 확인이 끝나 기본으로 끈다(lh.schemaProbeLog).
+  if (config.lh.schemaProbeLog) for (const line of lhDetail.schemaLines()) log(line);
   log(`trade_tags ${tagCounts(molit.stats())}`);
   log(`presale_tags ${tagCounts(presale.stats())}`);
   log(`sale_tag_names=${molit.tagNames()}`);
