@@ -11,10 +11,24 @@ import {
   createSchema,
   formatSchemaLine,
   lhDetailParams,
-  probeLhSchemas,
 } from '../src/sources/lh-detail.js';
 
-const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+const baseConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+// 구조 로그는 기본으로 꺼져 있어 여기서만 켠다.
+const fileConfig = { ...baseConfig, lh: { ...baseConfig.lh, schemaProbeLog: true } };
+
+// 공고마다 두 API를 한 번씩 부른다. 첫 실패 뒤에는 클라이언트가 부르지 않는다.
+async function probeLhSchemas(notices, client) {
+  for (const notice of notices) {
+    for (const call of [client.fetchLhDetail, client.fetchLhSupply]) {
+      try {
+        await call(notice.lhCodes);
+      } catch {
+        // soft로 이미 셌다.
+      }
+    }
+  }
+}
 const noSleep = async () => {};
 const SECRET = 'SECRET-DATA-KEY';
 

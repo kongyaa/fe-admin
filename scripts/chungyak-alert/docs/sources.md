@@ -6,8 +6,8 @@
 | 국토부 아파트 매매 실거래가 (data.go.kr 15126469) | 시세 추정 | 공식 API, XML | 사용. 태그명 실응답 미확인 |
 | 국토부 아파트 분양권전매 실거래가 (data.go.kr 15126471) | 같은 단지 시세, 비교 단지 | 공식 API, XML | 사용. 경로는 공식 페이지로 확인, 응답 태그 미확인. 승인 전이나 실패 시 오류 메일 없이 신뢰도만 낮춤 |
 | 국토부 공동주택 단지 목록 (data.go.kr 15057332)과 기본 정보 (15058453) | 비교 단지의 지하철역 거리 | 공식 API, JSON | 사용. 경로와 필드명은 공식 스웨거에서 읽음, 실호출 미확인. `역 도보(분)`이 입력된 공고만 호출. 승인 전이나 실패 시 오류 메일 없이 신뢰도만 낮춤 |
-| LH 임대공고 조회 | LH 분양 공고 저장 | 공식 API, JSON | 저장 전용. 분양 공고 중 서울과 지정 지구(`lh.targetAreas`)만 남김(SETUP.md `LH 범위`). 경로와 응답 구조 실응답 미확인, 유형 값은 dry-run 로그(`lh_types`)로 일부 확인. 날짜가 없으면 알림 없음. 접수가 끝났거나, 날짜 없이 `PAN_SS`에 `마감`·`종료`가 있으면 새로 저장하지 않음 (`PAN_SS` 실제 값 미확인) |
-| LH 분양임대공고별 상세정보·공급정보 조회 | 응답 구조 조사(아래 `LH 상세·공급 API 조사`) | 공식 API, JSON | 조사 전용. 저장, 알림, 판별에 쓰지 않음. 로그에 필드 이름만 남김 |
+| LH 임대공고 조회 | LH 분양 공고 저장 | 공식 API, JSON | 저장과 상세 조회 코드. 판별은 상세·공급 정보가 있을 때만. 분양 공고 중 서울과 지정 지구(`lh.targetAreas`)만 남김(SETUP.md `LH 범위`). 경로와 응답 구조 실응답 미확인, 유형 값은 dry-run 로그(`lh_types`)로 일부 확인. 날짜가 없으면 알림 없음. 접수가 끝났거나, 날짜 없이 `PAN_SS`에 `마감`·`종료`가 있으면 새로 저장하지 않음 (`PAN_SS` 실제 값 미확인) |
+| LH 분양임대공고별 상세정보·공급정보 조회 | LH 분양 공고의 접수 일정, 주택형, 단지 주소, 로또 판별(아래 `LH 상세·공급 API`) | 공식 API, JSON | 사용. 블록과 필드 이름은 dry-run 구조 로그로 확인, 값 형식은 미확인(`lh_value_shapes`로 확인). 실패하거나 읽지 못하면 오류 메일 없이 예전 동작 |
 | SH 공고 | 서울 공공임대 | 미정 | v2 |
 | GH 공고 | 경기 공공임대 | 미정 | v2 |
 
@@ -35,28 +35,63 @@
 - LH 공급지역 값. 실행마다 남는 `lh_sale_regions` 줄(분양으로 남은 공고의 정규화된 공급지역별 건수)로 형식을 확인한다. 빈 공급지역은 `-`로 세고, 그 공고는 빼지 않는다(`lh_region_unknown`).
 - LH 공급지역 `CNP_CD_NM`이 `서울특별시`, `경기도`처럼 시도로 시작한다는 것. `normalizeRegion`으로 `서울`, `경기`로 바꿔 본다. 다른 형식이면 서울 공고도 지역 밖으로 빠질 수 있다.
 
-## LH 상세·공급 API 조사
+## LH 상세·공급 API
 
-2026-11에 승인받은 두 API다. `DATA_GO_KR_KEY`를 같이 쓰고 REST/JSON이다. 경로와 요청 변수는 공공데이터포털 화면에서 읽었고, 응답 필드는 토지 예시(`SS_CODE`, `RS_DTTM`, `LND_US_DS_CD_NM`, `LGDN_DTL_ADR`, `LNO`, `AR`, `SPL_XPC_AMT`, `CTRT_PLC_ADR`, `CTRT_PLC_DTL_ADR`)만 공개되어 있다. 주택 공고의 필드 이름과 응답의 중첩 형태는 모른다.
+2026-11에 승인받은 두 API다. `DATA_GO_KR_KEY`를 같이 쓰고 REST/JSON이다. 경로와 요청 변수는 공공데이터포털 화면에서 읽었다. 블록과 필드 이름은 2026-11 dry-run의 구조 로그(`lh_detail_schema`, `lh_supply_schema`)로 확인했고, **값의 형식은 확인하지 못했다**.
 
-- 상세: `https://apis.data.go.kr/B552555/lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1`. 접수처, 단지정보, 일정정보. 키 이름은 명세대로 `serviceKey`.
-- 공급: `https://apis.data.go.kr/B552555/lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1`. 주택형, 필지, 상가호 목록. 키 이름은 명세대로 `ServiceKey`.
-- 요청 변수: 필수 `SPL_INF_TP_CD`, `CCR_CNNT_SYS_DS_CD`, `PAN_ID`, `UPP_AIS_TP_CD`, 선택 `AIS_TP_CD`(값이 있을 때만 보낸다). 모두 목록 API 행의 값을 그대로 쓴다. 목록 파서가 공고의 `lhCodes`에 원본 값으로 둔다(`src/sources/lh.js`의 `extractLhCodes`). Notion에는 쓰지 않는다. 필수 값이 하나라도 없는 공고는 부르지 않고 `no_codes`로 센다.
+- 상세: `https://apis.data.go.kr/B552555/lhLeaseNoticeDtlInfo1/getLeaseNoticeDtlInfo1`. 키 이름은 명세대로 `serviceKey`. 응답 블록은 `dsSbd`(단지), `dsSplScdl`(공급 일정), `dsAhflInfo`(첨부), `dsCtrtPlc`(접수처), `dsEtcInfo`, `dsSch`(요청 코드 되풀이), `resHeader`(`RS_DTTM`, `SS_CODE`)다.
+- 공급: `https://apis.data.go.kr/B552555/lhLeaseNoticeSplInfo1/getLeaseNoticeSplInfo1`. 키 이름은 명세대로 `ServiceKey`. 응답 블록은 `dsList01`(주택형)이다.
+- 요청 변수: 필수 `SPL_INF_TP_CD`, `CCR_CNNT_SYS_DS_CD`, `PAN_ID`, `UPP_AIS_TP_CD`, 선택 `AIS_TP_CD`(값이 있을 때만 보낸다). 모두 목록 API 행의 값을 그대로 쓴다. 목록 파서가 공고의 `lhCodes`에 원본 값으로 둔다(`src/sources/lh.js`의 `extractLhCodes`). Notion에는 쓰지 않는다. 필수 값이 하나라도 없는 공고는 부르지 않는다.
+- 각 블록에는 이름 끝에 `Nm`이 붙은 짝 블록(`dsSbdNm` 등)이 있다. 열 이름표 행으로 보고(가정) 읽지 않는다. 블록은 이름이 정확히 같은 것만 읽는다(`src/lh-detail-map.js`의 `findBlock`).
 
-지금은 읽기 전용 조사다(`src/sources/lh-detail.js`). 모든 모드(dry-run 포함)에서 LH 범위 안 분양 공고마다 두 API를 한 번씩, API마다 실행당 `lh.detailMaxCalls`(10)번까지 부른다. 타임아웃은 `lh.detailTimeoutMs`, 재시도는 한 번이다. 결과는 저장, 알림, 판별, 상태 어디에도 쓰지 않는다. 승인 직후라 아직 열리지 않았을 수 있어 실패는 오류 메일 없이 `market` 줄의 `soft=`에 `lh_detail_*`, `lh_supply_*`로 한 번 세고, API마다 첫 실패 뒤에는 부르지 않는다. 오류 응답이 XML이면 `*_parse`로 보인다.
+### 필드 대응 (`src/lh-detail-map.js`)
 
-실행마다 다음 두 줄이 남는다. 값은 남기지 않고 블록 이름, 행 수, 필드 이름만 남긴다.
+| 필드 | 블록 | 쓰는 곳 | 형식 가정 |
+|---|---|---|---|
+| `HS_SBSC_ACP_TRG_CD_NM` | `dsSplScdl` | 단계 이름. `특별` → `특별공급`, `1순위` → `1순위`, `2순위` → `2순위`(공백 무시, 이 순서로 본다). 그 밖은 이름 그대로(없으면 `접수`) 단계로 남긴다 | 분류 이름 |
+| `ACP_DTTM` | `dsSplScdl` | 단계의 시작·종료일 | 날짜 하나 또는 범위. 아래 날짜 형식 |
+| `PZWR_ANC_DT` | `dsSplScdl` | 당첨자발표일. 행마다의 값 중 가장 늦은 날 | 날짜(범위면 시작일) |
+| `LCT_ARA_ADR` + `LCT_ARA_DTL_ADR` | `dsSbd` | 주소(공백으로 이음). 소재지가 있는 첫 단지 | 시도부터 적힌 주소 |
+| `BZDT_NM` | `dsSbd`, `dsList01` | 단지가 여럿이면 첫 단지의 주택형만 고른다 | 두 블록의 단지명이 같다 |
+| `HTY_NM` | `dsList01` | 주택형 이름 | |
+| `RSDN_DDO_AR` | `dsList01` | 전용면적(㎡). 시세 비교에 쓴다 | ㎡ 숫자 |
+| `SPL_AR` | `dsList01` | 공급면적(㎡). 읽기만 한다 | ㎡ 숫자 |
+| `SIL_AMT` | `dsList01` | 분양가(만원). 청약홈의 `최고 분양가`처럼 주택형 가격으로 쓴다 | 아래 금액 단위 |
+| `SIL_HSH_CNT` | `dsList01` | 공급 세대수(평균 분양가의 가중치) | 정수 |
+
+- **날짜 형식:** `YYYY.MM.DD`, `YYYY-MM-DD`, `YYYY/MM/DD`, `YYYY년 MM월 DD일`(월·일 한 자리 허용), `YYYYMMDD`(뒤에 `HHMM`·`HHMMSS`가 붙어도 됨)을 받는다. 시각은 버린다. 범위 구분은 `~`, `-`, ` - `다. 끝 날짜에 연도가 없으면(`2026.12.30 ~ 01.02`) 앞 날짜의 연도를 쓰고, 앞 날짜보다 이르면 다음 해로 본다. 날짜가 셋 이상이면 가장 이른 날과 늦은 날이다. 달력에 없는 날짜가 섞이면 읽지 못한 값이다.
+- **금액 단위:** 배치는 만원을 쓴다(청약홈 `LTTOT_TOP_AMOUNT`, 국토부 거래금액과 같음). 쉼표와 공백을 지우고, `원`·`만원`이 붙어 있으면 따른다. 단위가 없으면 1,000만 이상은 원으로 보고 10,000으로 나눠 반올림한다. 1,000만 원 미만 분양가는 없다고 가정한 것이다. 0 이하는 읽지 못한 값이다.
+- **면적:** 쉼표를 지운 ㎡ 숫자다. `㎡`, `m2`가 붙어도 된다. `84A` 같은 값은 읽지 못한 값이다.
+- **판별용 단지 주소:** 상세가 실패해 목록의 공급지역(`서울특별시 강서구`)만 있으면 주택형을 읽어도 판별하지 않는다.
+
+### 흐름과 대체 동작
+
+- 모든 모드(dry-run 포함)에서, LH 범위 안이고 접수가 끝나지 않은 LH 공고마다 상세와 공급을 한 번씩 부른다. API마다 실행당 `lh.detailMaxCalls`(10)번까지, 타임아웃은 `lh.detailTimeoutMs`, 재시도는 한 번이다. 상한을 넘은 공고는 예전 동작이다.
+- 일정을 하나라도 읽으면 공고의 단계를 바꾸고 `접수 시작일`·`접수 종료일`을 단계의 가장 이른 날과 늦은 날로 다시 계산한다. 그래서 LH의 `접수 시작일`은 더 이상 공고일이 아니다. 하나도 읽지 못하면 예전처럼 목록의 공고일~마감일 한 단계다.
+- 주소와 당첨자발표일은 읽었을 때만 바꾼다.
+- 실패(미승인, HTTP 오류, XML 오류 응답 등)는 오류 메일 없이 `market` 줄의 `soft=`에 `lh_detail_*`, `lh_supply_*`로 한 번 세고, API마다 첫 실패 뒤에는 부르지 않는다. 그 공고는 예전 동작이다.
+- 값이 있는데 읽지 못하면 null로 두고 `soft=`에 `lh_parse_failed:<필드>`로 센다(예: `lh_parse_failed:ACP_DTTM:1`). 빈 값은 세지 않는다.
+- 로또 판별은 SETUP.md 9장 `LH 공공분양 판별`을 본다. 추천 전형은 바꾸지 않았다(LH 자료에 특별공급 유형별 세대수가 없다).
+
+### 로그
+
+- `collected` 줄: `lh_detail_ok`(상세 응답을 받은 공고), `lh_schedule_parsed`(단계를 바꾼 공고), `lh_models_parsed`(판별에 쓸 수 있는 주택형을 읽은 공고), `lh_evaluated`(시세로 판별한 LH 공고).
+- `lh_value_shapes` 줄: 값의 형식을 확인하려고 남긴다. 값 자체는 남기지 않는다.
 
 ```
-lh_detail_schema calls=<호출> ok=<JSON 응답> no_codes=<코드 없음> capped=<상한으로 건너뜀> stopped=<첫 실패 종류|none> dropped_keys=<버린 키> blocks=<블록>:<행 수>,... fields=<블록>[<필드>,...],...
-lh_supply_schema (같은 형식)
+lh_value_shapes ACP_DTTM=[<모양>]x<건수>,... PZWR_ANC_DT=... CTRT_ST_DT=... SIL_AMT=... RSDN_DDO_AR=... SPL_AR=... MVIN_XPC_YM=... HS_SBSC_ACP_TRG_CD_NM=[<이름>]x<건수>,...
 ```
 
-- 블록은 배열이나 객체를 값으로 가진 키의 이름이다. 위치가 달라도 이름이 같으면 합치고, 모든 응답의 키를 합집합으로 모아 이름순으로 적는다. 최상위가 바로 행 배열이면 `_root`로 적는다.
-- 필드는 문자열, 숫자 등 단일 값을 가진 키다. 영문자나 `_`로 시작하고 `[A-Za-z0-9_]`만 있는 40자 이하 키만 적고, 나머지(한글 키, 숫자로 시작하는 키)는 그 아래까지 버리고 `dropped_keys`로 센다.
-- 한 줄은 1,500자에서 이름 단위로 자르고 `...`을 붙인다.
+  - 모양은 숫자를 `9`, 한글 음절을 `가`, 영문자를 `a`로 바꾸고 ASCII 문장부호, 공백(하나로 줄임), `㎡`, `·`은 둔다. 그 밖의 글자는 `*`다. 40자에서 자른다. JSON 숫자는 앞에 `N`을 붙이고(`N999999999`), 빈 문자열은 `EMPTY`, null은 `NULL`이다. 필드마다 많은 순 5개이고 없으면 `none`이다.
+  - 접수 대상 이름은 한글, 숫자, `·`, 괄호, `/`, 공백만 남기고 20자에서 잘라 많은 순 20개를 남긴다. 분류 이름이라 공개 로그에 남긴다. 다만 주소처럼 보이거나(`특별시`, `광역시`, `…구 …동`) 세 자리 이상 숫자가 있으면 `(생략)`으로 센다.
+  - 한 줄은 2,000자에서 자른다.
+- `lh_detail_schema`, `lh_supply_schema` 줄(응답 구조, 필드 이름만)은 구조 확인이 끝나 기본으로 끈다. `lh.schemaProbeLog`를 `true`로 두면 다시 남는다. 형식은 `<접두어> calls= ok= no_codes= capped= stopped= dropped_keys= blocks=<블록>:<행 수>,... fields=<블록>[<필드>,...],...`이고 1,500자에서 자른다.
 
-다음 단계는 이 로그로 실제 필드 이름을 확인한 뒤 정한다.
+### 실응답으로 확인할 항목
+
+- `ACP_DTTM`의 실제 형식(시각 포함 여부, 범위 구분), `SIL_AMT`의 단위(원인지 만원인지, 최고가인지 평균가인지), `RSDN_DDO_AR` 형식, `HS_SBSC_ACP_TRG_CD_NM`의 이름들. 첫 실행의 `lh_value_shapes`로 본다.
+- `…Nm` 짝 블록이 정말 열 이름표인지.
+- 단지가 여럿인 공고에서 `dsSbd`와 `dsList01`의 `BZDT_NM`이 같은 값인지.
 
 ## 공동주택 API 공식 명세
 

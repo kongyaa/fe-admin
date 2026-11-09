@@ -9,6 +9,7 @@ import {
   meetsPriceRule,
   restrictedType,
 } from './market-estimate.js';
+import { hasLhModels } from './lh-detail-map.js';
 import { recommendForProfile, unapplicableReason } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
@@ -42,6 +43,8 @@ function flagTrigger(notice, lotto) {
     if (lotto.includePriceCap && notice.flags.priceCap) return flag('priceCap', '분양가상한제 적용');
     if (lotto.includePublicDistrict && notice.flags.publicDistrict) return flag('publicDistrict', '공공주택지구');
   }
+  // LH 공공분양은 분양가상한제 대상이다. flags.priceCap은 상세 정보를 덮을 때 분양 유형에만 켠다(src/lh-detail-map.js).
+  if (notice.kind === 'lh' && lotto.includePriceCap && notice.flags?.priceCap) return flag('priceCap', 'LH 공공분양(분양가상한제)');
   return null;
 }
 
@@ -165,9 +168,11 @@ async function readPresale(getPresale, code, months) {
 export async function evaluateLotto(notice, options) {
   let models = null;
   let modelsFailed = false;
+  // LH 주택형은 조회하지 않고 상세 정보를 덮을 때 읽어 둔 값(notice.models)을 쓴다. 없으면 null이다.
+  const source = notice.kind === 'lh' ? async () => notice.models ?? null : options.getModels;
   const getModels = async (target) => {
     try {
-      models = await options.getModels(target);
+      models = await source(target);
     } catch (error) {
       modelsFailed = true;
       throw error;
@@ -250,10 +255,6 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
   if (!config.alertRegions.includes(notice.region)) {
     return result(STATUS.OUT_OF_SCOPE, '알림 지역이 아님');
   }
-  if (notice.kind === 'lh') {
-    return result(STATUS.OUT_OF_SCOPE, `LH 공고는 판별 대상이 아님${notice.noticeStatus ? ` (${notice.noticeStatus})` : ''}`);
-  }
-
   // 판정 조건보다 먼저 본다. 저장된 추정 값이 남지 않도록 clearMarket으로 지우게 한다.
   const restricted = restrictedType(notice, market);
   if (restricted) {
@@ -269,6 +270,13 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
       clearMarket: true,
       averagePrice: averagePriceOf(restrictedModels),
     });
+  }
+
+  // LH 공고는 상세·공급 정보로 주택형과 단지 주소를 읽었을 때만 판별한다. 없으면 예전처럼 대상 외다.
+  if (notice.kind === 'lh') {
+    const status = notice.noticeStatus ? ` (${notice.noticeStatus})` : '';
+    if (!hasLhModels(notice.models)) return result(STATUS.OUT_OF_SCOPE, `LH 상세 정보 없음${status}`);
+    if (!resolveAddress(notice.address, notice.region).code) return result(STATUS.OUT_OF_SCOPE, `LH 단지 주소 미매핑${status}`);
   }
 
   const trigger = flagTrigger(notice, lotto);

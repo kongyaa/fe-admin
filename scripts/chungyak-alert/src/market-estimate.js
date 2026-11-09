@@ -17,7 +17,11 @@ export function restrictedType(notice, market) {
   const name = compact(notice.name);
   const keyword = market.restrictedNameKeywords.find((item) => name.includes(compact(item)));
   if (keyword) return keyword;
-  return notice.houseSecd === '10' || compact(notice.typeLabel).includes('신혼희망') ? '신혼희망' : null;
+  // LH는 유형(`분양주택 토지임대부`, `공공분양신혼희망 …`, `… 나눔형`)에도 제한 유형이 온다. 청약홈 유형 라벨에는 이 단어가 없다.
+  const type = compact(notice.typeLabel);
+  const typeKeyword = market.restrictedNameKeywords.find((item) => type.includes(compact(item)));
+  if (typeKeyword) return typeKeyword;
+  return notice.houseSecd === '10' || type.includes('신혼희망') ? '신혼희망' : null;
 }
 
 export function monthsBetween(from, to) {

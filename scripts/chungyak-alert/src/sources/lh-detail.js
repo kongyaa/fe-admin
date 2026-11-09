@@ -1,8 +1,8 @@
 import { AppError, defaultSleep, fetchWithRetry, safeError } from '../util.js';
 
 // LH 분양임대공고별 상세정보(접수처, 단지정보, 일정정보)와 공급정보(주택형, 필지, 상가호) 조회.
-// 지금은 응답 구조를 배우는 읽기 전용 조사(probe)다. 결과는 저장, 알림, 판별 어디에도 쓰지 않고, 로그에는 필드 이름만 남긴다.
-// 경로와 요청 변수는 공공데이터포털 화면에서 읽었고 실응답으로 확인하지 않았다.
+// 응답은 src/lh-detail-map.js가 일정, 주택형, 주소로 바꾼다. 여기서는 호출과 구조(필드 이름) 수집만 한다.
+// 경로와 요청 변수는 공공데이터포털 화면에서 읽었다. 블록 이름은 2026-11 dry-run의 구조 로그로 확인했다.
 // 키 이름은 명세대로 상세는 serviceKey, 공급은 ServiceKey다(공동주택 클라이언트도 API마다 명세의 이름을 쓴다).
 export const LH_DETAIL_API = {
   kind: 'lh_detail',
@@ -145,20 +145,7 @@ export function createLhDetailClient({ fetch, key, limits, sleep = defaultSleep,
     fetchLhDetail: (codes) => detail.request(codes),
     fetchLhSupply: (codes) => supply.request(codes),
     stats: () => ({ detail: detail.stats(), supply: supply.stats() }),
-    // `lh_detail_schema ...`, `lh_supply_schema ...` 두 줄. 필드 이름과 건수만 있다.
+    // `lh_detail_schema ...`, `lh_supply_schema ...` 두 줄. 필드 이름과 건수만 있다. main.js는 lh.schemaProbeLog가 켜져 있을 때만 남긴다.
     schemaLines: () => [detail.line('lh_detail_schema'), supply.line('lh_supply_schema')],
   };
-}
-
-// 공고마다 두 API를 한 번씩 부른다. 실패는 클라이언트가 이미 soft로 셌으므로 여기서는 삼킨다. 결과는 버린다.
-export async function probeLhSchemas(notices, client) {
-  for (const notice of notices) {
-    for (const call of [client.fetchLhDetail, client.fetchLhSupply]) {
-      try {
-        await call(notice.lhCodes);
-      } catch {
-        // 첫 실패 뒤에는 호출하지 않는다.
-      }
-    }
-  }
 }

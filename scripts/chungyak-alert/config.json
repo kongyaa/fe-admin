@@ -8,6 +8,7 @@
     "lookaheadDays": 90,
     "detailMaxCalls": 10,
     "detailTimeoutMs": 10000,
+    "schemaProbeLog": false,
     "excludeTypeKeywords": ["토지", "상가"],
     "filterSaleArea": true,
     "saleTypes": ["분양주택", "공공분양", "신혼희망타운", "뉴홈", "나눔형", "일반형"],
@@ -55,7 +56,7 @@
     }
   },
   "market": {
-    "restrictedNameKeywords": ["토지임대", "지분적립", "신혼희망"],
+    "restrictedNameKeywords": ["토지임대", "지분적립", "신혼희망", "나눔형"],
     "optionCostManwon": 1500,
     "acquisitionTax": {
       "lowPriceManwon": 60000,
