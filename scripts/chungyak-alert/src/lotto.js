@@ -189,15 +189,21 @@ export async function evaluateLotto(notice, options) {
   return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${recommendation.text}` : recommendation.text };
 }
 
-// lotto.triggerPriceCheck가 일반 객체가 아니면 없는 것(예전 동작)으로 보고, true인 조건만 가격을 확인한다.
-const priceCheckOn = (lotto, key) => {
-  const checks = lotto.triggerPriceCheck;
-  const plain = checks !== null && typeof checks === 'object' && !Array.isArray(checks);
-  return plain && checks[key] === true;
-};
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// remainderMaxRound가 0보다 큰 수일 때만 반복 공급 규칙을 쓴다. 0이나 null이면 끈다.
-const maxRoundOf = (lotto) => (Number.isFinite(lotto.remainderMaxRound) && lotto.remainderMaxRound > 0 ? lotto.remainderMaxRound : null);
+// lotto.triggerPriceCheck가 일반 객체가 아니면 없는 것(예전 동작)으로 보고, true인 조건만 가격을 확인한다.
+const priceCheckOn = (lotto, key) => isPlainObject(lotto.triggerPriceCheck) && lotto.triggerPriceCheck[key] === true;
+
+// remainderMaxRound가 양의 정수일 때만 반복 공급 규칙을 쓴다. null이면 끈다.
+const maxRoundOf = (lotto) => (Number.isInteger(lotto.remainderMaxRound) && lotto.remainderMaxRound > 0 ? lotto.remainderMaxRound : null);
+
+// 있는데 형식이 틀린 조건형 설정. 예전 동작으로 돌아가므로 로그의 soft=bad_trigger_config로 알린다.
+export function badTriggerConfig(lotto) {
+  const checks = lotto.triggerPriceCheck;
+  const maxRound = lotto.remainderMaxRound;
+  return (checks !== undefined && !isPlainObject(checks))
+    || (maxRound !== undefined && maxRound !== null && maxRoundOf(lotto) === null);
+}
 
 // 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다.
 // 신뢰도 중 이상 추정이 있으면 안전 마진 부호로 정한다(가격 기준을 넘으면 마진이 양수라 로또다).
@@ -266,6 +272,7 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
 
   const trigger = flagTrigger(notice, lotto);
   const usesPrice = notice.kind === 'apt' || Boolean(trigger);
+  if (badTriggerConfig(lotto)) onSoftOnce('bad_trigger_config');
 
   if (!usesPrice) {
     const label = notice.kind === 'remainder' || notice.kind === 'arbitrary' ? '설정에서 제외된 유형' : '판별 대상 유형이 아님';
@@ -310,6 +317,8 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
           stations: lookup.stations,
           stationLookupFailed: lookup.failed,
           presaleOk: presale.ok,
+          // 가격을 확인하는 조건형 후보만 신뢰도 중 이상 주택형을 먼저 본다. 조건 없는 공고는 예전 순서다.
+          preferConfident: Boolean(trigger) && priceCheckOn(lotto, trigger.key),
           lotto,
           market,
           today,

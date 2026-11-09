@@ -219,7 +219,7 @@ test('non-APT types are 대상 외 and LH makes no calls', async () => {
 
 const market = config.market;
 const subject = { umd: '역삼동', brandTier: 'other', ageYears: 0, walkMinutes: null, name: '' };
-const best = (models, rows) => estimateBestMargin({ models, rows, subject, lotto: config.lotto, market, today });
+const best = (models, rows, extra = {}) => estimateBestMargin({ models, rows, subject, lotto: config.lotto, market, today, ...extra });
 
 test('the comparable scope prefers 법정동 and falls back to 시군구', () => {
   const models = [{ houseType: '084A', area: 84, price: 100000 }];
@@ -471,15 +471,94 @@ test('a repeated round with a 하 estimate that meets the price rule stays 로�
   assert.ok(result.reason.startsWith('수도권 무순위·잔여세대; 안전 마진 8.0억'), result.reason);
 });
 
-test('bad trigger config falls back to the old behaviour', async () => {
+// 59㎡는 단지 1곳(신뢰도 하): 88500 - 30000 - 1500 - 330 = 56670(가격 기준 넘음). 84㎡는 단지 2곳(신뢰도 중): -12400.
+const richWeakModels = mixedModels(30000);
+const richWeakData = [...two(5, 1100), ...trades(5, 1500, { area: 59, amount: 88500, jibun: 'b1' })];
+
+test('estimateBestMargin puts the confident model before the largest margin only when asked', () => {
+  const plain = best(richWeakModels, richWeakData);
+  assert.equal(plain.houseType, '059A');
+  assert.equal(plain.confidence, '하');
+  assert.equal(plain.margin, 56670);
+
+  const preferred = best(richWeakModels, richWeakData, { preferConfident: true });
+  assert.equal(preferred.houseType, '084A');
+  assert.equal(preferred.confidence, '중');
+  assert.equal(preferred.margin, -12400);
+
+  // 신뢰도 중 이상이면서 기준을 넘는 주택형은 어느 쪽이든 먼저다.
+  const qualifying = [...two(5, 2200), ...trades(5, 1500, { area: 59, amount: 88500, jibun: 'b1' })];
+  assert.equal(best(richWeakModels, qualifying).houseType, '084A');
+  assert.equal(best(richWeakModels, qualifying, { preferConfident: true }).houseType, '084A');
+  // 신뢰도 중 이상 주택형이 없으면 전체에서 마진이 가장 큰 것이다.
+  assert.equal(best(richWeakModels, trades(5, 1500, { area: 59, amount: 88500, jibun: 'b1' }), { preferConfident: true }).houseType, '059A');
+});
+
+test('a non-trigger APT keeps the old selection, so a stored 로또 is kept by the 하 guard', async () => {
+  const result = await evaluate(apt(), { models: richWeakModels, data: richWeakData });
+  assert.equal(result.confidence, '하');
+  assert.equal(result.margin, 56670);
+  assert.equal(result.status, STATUS.NOT);
+  assert.ok(result.reason.startsWith('가격 기준은 넘지만 추정 신뢰도가 하라 로또로 보지 않음'));
+  assert.equal(keepPreviousLotto(result, STATUS.LOTTO).status, STATUS.LOTTO);
+});
+
+test('a trigger with a 하 type meeting the rule and a 중 type with a loss is 아님', async () => {
+  const result = await evaluate(remainder(), { models: richWeakModels, data: richWeakData });
+  assert.equal(result.confidence, '중');
+  assert.equal(result.margin, -12400);
+  assert.equal(result.status, STATUS.NOT);
+  assert.ok(result.reason.startsWith('수도권 무순위·잔여세대 해당이나 시세 대비 이점 없음; '));
+  assert.equal(keepPreviousLotto(result, STATUS.LOTTO).status, STATUS.NOT);
+  // 가격 확인을 끈 조건은 예전 순서와 예전 판정이다.
+  const unchecked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, remainder: false } };
+  const old = await evaluate(remainder(), { models: richWeakModels, data: richWeakData, overrides: unchecked });
+  assert.equal(old.status, STATUS.LOTTO);
+  assert.equal(old.margin, 56670);
+});
+
+test('bad trigger config falls back to the old behaviour and is reported once', async () => {
+  const run = async (notice, data, overrides) => {
+    const soft = [];
+    const result = await evaluateLotto(notice, {
+      config: { ...config, lotto: { ...config.lotto, ...overrides } },
+      today,
+      getModels: async () => [{ houseType: '084A', area: 84, price: 100000 }],
+      getTrades: async () => data,
+      onSoftOnce: (kind) => soft.push(kind),
+    });
+    return { result, soft };
+  };
   const repeated = remainder('합성단지(14차)');
-  for (const remainderMaxRound of [0, -1, null, '3']) {
-    assert.equal((await evaluate(repeated, { data: [], overrides: { remainderMaxRound } })).status, STATUS.LOTTO, String(remainderMaxRound));
+  for (const remainderMaxRound of [0, -1, 2.5, '3']) {
+    const { result, soft } = await run(repeated, [], { remainderMaxRound });
+    assert.equal(result.status, STATUS.LOTTO, String(remainderMaxRound));
+    assert.deepEqual(soft, ['bad_trigger_config'], String(remainderMaxRound));
   }
-  for (const triggerPriceCheck of [true, 'remainder', ['remainder'], null, { remainder: 'yes' }]) {
-    const result = await evaluate(remainder(), { data: two(5, 1100), overrides: { triggerPriceCheck } });
+  for (const triggerPriceCheck of [true, 'remainder', ['remainder'], null]) {
+    const { result, soft } = await run(remainder(), two(5, 1100), { triggerPriceCheck });
     assert.equal(result.status, STATUS.LOTTO, JSON.stringify(triggerPriceCheck));
+    assert.deepEqual(soft, ['bad_trigger_config'], JSON.stringify(triggerPriceCheck));
   }
+  // 끄는 값(null)과 true가 아닌 키 값은 형식 오류가 아니다. 빠진 설정도 오류가 아니다.
+  const { lotto } = config;
+  const { triggerPriceCheck: _checks, remainderMaxRound: _round, ...withoutKeys } = lotto;
+  // null은 반복 공급 규칙만 끈다(추정이 없는 14차가 로또). 'yes'는 가격 확인을 끈다(중 음수 마진도 로또).
+  for (const [overrides, data] of [[{ remainderMaxRound: null }, []], [{ triggerPriceCheck: { remainder: 'yes' } }, two(5, 1100)]]) {
+    const { result, soft } = await run(repeated, data, overrides);
+    assert.equal(result.status, STATUS.LOTTO, JSON.stringify(overrides));
+    assert.deepEqual(soft, []);
+  }
+  const missing = await evaluateLotto(remainder(), {
+    config: { ...config, lotto: withoutKeys },
+    today,
+    getModels: async () => [{ houseType: '084A', area: 84, price: 100000 }],
+    getTrades: async () => two(5, 1100),
+    onSoftOnce: () => assert.fail('missing keys are not a config error'),
+  });
+  assert.equal(missing.status, STATUS.LOTTO);
+  // 기본 설정은 오류가 아니다.
+  assert.deepEqual((await run(repeated, [], {})).soft, []);
 });
 
 test('a previous 로또 is dropped by a confident no-advantage or a repeated round', async () => {
