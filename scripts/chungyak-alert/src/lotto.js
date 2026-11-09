@@ -1,16 +1,19 @@
 import {
   CONFIDENCE,
   STATION,
+  badSharedGainConfig,
   buildSubject,
   cleanTrades,
   estimateBestMargin,
   lookupCandidates,
+  marginRateOf,
   matchApartment,
   meetsPriceRule,
   restrictedType,
+  sharedGainOf,
 } from './market-estimate.js';
 import { hasLhModels } from './lh-detail-map.js';
-import { recommendForProfile, unapplicableReason } from './recommend.js';
+import { lhRecommendPending, recommendForProfile, unapplicableReason } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
 
@@ -189,6 +192,11 @@ export async function evaluateLotto(notice, options) {
     const kept = '(추천: 조회 실패로 이전 값 유지)';
     return { ...evaluation, reason: evaluation.reason ? `${evaluation.reason}\n${kept}` : kept };
   }
+  // LH 상세·공급 조회가 실패했거나 상한에 걸리면 단계를 몰라 저장된 추천을 그대로 둔다. 실행마다 추천이 바뀌지 않게 한다.
+  if (lhRecommendPending(notice, options.config)) {
+    const kept = '(추천: 조회 실패로 이전 값 유지)';
+    return { ...evaluation, reason: evaluation.reason ? `${evaluation.reason}\n${kept}` : kept };
+  }
   // 추천이 없어도 v2 신청자 정보의 예치금 부족처럼 남길 말이 있으면 판별 근거에 붙인다.
   const { recommendation, text } = recommendForProfile({ notice, models, profile: options.profile, config: options.config, today: options.today });
   if (!text) return { ...evaluation, recommendation };
@@ -253,6 +261,117 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
   return candidate;
 }
 
+// 주택형과 실거래로 공고의 가장 나은 주택형 추정을 구한다. 결과는 { best, undetermined, failed, unmapped }다.
+// 추정이 없으면 best가 null이고 undetermined에 까닭이 있다. failed는 실거래 조회가 실패해 이번에는 모르는 경우,
+// unmapped는 단지 주소의 시군구 코드를 찾지 못한 경우다.
+async function estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident, onError, onSoft }) {
+  const { lotto, market } = config;
+  const { code, umd, village } = resolveAddress(notice.address, notice.region);
+  if (!code) return { best: null, undetermined: '시군구 코드 미매핑', unmapped: true };
+  try {
+    const months = completeMonths(today, lotto.tradeMonths);
+    const trades = await getTrades(code, months);
+    const presale = await readPresale(getPresale, code, months);
+    const rows = cleanTrades([...trades, ...presale.rows], { market, lotto, today });
+    const subject = buildSubject({
+      name: notice.name,
+      builder: notice.builder,
+      umd,
+      village,
+      jibun: subjectJibun(notice.address, umd, village),
+      walkMinutes,
+      market,
+    });
+    const lookup = await resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft });
+    const best = estimateBestMargin({
+      models,
+      rows,
+      subject,
+      stations: lookup.stations,
+      stationLookupFailed: lookup.failed,
+      presaleOk: presale.ok,
+      preferConfident,
+      lotto,
+      market,
+      today,
+    });
+    return { best, undetermined: best ? null : '실거래 표본 부족' };
+  } catch (error) {
+    onError(safeError(error));
+    return { best: null, undetermined: '실거래 조회 실패', failed: true };
+  }
+}
+
+// 추정을 Notion 열 값으로 옮긴다.
+const priceFields = (best) => ({
+  topPrice: best.price,
+  estimate: best.estimate,
+  margin: best.margin,
+  marginRate: best.marginRate,
+  confidence: best.confidence,
+  // 건수만 센다. 같은 단지 거래로 계산하면 역 보정이 필요 없어 비어 있다.
+  stationState: best.basis.stationState ?? null,
+  complexOutliers: best.outliers ?? 0,
+});
+
+// 참고 마진의 판별 근거 머리말. 신혼희망타운은 수익공유형 대출을 받을 때 차익을 나누므로 대출 조건 확인을 적는다.
+const sharedGainHead = ({ type, factor }) => (type === '신혼희망'
+  ? '참고 마진(신혼희망타운: 수익공유형 대출 조건 확인)'
+  : `참고 마진(차익 공유 유형, 내 몫 ×${factor})`);
+
+// 차익을 나누는 제한 유형(나눔형, 신혼희망타운)의 참고 마진. 로또 판별은 하지 않아 상태는 늘 대상 외이고 알림 대상이 아니다.
+// 보통 공고처럼 추정한 뒤 안전 마진이 양수일 때만 내 몫(market.sharedGain 계수)을 곱한다. 음수 마진은 그대로 둔다.
+// 마진율은 바꾼 마진을 최고 분양가로 나눈 값이다. 추정 시세, 시세 신뢰도, 분양가는 보통 공고와 같다.
+// 자료가 없으면(주택형, 단지 주소, 실거래 표본) 예전처럼 저장된 추정 값을 지우고(clearMarket) 까닭을 적는다.
+// 조회가 실패하면(LH 상세 조회 실패·상한, 주택형·실거래 조회 실패) 이번에는 모르는 것이라 저장된 값을 지우지 않는다.
+async function evaluateSharedGain(notice, shared, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes, onError, onSoft, onSoftOnce }) {
+  const none = (why, { clear = true, averagePrice = null } = {}) => ({
+    status: STATUS.OUT_OF_SCOPE,
+    reason: `제한 유형(${shared.type})은 로또 판별 대상이 아님; 참고 마진 없음(${why})`,
+    topPrice: null,
+    estimate: null,
+    margin: null,
+    marginRate: null,
+    confidence: null,
+    averagePrice,
+    ...(clear ? { clearMarket: true } : {}),
+  });
+  if (notice.kind === 'lh') {
+    const pending = LH_PENDING_REASONS[notice.lhDetailState];
+    if (pending) return none(pending, { clear: false });
+    if (!hasLhModels(notice.models)) {
+      if (notice.lhDetailState !== 'ok') return none('LH 상세 정보 없음');
+      return none(notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음');
+    }
+  }
+  let models = null;
+  try {
+    models = await getModels(notice);
+  } catch {
+    // 예전 제한 유형처럼 오류 메일 없이 실행당 한 번만 건수로 남긴다.
+    onSoftOnce('average_price_lookup_failed');
+  }
+  if (!models) return none('주택형 정보 조회 실패', { clear: false });
+  const averagePrice = averagePriceOf(models);
+  if (!models.some((model) => model.area > 0 && model.price > 0)) return none('주택형 정보 없음', { averagePrice });
+  const { best, undetermined, failed, unmapped } = await estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident: false, onError, onSoft });
+  if (!best) {
+    const why = unmapped && notice.kind === 'lh' ? 'LH 단지 주소 미매핑' : undetermined;
+    return none(why, { clear: !failed, averagePrice });
+  }
+  const margin = best.margin > 0 ? Math.round(best.margin * shared.factor) : best.margin;
+  const adjusted = margin !== best.margin ? ` ${eok(margin)}` : '';
+  return {
+    status: STATUS.OUT_OF_SCOPE,
+    reason: `${sharedGainHead(shared)}${adjusted}; ${priceText(best)}`,
+    ...priceFields(best),
+    margin,
+    marginRate: marginRateOf(margin, best.price),
+    averagePrice,
+    referenceMargin: true,
+  };
+}
+
 async function evaluatePrice(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {}, onSoftOnce = onSoft }) {
   const { lotto, market } = config;
   const result = (status, reason, extra = {}) => ({
@@ -264,6 +383,10 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
   }
   // 판정 조건보다 먼저 본다. 저장된 추정 값이 남지 않도록 clearMarket으로 지우게 한다.
   const restricted = restrictedType(notice, market);
+  if (badSharedGainConfig(market)) onSoftOnce('bad_shared_gain_config');
+  // 차익을 나누는 제한 유형(나눔형, 신혼희망타운)은 대상 외로 두되 참고 마진을 적는다. 토지임대부, 지분적립형은 아래처럼 비운다.
+  const shared = restricted ? sharedGainOf(notice, market) : null;
+  if (shared) return evaluateSharedGain(notice, shared, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes, onError, onSoft, onSoftOnce });
   if (restricted) {
     // 평균 분양가는 공고의 사실이라 제한 유형에도 적는다. 실거래는 조회하지 않는다.
     // 표시용 값이라 실패해도 오류 메일 없이 실행당 한 번만 건수로 남긴다.
@@ -314,58 +437,12 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
   let best = null;
   let undetermined = models ? null : '주택형 정보 조회 실패';
   if (models) {
-    const { code, umd, village } = resolveAddress(notice.address, notice.region);
-    if (!code) {
-      undetermined = '시군구 코드 미매핑';
-    } else {
-      try {
-        const months = completeMonths(today, lotto.tradeMonths);
-        const trades = await getTrades(code, months);
-        const presale = await readPresale(getPresale, code, months);
-        const rows = cleanTrades([...trades, ...presale.rows], { market, lotto, today });
-        const subject = buildSubject({
-          name: notice.name,
-          builder: notice.builder,
-          umd,
-          village,
-          jibun: subjectJibun(notice.address, umd, village),
-          walkMinutes,
-          market,
-        });
-        const lookup = await resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft });
-        best = estimateBestMargin({
-          models,
-          rows,
-          subject,
-          stations: lookup.stations,
-          stationLookupFailed: lookup.failed,
-          presaleOk: presale.ok,
-          // 가격을 확인하는 조건형 후보만 신뢰도 중 이상 주택형을 먼저 본다. 조건 없는 공고는 예전 순서다.
-          preferConfident: Boolean(trigger) && priceCheckOn(lotto, trigger.key),
-          lotto,
-          market,
-          today,
-        });
-        if (!best) undetermined = '실거래 표본 부족';
-      } catch (error) {
-        onError(safeError(error));
-        undetermined = '실거래 조회 실패';
-      }
-    }
+    // 가격을 확인하는 조건형 후보만 신뢰도 중 이상 주택형을 먼저 본다. 조건 없는 공고는 예전 순서다.
+    const preferConfident = Boolean(trigger) && priceCheckOn(lotto, trigger.key);
+    ({ best, undetermined } = await estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident, onError, onSoft }));
   }
 
-  const price = best
-    ? {
-      topPrice: best.price,
-      estimate: best.estimate,
-      margin: best.margin,
-      marginRate: best.marginRate,
-      confidence: best.confidence,
-      // 건수만 센다. 같은 단지 거래로 계산하면 역 보정이 필요 없어 비어 있다.
-      stationState: best.basis.stationState ?? null,
-      complexOutliers: best.outliers ?? 0,
-    }
-    : { topPrice };
+  const price = best ? priceFields(best) : { topPrice };
   price.averagePrice = averagePrice;
 
   // LH는 비교 단지가 없는 신도시 블록이 많아, 추정이 없으면 다른 분양가상한제 공고와 달리 로또로 두지 않고 판별 불가다.

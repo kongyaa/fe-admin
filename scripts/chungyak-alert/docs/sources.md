@@ -90,11 +90,12 @@
 - 주소와 당첨자발표일은 읽었을 때만 바꾼다.
 - 실패(미승인, HTTP 오류, XML 오류 응답 등)는 오류 메일 없이 `market` 줄의 `soft=`에 `lh_detail_*`, `lh_supply_*`로 한 번 세고, API마다 첫 실패 뒤에는 부르지 않는다. 그 공고는 예전 동작이다.
 - 값이 있는데 읽지 못하면 null로 두고 `soft=`에 `lh_parse_failed:<필드>`로 센다(예: `lh_parse_failed:ACP_DTTM:1`). 빈 값은 세지 않는다.
-- 로또 판별은 SETUP.md 9장 `LH 공공분양 판별`을 본다. 추천 전형은 바꾸지 않았다(LH 자료에 특별공급 유형별 세대수가 없다).
+- 로또 판별은 SETUP.md 9장 `LH 공공분양 판별`, 나눔형·신혼희망타운의 참고 마진은 9장 `차익 공유 유형의 참고 마진`을 본다.
+- 추천 전형은 SETUP.md 11장 `LH 공공분양 추천`을 본다. LH 자료에 특별공급 유형별 세대수가 없어 세대수가 아니라 접수 대상 이름(`HS_SBSC_ACP_TRG_CD_NM`)으로 전형을 고른다(`신생아`, `신혼부부`·`예비신혼부부`, `생애최초`만 신청자 전형). 이름 형식은 2026-11 실응답의 신혼희망타운 예(`신혼부부`, `예비신혼부부`, `한부모가족`) 말고는 확인하지 못했다. 이름에 전형 단어가 없으면(예: `특별공급`만) 특별공급을 추천하지 않고 1순위로 간다. 소득·자산 기준과 납입 인정 금액은 자료가 없어 보지 않는다.
 
 ### 로그
 
-- `collected` 줄: `lh_detail_ok`(상세 응답을 받은 공고), `lh_schedule_parsed`(단계를 바꾼 공고), `lh_models_parsed`(판별용 주택형을 붙인 공고), `lh_models_unattached`(주택형을 읽었지만 단지 주소가 없어 붙이지 않은 공고), `lh_model_rows_merged`(같은 주택형이라 합친 행), `lh_detail_capped`, `lh_supply_capped`(상한 때문에 그 API를 부르지 못한 공고), `lh_evaluated`(시세로 `로또`나 `아님`을 정한 LH 공고. 이전 판별 유지 전 값).
+- `collected` 줄: `lh_detail_ok`(상세 응답을 받은 공고), `lh_schedule_parsed`(단계를 바꾼 공고), `lh_models_parsed`(판별용 주택형을 붙인 공고), `lh_models_unattached`(주택형을 읽었지만 단지 주소가 없어 붙이지 않은 공고), `lh_model_rows_merged`(같은 주택형이라 합친 행), `lh_detail_capped`, `lh_supply_capped`(상한 때문에 그 API를 부르지 못한 공고), `lh_evaluated`(시세로 `로또`나 `아님`을 정한 LH 공고. 이전 판별 유지 전 값), `lh_recommended`(추천 전형을 정한 LH 공고), `reference_margin`(참고 마진을 적은 공고, 청약홈 포함). 건수만 남기고 신청자 이름표와 공고 이름은 남기지 않는다.
 - `lh_value_shapes` 줄: 값의 형식을 확인하려고 남긴다. 값 자체는 남기지 않는다.
 
 ```

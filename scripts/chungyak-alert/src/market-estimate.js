@@ -24,6 +24,40 @@ export function restrictedType(notice, market) {
   return notice.houseSecd === '10' ? '신혼희망' : null;
 }
 
+// restrictedType과 같은 규칙으로 찾은 제한 유형 키워드를 모두 돌려준다(restrictedNameKeywords 순서).
+// 이름과 유형에 여러 제한 유형이 섞인 공고(예: 나눔형이면서 토지임대부)를 가리는 데 쓴다.
+export function restrictedKeywords(notice, market) {
+  const name = compact(notice.name);
+  const type = compact(notice.typeLabel);
+  const found = market.restrictedNameKeywords.filter((item) => name.includes(compact(item)) || type.includes(compact(item)));
+  if (notice.houseSecd === '10' && !found.includes('신혼희망')) found.push('신혼희망');
+  return found;
+}
+
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+// 차익 공유 계수는 0보다 크고 1 이하만 쓴다.
+const validShare = (value) => Number.isFinite(value) && value > 0 && value <= 1;
+
+// 있는데 형식이 틀린 market.sharedGain. 참고 마진을 계산하지 않으므로 로그의 soft=bad_shared_gain_config로 알린다.
+export function badSharedGainConfig(market) {
+  const shares = market.sharedGain;
+  if (shares === undefined || shares === null) return false;
+  return !isPlainObject(shares) || !Object.values(shares).every(validShare);
+}
+
+// 차익을 나누는 제한 유형(market.sharedGain, 나눔형과 신혼희망)의 참고 마진 계수. 결과는 { type, factor } 또는 null이다.
+// 찾은 제한 유형이 모두 sharedGain에 있을 때만 쓴다. 토지임대부, 지분적립형이 하나라도 섞이면 null이라 예전처럼 마진을 비운다.
+// 여럿이면 계수가 가장 작은 유형이다. 계수가 틀리면 null이다.
+export function sharedGainOf(notice, market) {
+  const shares = market.sharedGain;
+  if (!isPlainObject(shares)) return null;
+  const found = restrictedKeywords(notice, market);
+  if (found.length === 0) return null;
+  const items = found.map((type) => ({ type, factor: shares[type] }));
+  if (!items.every((item) => validShare(item.factor))) return null;
+  return items.reduce((low, item) => (item.factor < low.factor ? item : low));
+}
+
 export function monthsBetween(from, to) {
   return (Date.parse(to) - Date.parse(from)) / DAY_MS / DAYS_PER_MONTH;
 }

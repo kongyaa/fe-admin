@@ -58,6 +58,7 @@
   },
   "market": {
     "restrictedNameKeywords": ["토지임대", "지분적립", "신혼희망", "나눔형"],
+    "sharedGain": { "나눔형": 0.7, "신혼희망": 1.0 },
     "optionCostManwon": 1500,
     "acquisitionTax": {
       "lowPriceManwon": 60000,
