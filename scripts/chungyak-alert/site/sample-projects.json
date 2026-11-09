@@ -1,0 +1,140 @@
+{
+  "sample": true,
+  "generatedAt": "2026-11-10",
+  "sources": {
+    "seoul": { "asOf": "2026-06", "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do", "count": 9 },
+    "newtowns": { "asOf": "2026-11-10", "count": 3 },
+    "notices": { "linked": 2, "checked": 120, "skipped": null }
+  },
+  "stages": {
+    "seoul": ["구역지정", "추진위", "조합설립", "건축심의", "사업시행인가", "관리처분인가", "이주", "착공", "일반분양"],
+    "town": ["후보지", "지구지정", "지구계획승인", "부지조성 착공", "블록별 분양", "준공"]
+  },
+  "projects": [
+    {
+      "id": "seoul-90001", "name": "예시 성동A", "kind": "재개발", "subKind": "주택정비형 재개발",
+      "region": "서울", "district": "성동구", "address": "예시동 101-1", "roadAddress": "예시로 1",
+      "operator": "민간", "stage": "관리처분인가", "stageIndex": 5,
+      "stageDates": { "구역지정": "2018-03-02", "조합설립": "2020-03-15", "사업시행인가": "2023-06-20", "관리처분인가": "2026-05-12" },
+      "households": 1200, "saleHouseholds": 980, "rentalHouseholds": 220, "generalSupply": null,
+      "window": { "from": "2027-11", "to": "2029-05" }, "windowBasis": "관리처분인가(2026-05) 뒤 1.5~3년", "windowStatus": "estimated",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90002", "name": "예시 동대문B", "kind": "재개발", "subKind": "주택정비형 재개발",
+      "region": "서울", "district": "동대문구", "address": "예시동 22", "roadAddress": "",
+      "operator": "민간", "stage": "이주", "stageIndex": 6,
+      "stageDates": { "구역지정": "2016-04-01", "조합설립": "2018-09-10", "사업시행인가": "2022-02-08", "관리처분인가": "2025-04-21", "이주": "2026-06-01" },
+      "households": 980, "saleHouseholds": 820, "rentalHouseholds": 160, "generalSupply": null,
+      "window": { "from": "2026-12", "to": "2028-06" }, "windowBasis": "이주(2026-06) 뒤 0.5~2년", "windowStatus": "estimated",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90003", "name": "예시 송파C", "kind": "재건축", "subKind": "공동주택재건축",
+      "region": "서울", "district": "송파구", "address": "예시동 3", "roadAddress": "예시대로 300",
+      "operator": "민간", "stage": "착공", "stageIndex": 7,
+      "stageDates": { "구역지정": "2015-07-01", "추진위": "2016-02-01", "조합설립": "2017-05-11", "사업시행인가": "2021-08-30", "관리처분인가": "2024-03-04", "이주": "2025-02-01", "착공": "2026-08-18" },
+      "households": 2100, "saleHouseholds": 1800, "rentalHouseholds": 300, "generalSupply": null,
+      "window": { "from": "2026-08", "to": "2027-08" }, "windowBasis": "착공(2026-08) 뒤 0~1년", "windowStatus": "estimated",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90004", "name": "예시 노원D", "kind": "재건축", "subKind": "공동주택재건축",
+      "region": "서울", "district": "노원구", "address": "예시동 404", "roadAddress": "",
+      "operator": "민간", "stage": "사업시행인가", "stageIndex": 4,
+      "stageDates": { "구역지정": "2021-01-05", "조합설립": "2023-10-02", "사업시행인가": "2026-03-09" },
+      "households": 3000, "saleHouseholds": 2600, "rentalHouseholds": 400, "generalSupply": null,
+      "window": { "from": "2029-03", "to": "2031-03" }, "windowBasis": "사업시행인가(2026-03) 뒤 3~5년", "windowStatus": "estimated",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90005", "name": "예시 강동E", "kind": "재개발", "subKind": "주택정비형 재개발",
+      "region": "서울", "district": "강동구", "address": "예시동 55-5", "roadAddress": "예시길 55",
+      "operator": "민간", "stage": "착공", "stageIndex": 7,
+      "stageDates": { "구역지정": "2017-02-01", "조합설립": "2019-04-02", "사업시행인가": "2022-11-15", "관리처분인가": "2024-12-20", "이주": "2025-09-01", "착공": "2026-09-01" },
+      "households": 760, "saleHouseholds": 640, "rentalHouseholds": 120, "generalSupply": 190,
+      "window": { "from": "2026-09", "to": "2027-09" }, "windowBasis": "착공(2026-09) 뒤 0~1년. 연결된 청약 공고가 있습니다.", "windowStatus": "estimated",
+      "notices": [{ "key": "sample-2026000001", "name": "예시 강동E 아파트 (예시 공고)", "announceDate": "2026-11-03", "end": "2026-11-20", "url": "https://www.applyhome.co.kr/", "typeLabel": "민영" }],
+      "live": true,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90006", "name": "예시 마포F", "kind": "재개발", "subKind": "도시정비형 재개발",
+      "region": "서울", "district": "마포구", "address": "예시동 6", "roadAddress": "",
+      "operator": "민간", "stage": "조합설립", "stageIndex": 2,
+      "stageDates": { "구역지정": "2022-05-01", "조합설립": "2025-07-14" },
+      "households": 1500, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
+      "window": { "from": null, "to": null }, "windowBasis": "사업시행인가 전이라 36개월 밖으로 예상", "windowStatus": "far",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90007", "name": "예시 영등포G", "kind": "재건축", "subKind": "아파트지구재건축",
+      "region": "서울", "district": "영등포구", "address": "예시동 77", "roadAddress": "예시로 77",
+      "operator": "민간", "stage": "착공", "stageIndex": 7,
+      "stageDates": { "구역지정": "2012-01-01", "조합설립": "2014-06-01", "사업시행인가": "2018-10-01", "관리처분인가": "2020-09-01", "이주": "2021-06-01", "착공": "2023-02-01" },
+      "households": 870, "saleHouseholds": 760, "rentalHouseholds": 110, "generalSupply": null,
+      "window": { "from": "2023-02", "to": "2024-02" }, "windowBasis": "착공(2023-02) 뒤 0~1년. 예상 시기가 지났습니다(지연 가능성)", "windowStatus": "overdue",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90008", "name": "예시 은평H", "kind": "재개발", "subKind": "주택정비형 재개발",
+      "region": "서울", "district": "은평구", "address": "예시동 8-8", "roadAddress": "",
+      "operator": "공공", "stage": "구역지정", "stageIndex": 0,
+      "stageDates": { "구역지정": "2025-12-01" },
+      "households": null, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
+      "window": { "from": null, "to": null }, "windowBasis": "사업시행인가 전이라 36개월 밖으로 예상", "windowStatus": "far",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90009", "name": "예시 관악I", "kind": "재개발", "subKind": "주택정비형 재개발",
+      "region": "서울", "district": "관악구", "address": "예시동 9", "roadAddress": "예시로 9",
+      "operator": "민간", "stage": "사업시행인가", "stageIndex": 4,
+      "stageDates": { "구역지정": "2014-03-01", "조합설립": "2017-08-01", "건축심의": "2022-05-01", "사업시행인가": "2024-01-15" },
+      "households": 1340, "saleHouseholds": 1100, "rentalHouseholds": 240, "generalSupply": null,
+      "window": { "from": "2027-01", "to": "2029-01" }, "windowBasis": "사업시행인가(2024-01) 뒤 3~5년", "windowStatus": "estimated",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "town-hanam-gyosan", "name": "하남교산 (예시 일정)", "kind": "공공주택지구", "subKind": "3기 신도시",
+      "region": "경기", "district": "하남시", "address": "하남시 교산동 일원", "roadAddress": "",
+      "operator": "공공", "stage": "블록별 분양", "stageIndex": 4,
+      "stageDates": { "후보지": "2018-12", "지구지정": "2019-10", "블록별 분양": "2025-05" },
+      "households": 33000, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
+      "window": { "from": "2026-11", "to": "2028-11" }, "windowBasis": "블록별 분양 진행 중, 남은 블록 순차 공고(규칙 확장, 예시 데이터)", "windowStatus": "estimated",
+      "notices": [], "live": false,
+      "sources": [{ "title": "스마트투데이: 하남교산 본청약(2025.5)", "url": "https://www.smarttoday.co.kr/news/articleView.html?idxno=79043", "date": "2025-05" }], "asOf": "2026-11-10"
+    },
+    {
+      "id": "town-guri-topyeong", "name": "구리토평한강 (예시 일정)", "kind": "공공주택지구", "subKind": "공공주택지구",
+      "region": "경기", "district": "구리시", "address": "구리시 토평동 일원", "roadAddress": "",
+      "operator": "공공", "stage": "지구지정", "stageIndex": 1,
+      "stageDates": { "후보지": "2023-11", "지구지정": "2025-12" },
+      "households": 22000, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
+      "window": { "from": "2029-06", "to": "2031-06" }, "windowBasis": "보도된 계획(착공 2029년 목표) 기준, 예시 데이터", "windowStatus": "estimated",
+      "notices": [], "live": false,
+      "sources": [
+        { "title": "한국경제: 구리토평2 지구 지정(2025.12)", "url": "https://www.hankyung.com/article/202512313837i", "date": "2025-12-31" },
+        { "title": "SBS Biz: 수도권 공공주택지구 지구계획 승인 일정", "url": "https://biz.sbs.co.kr/amp/article/20000281760" }
+      ], "asOf": "2026-11-10"
+    },
+    {
+      "id": "town-guri-galmae", "name": "구리갈매역세권 (예시 일정)", "kind": "공공주택지구", "subKind": "공공주택지구",
+      "region": "경기", "district": "구리시", "address": "구리시 갈매동 일원", "roadAddress": "",
+      "operator": "공공", "stage": "블록별 분양", "stageIndex": 4,
+      "stageDates": { "지구지정": "2018-12", "블록별 분양": "2026-11" },
+      "households": null, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": 213,
+      "window": { "from": "2026-11", "to": "2028-11" }, "windowBasis": "블록별 분양 진행 중, 남은 블록 순차 공고(규칙 확장, 예시 데이터)", "windowStatus": "estimated",
+      "notices": [{ "key": "sample-2026000002", "name": "구리갈매역세권 B-1블록 (예시 공고)", "announceDate": "2026-11-05", "end": "2026-11-25", "url": "https://www.applyhome.co.kr/", "typeLabel": "민영" }],
+      "live": true,
+      "sources": [{ "title": "청약홈 분양정보", "url": "https://www.applyhome.co.kr/" }], "asOf": "2026-11-10"
+    }
+  ]
+}

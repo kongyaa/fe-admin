@@ -1,3 +1,4 @@
 node_modules/
 .kakao-token.txt
 .env
+site/projects.json
