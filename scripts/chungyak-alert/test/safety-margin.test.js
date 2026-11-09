@@ -644,7 +644,8 @@ test('lotto triggers are unchanged, and margin at or above thresholds with no tr
   assert.equal(config.lotto.minMarginManwon, 30000);
   assert.equal(config.lotto.minMarginRate, 0.2);
 
-  const low = saleRows(5, 1000);
+  // 단지 1곳(신뢰도 하), 마진율 -4%. -5% 이하면 조건형도 아님이라(lowConfidenceMinMarginRate) 그 위의 값을 쓴다.
+  const low = saleRows(5, 1200);
   const triggers = [
     [apt({ kind: 'remainder', houseSecd: '04' }), '무순위'],
     [apt({ kind: 'remainder', houseSecd: '06' }), '불법행위 재공급'],
