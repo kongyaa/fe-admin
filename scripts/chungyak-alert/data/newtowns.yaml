@@ -44,6 +44,59 @@ towns:
       - title: "대우건설·LH, '교산 푸르지오 더 퍼스트' 25일 견본주택 오픈 (스마트투데이)"
         url: https://www.smarttoday.co.kr/news/articleView.html?idxno=79043
         date: "2025-04-24"
+    # 블록별 분양 이력·계획 (2026-11-10 조사). 2026-11-10 현재 LH 분양 목록에 열린 공고 없음. 본청약은 A2 하나뿐.
+    # 스마트투데이 idxno=79043은 2025-04-24 견본주택 개관 기사이고 공고 기사가 아니다.
+    preSubscriptions:
+      - block: A2
+        type: 공공분양
+        households: 1056
+        noticeDate: "2021-11-18"
+        source: { title: "국토부, 내일 3차 사전청약 4100가구 모집공고 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2021/11/17/2021111700054.html", date: "2021-11-17" }
+      - block: A5
+        type: 나눔형 공공분양
+        households: 452
+        noticeDate: "2023-09-25"
+        source: { title: "마곡 3억·하남 4억대...공급난 속 '뉴홈' 3300가구 풀린다 (아주경제)", url: "https://www.ajunews.com/view/20231015151738554", date: "2023-10-15" }
+    history:
+      - block: A2
+        type: 공공분양
+        households: 1115
+        noticeDate: "2025-03-31"
+        title: 교산 푸르지오 더 퍼스트
+        moveIn: "2029-06"  # LH 공고, 뉴시스
+        source:
+          - { title: "교산 푸르지오 더 퍼스트(하남교산 A-2BL) 공공분양주택 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060838&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027", date: "2025-03-31" }
+          - { title: "'3기 신도시' 하남교산 내달 첫 본청약…분양가 17% 올라 (뉴시스)", url: "https://www.newsis.com/view/NISX20250331_0003120514", date: "2025-03-31" }
+    plans:
+      - blocks: [A9, A11]
+        type: 공공분양
+        households: { A9: 244, A11: 511 }
+        expected: "2026-하반기"
+        note: "지역 매체(하남Times) 보도만 있고 LH·국토부 확인은 없음. 2026-11-10까지 공고 없음"
+        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+      - blocks: [A20]
+        type: 통합공공임대
+        rental: true
+        households: 249
+        expected: "2026-하반기"
+        note: "지역 매체(하남Times) 보도만 있고 LH·국토부 확인은 없음. 2026-11-10까지 공고 없음"
+        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+      - blocks: [S2]
+        type: 분양전환 공공임대·선택형
+        rental: true
+        expected: "2026-하반기"
+        note: "지역 매체(하남Times) 보도만 있고 LH·국토부 확인은 없음. 2026-11-10까지 공고 없음"
+        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+      - blocks: [D2, D5]
+        type: 민간분양
+        expected: "2026-상반기"
+        note: "일정 미확정이라고 보도"
+        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+      - blocks: [A5]
+        type: 나눔형 공공분양
+        expected: "2027-09"
+        note: "날짜 없는 하남도시공사 일정표(같은 표의 A2 입주 2027.03이 지금 값 2029-06과 달라 오래된 일정일 수 있음)"
+        source: { title: "하남도시공사 하남교산 공공주택지구 조성사업 사업추진 일정", outlet: 하남도시공사, url: "https://www.huic.co.kr/www/selectBbsNttView.do?key=256&bbsNo=47&nttNo=9963", date: "" }
 
   - id: guri-topyeong-hangang
     name: 구리토평한강
@@ -121,3 +174,53 @@ towns:
       - title: "㈜신안, '구리갈매역세권 신안인스빌 디센트' 30일 견본주택 개관 (메트로신문)"
         url: https://www.metroseoul.co.kr/article/20261103500089
         date: "2026-11-03"
+    # 블록별 분양 이력·계획 (2026-11-10 조사). 블록 이름은 출처 표기를 따른다(A1·A-1은 같은 블록).
+    preSubscriptions:
+      - block: A1
+        type: 신혼희망타운
+        households: 1125
+        noticeDate: "2021-12-29"
+        source: { title: "3기 신도시 등 수도권 공공택지에 사전청약 물량 1만7000호 공급 (이코노미스트)", url: "https://economist.co.kr/2021/12/28/realEstate/realEstateNormal/20211228190135672.html", date: "2021-12-28" }
+      - block: A4
+        type: 공공분양(일반형 230)·선택형(285)
+        households: 515
+        noticeDate: "2023-09-22"
+        source: { title: "'구리 갈매 역세권지구 A4블록 사전청약' 서울시 장애인 특별공급 기관추천 안내 (서울시)", url: "https://news.seoul.go.kr/welfare/archives/555616", date: "2023-09-21" }
+    history:
+      - block: A-1
+        type: 신혼희망타운
+        households: 1182
+        noticeDate: "2025-07-29"
+        title: 구리갈매역세권 A-1블록 신혼희망타운(공공분양)
+        source: { title: "구리갈매역세권 A-1블록 신혼희망타운(공공분양) 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060929&ccrCnntSysDsCd=02&uppAisTpCd=39&aisTpCd=39&mi=1027", date: "2025-07-29" }
+      - block: A-4
+        type: 공공분양
+        households: 251
+        noticeDate: "2025-12-29"
+        source: { title: "LH, 남양주진접·구리갈매역세권·김포고촌에 1291가구 공급 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2025/12/30/2025123000070.amp.html", date: "2025-12-30" }
+      - block: A-4
+        type: 6년 분양전환 공공임대
+        rental: true
+        households: 310
+        noticeDate: "2025-12-29"
+        source: { title: "LH, 남양주진접·구리갈매역세권·김포고촌에 1291가구 공급 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2025/12/30/2025123000070.amp.html", date: "2025-12-30" }
+      - block: A-1
+        type: 행복주택
+        rental: true
+        households: 609
+        noticeDate: "2026-10-27"
+        title: 구리갈매역세권 A-1BL 신혼희망타운 행복주택
+        source: { title: "LH, 4분기 전국 4663가구 공공임대 공급 (메트로신문)", url: "https://www.metroseoul.co.kr/article/20261027500075", date: "2026-10-27" }
+      - block: B-1
+        type: 민간분양
+        households: 213
+        noticeDate: "2026-10-30"
+        title: 구리갈매역세권 신안인스빌 디센트
+        source: { title: "청약홈 분양정보 (houseManageNo 2026000472)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472", date: "2026-10-30" }
+    plans:
+      - blocks: [B2]
+        type: 실버스테이 민간임대
+        rental: true
+        expected: "2029-하반기"
+        note: "2027-01 착공, 이르면 2029년 말 입주자 모집(보도)"
+        source: { title: "LH·SH·GH, 시니어 레지던스 사업 본격화 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2025050301112487749", date: "2025-05-04" }

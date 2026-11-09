@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { AppError, normalizeDate, safeHttpUrl } from '../util.js';
+import { planRange } from './expected-window.js';
 
 // data/newtowns.yaml(직접 관리하는 공공주택지구 목록)을 읽어 지도 사업 형태로 바꾼다.
 export const TOWN_STAGES = ['후보지', '지구지정', '지구계획승인', '부지조성 착공', '블록별 분양', '준공'];
@@ -43,6 +44,90 @@ function list(value) {
   if (!Array.isArray(value)) throw new AppError('newtowns_field');
   return value;
 }
+
+// 블록 항목의 출처: 객체 하나 또는 목록. http(s) 주소가 하나도 없으면 newtowns_source로 멈춘다.
+function entrySources(value) {
+  const raw = Array.isArray(value) ? value : isEmpty(value) ? [] : [value];
+  const sources = raw.flatMap((source) => {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) throw new AppError('newtowns_field');
+    const url = safeHttpUrl(source.url);
+    if (!url) return [];
+    const outlet = text(source.outlet);
+    return [{ title: text(source.title) ?? url, url, date: townDate(source.date), ...(outlet ? { outlet } : {}) }];
+  });
+  if (sources.length === 0) throw new AppError('newtowns_source');
+  return sources;
+}
+
+function flag(value) {
+  if (isEmpty(value)) return false;
+  if (typeof value !== 'boolean') throw new AppError('newtowns_field');
+  return value;
+}
+
+function entryObject(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new AppError('newtowns_field');
+  return entry;
+}
+
+function requiredDate(value) {
+  const date = townDate(value);
+  if (!date) throw new AppError('newtowns_field');
+  return date;
+}
+
+// 사전청약·본청약 한 건. 모르는 키는 무시한다.
+function noticeEntry(raw) {
+  const entry = entryObject(raw);
+  const block = text(entry.block);
+  if (!block) throw new AppError('newtowns_field');
+  const moveIn = townDate(entry.moveIn);
+  return {
+    block,
+    type: text(entry.type),
+    title: text(entry.title),
+    households: count(entry.households),
+    noticeDate: requiredDate(entry.noticeDate),
+    ...(moveIn ? { moveIn } : {}),
+    rental: flag(entry.rental),
+    note: text(entry.note),
+    sources: entrySources(entry.source),
+  };
+}
+
+// 세대 수: 숫자 하나 또는 블록별 { A9: 244, A11: 511 }. 블록별이면 모두 알 때만 합계를 낸다.
+function planHouseholds(value) {
+  if (isEmpty(value) || typeof value !== 'object') return { households: count(value), householdsByBlock: null };
+  if (Array.isArray(value)) throw new AppError('newtowns_field');
+  const byBlock = Object.fromEntries(Object.entries(value).map(([block, n]) => [block, count(n)]));
+  const numbers = Object.values(byBlock);
+  const known = numbers.length > 0 && numbers.every((n) => n !== null);
+  return { households: known ? numbers.reduce((sum, n) => sum + n, 0) : null, householdsByBlock: byBlock };
+}
+
+// 보도된 다음 블록 계획 한 건. expected는 YYYY-MM, YYYY-상반기, YYYY-하반기. from·to(달 범위)를 붙인다.
+function planEntry(raw) {
+  const entry = entryObject(raw);
+  const blocks = (typeof entry.blocks === 'string' ? [entry.blocks] : list(entry.blocks)).map(text).filter(Boolean);
+  if (blocks.length === 0) throw new AppError('newtowns_field');
+  const expected = text(entry.expected);
+  if (!expected) throw new AppError('newtowns_field');
+  const range = planRange(expected);
+  if (!range) throw new AppError('newtowns_date');
+  return {
+    blocks,
+    type: text(entry.type),
+    ...planHouseholds(entry.households),
+    expected,
+    ...range,
+    rental: flag(entry.rental),
+    note: text(entry.note),
+    sources: entrySources(entry.source),
+  };
+}
+
+const byNoticeDate = (a, b) => a.noticeDate.localeCompare(b.noticeDate) || a.block.localeCompare(b.block);
+const byPlanRange = (a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.blocks[0].localeCompare(b.blocks[0]);
 
 // '하남' -> '하남시'. 이미 시·군·구로 끝나면 그대로 둔다.
 export function townDistrict(value) {
@@ -94,6 +179,9 @@ export function validateTown(town) {
     expected,
     notes: text(town.notes),
     sources,
+    preSubscriptions: list(town.preSubscriptions).map(noticeEntry).sort(byNoticeDate),
+    history: list(town.history).map(noticeEntry).sort(byNoticeDate),
+    plans: list(town.plans).map(planEntry).sort(byPlanRange),
   };
 }
 
@@ -115,6 +203,7 @@ export function parseNewtowns(source) {
 }
 
 // 지도 사업 형태. noticeMatch와 expected는 공고 연결·예상 시기 계산에만 쓰고 출력 전에 뺀다.
+// 블록 이력·계획은 날짜순 그대로 내보낸다(blockHistory, preSubscriptions, blockPlans). 비어 있으면 키를 두지 않는다.
 export function townToProject(town, asOf) {
   return {
     id: `town-${town.id}`,
@@ -140,6 +229,9 @@ export function townToProject(town, asOf) {
     asOf,
     noticeMatch: town.noticeMatch,
     expected: town.expected,
+    ...(town.history?.length ? { blockHistory: town.history } : {}),
+    ...(town.preSubscriptions?.length ? { preSubscriptions: town.preSubscriptions } : {}),
+    ...(town.plans?.length ? { blockPlans: town.plans } : {}),
   };
 }
 

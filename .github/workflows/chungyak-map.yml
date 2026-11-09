@@ -5,6 +5,12 @@ on:
     # 매주 화요일 06:00 KST (월요일 21:00 UTC)
     - cron: '0 21 * * 1'
   workflow_dispatch:
+  # main에 합쳐지면 바로 다시 배포한다(데이터·화면 수정이 다음 예약 실행까지 기다리지 않게)
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/chungyak-alert/**'
+      - '.github/workflows/chungyak-map.yml'
   pull_request:
     paths:
       - 'scripts/chungyak-alert/**'

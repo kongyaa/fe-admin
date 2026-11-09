@@ -187,6 +187,72 @@ export function windowLabel(project, todayYm) {
   return range ?? '3년 뒤·미정';
 }
 
+// --- 블록별 분양 지구 ---------------------------------------------------------
+
+export const DEFAULT_WINDOW_LABEL = '예상 청약';
+
+/** 예상 기간의 이름. 블록별 분양 지구는 projects.json 의 windowLabel('다음 블록 예상'), 그 밖은 '예상 청약' */
+export function windowFactLabel(project) {
+  const label = typeof project?.windowLabel === 'string' ? project.windowLabel.trim() : '';
+  return label || DEFAULT_WINDOW_LABEL;
+}
+
+/** 목록·타임라인의 짧은 접두어: 기본은 '예상', 블록별 분양 지구는 '다음 블록 예상' */
+export function windowPrefix(project) {
+  const label = windowFactLabel(project);
+  return label === DEFAULT_WINDOW_LABEL ? '예상' : label;
+}
+
+/** 보도된 블록 계획 시기 → 달 범위. 'YYYY-MM', 'YYYY-상반기'(1~6월), 'YYYY-하반기'(7~12월). 파이프라인 planRange 와 같게 둔다 */
+export function planRange(expected) {
+  const raw = String(expected ?? '').trim();
+  const half = /^(\d{4})-(상반기|하반기)$/.exec(raw);
+  if (half) return half[2] === '상반기' ? { from: `${half[1]}-01`, to: `${half[1]}-06` } : { from: `${half[1]}-07`, to: `${half[1]}-12` };
+  if (!/^\d{4}-\d{2}$/.test(raw)) return null;
+  const month = toYm(raw);
+  return month ? { from: month, to: month } : null;
+}
+
+/** 보도된 계획 기간이 이번 달 전에 끝났는지(보도 일정 지남). to 가 없으면 expected 로 계산 */
+export function planPassed(plan, todayYm) {
+  const to = toYm(plan?.to) ?? planRange(plan?.expected)?.to;
+  return Boolean(to) && monthsBetween(todayYm, to) < 0;
+}
+
+const entriesOf = (list) => (Array.isArray(list) ? list : []).filter((e) => e && typeof e === 'object' && !Array.isArray(e));
+
+/** 사전청약(preSubscriptions)과 본청약(blockHistory)을 한 목록으로. 최근 공고 먼저, 같은 날이면 블록 이름 순 */
+export function blockTimeline(project) {
+  return [
+    ...entriesOf(project?.blockHistory).map((e) => ({ ...e, stage: '본청약' })),
+    ...entriesOf(project?.preSubscriptions).map((e) => ({ ...e, stage: '사전청약' })),
+  ].sort((a, b) => String(b.noticeDate ?? '').localeCompare(String(a.noticeDate ?? ''))
+    || String(a.block ?? '').localeCompare(String(b.block ?? ''), 'ko'));
+}
+
+/** 보도된 다음 블록 계획. 예상 시기 순 */
+export function blockPlanList(project) {
+  const start = (plan) => toYm(plan.from) ?? planRange(plan.expected)?.from ?? '9999-12';
+  return entriesOf(project?.blockPlans).sort((a, b) => start(a).localeCompare(start(b)));
+}
+
+/** 출처를 낸 곳: outlet, 없으면 제목 끝 괄호, 없으면 주소의 호스트(파이프라인 sourceOutlet 과 같은 규칙) */
+export function sourceOutlet(source) {
+  if (source?.outlet) return String(source.outlet);
+  const paren = /\(([^()]+)\)\s*$/.exec(String(source?.title ?? ''));
+  if (paren) return paren[1].trim();
+  const url = safeHttpUrl(source?.url);
+  return url ? new URL(url).hostname.replace(/^(www|m)\./, '') : '출처';
+}
+
+/** 계획 세대 수: 합계, 블록별 값이 있으면 'A9 244 · A11 511'. 모르면 null */
+export function planHouseholdsText(plan) {
+  const byBlock = plan?.householdsByBlock && typeof plan.householdsByBlock === 'object' ? Object.entries(plan.householdsByBlock) : [];
+  const known = byBlock.filter(([, n]) => typeof n === 'number' && Number.isFinite(n));
+  if (known.length) return known.map(([block, n]) => `${block} ${n.toLocaleString('ko-KR')}`).join(' · ');
+  return typeof plan?.households === 'number' && Number.isFinite(plan.households) ? `${plan.households.toLocaleString('ko-KR')}세대` : null;
+}
+
 /** from~to(달)가 startYm 부터 months 칸 안에서 차지하는 칸. 걸치지 않으면 null */
 export function spanOf(fromValue, toValue, startYm, months = GANTT_MONTHS) {
   const from = toYm(fromValue);
@@ -616,7 +682,7 @@ function listItem(p) {
     h('span', {}, p.kind ?? ''),
     h('span', {}, p.region === '서울' ? shortDistrict(p.district) : placeLabel(p)),
     h('span', {}, p.stage ?? ''),
-    range ? h('span', {}, `예상 ${range}`) : null));
+    range ? h('span', {}, `${windowPrefix(p)} ${range}`) : null));
 }
 
 function renderList() {
@@ -651,6 +717,62 @@ function fact(label, value, extra) {
   return h('div', { class: 'fact' }, h('small', {}, label), h('b', {}, value), extra ? h('span', { class: 'fact-extra' }, extra) : null);
 }
 
+/** 출처 링크들: '낸 곳 날짜'만 짧게 보이고 전체 제목은 title 로 */
+function sourceLinks(sources) {
+  const list = entriesOf(sources);
+  if (!list.length) return '-';
+  return list.map((src) => {
+    const label = `${sourceOutlet(src)} ${src.date || '날짜 없음'}`;
+    const url = safeHttpUrl(src.url);
+    return h('span', { class: 'blk-src' }, url
+      ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', title: src.title || null }, label)
+      : label);
+  });
+}
+
+const rentalChip = (entry) => (entry?.rental === true ? h('span', { class: 'chip c-rent' }, '임대') : null);
+
+function blockTable(caption, heads, rows) {
+  return h('div', { class: 'blk-scroll', tabindex: '0', role: 'region', 'aria-label': `${caption}, 표가 넓으면 가로로 스크롤` },
+    h('table', { class: 'blk-table' },
+      h('caption', { class: 'visually-hidden' }, caption),
+      h('thead', {}, h('tr', {}, heads.map((head) => h('th', { scope: 'col' }, head)))),
+      h('tbody', {}, rows)));
+}
+
+/** 블록별 분양 이력(사전청약·본청약)과 보도된 다음 블록 계획. 둘 다 없으면 null */
+function blockSection(p) {
+  const timeline = blockTimeline(p);
+  const plans = blockPlanList(p);
+  if (!timeline.length && !plans.length) return null;
+  const history = timeline.length
+    ? blockTable('사전청약·본청약 이력', ['공고일', '구분', '블록', '유형', '세대', '출처'], timeline.map((e) => h('tr', {},
+      h('td', { class: 'blk-date' }, e.noticeDate || '-'),
+      h('td', { class: e.stage === '사전청약' ? 'blk-stage blk-pre' : 'blk-stage' }, e.stage),
+      h('td', {}, h('b', {}, e.block || '-'), e.title ? h('small', {}, e.title) : null),
+      h('td', {}, e.type || '-', rentalChip(e), e.moveIn ? h('small', {}, `입주 예정 ${e.moveIn}`) : null),
+      h('td', { class: 'blk-num' }, typeof e.households === 'number' ? e.households.toLocaleString('ko-KR') : '-'),
+      h('td', {}, sourceLinks(e.sources)))))
+    : null;
+  const planTable = plans.length
+    ? blockTable('다음 블록 계획(보도)', ['예상 시기', '블록', '유형', '세대', '출처(보도일)'], plans.map((plan) => {
+      const passed = planPassed(plan, state.todayYm);
+      return h('tr', { class: passed ? 'blk-passed' : null },
+        h('td', { class: 'blk-date' }, plan.expected || '-', passed ? h('span', { class: 'chip c-late' }, '보도 일정 지남') : null),
+        h('td', {}, h('b', {}, (Array.isArray(plan.blocks) ? plan.blocks : []).join('·') || '-')),
+        h('td', {}, plan.type || '-', rentalChip(plan), plan.note ? h('small', {}, plan.note) : null),
+        h('td', { class: 'blk-num' }, planHouseholdsText(plan) ?? '-'),
+        h('td', {}, sourceLinks(plan.sources)));
+    }))
+    : null;
+  return h('section', { class: 'blocks', 'aria-labelledby': 'blocks-title' },
+    h('h3', { id: 'blocks-title' }, '블록별 분양 이력'),
+    history,
+    planTable ? h('h4', {}, '다음 블록 계획(보도)') : null,
+    planTable,
+    planTable ? h('p', { class: 'note' }, '언론·기관 보도 기준이며 공고가 아닙니다. 보도 일정이 지난 계획은 늦어지거나 바뀌었을 수 있습니다.') : null);
+}
+
 function renderDetail(p, missingId) {
   const box = $('detail');
   if (!p) {
@@ -678,7 +800,7 @@ function renderDetail(p, missingId) {
     seoul ? fact('분양 세대(조합원 포함)', fmtCount(p.saleHouseholds)) : null,
     seoul && typeof p.rentalHouseholds === 'number' ? fact('임대', fmtCount(p.rentalHouseholds)) : null,
     fact('일반분양 예상', fmtCount(p.generalSupply)),
-    fact('예상 청약', windowLabel(p, state.todayYm)),
+    fact(windowFactLabel(p), windowLabel(p, state.todayYm)),
   ];
 
   const steps = h('ol', { class: 'steps', 'aria-label': '사업 단계' }, stages.map((name, i) => {
@@ -725,6 +847,7 @@ function renderDetail(p, missingId) {
     h('div', { class: 'facts' }, facts),
     h('div', { class: 'steps-wrap', tabindex: '0', 'aria-label': '사업 단계, 가로로 스크롤' }, steps),
     h('p', { class: 'why' }, h('b', {}, '예상 근거 '), p.windowBasis || '근거 정보 없음'),
+    blockSection(p),
     typeof p.notes === 'string' && p.notes.trim() ? h('details', { class: 'memo' }, h('summary', {}, '조사 메모'), h('p', {}, p.notes)) : null,
     noticeBlock,
     sourceBlock,
@@ -802,7 +925,7 @@ function renderGantt() {
   const cells = [h('div', { class: 'g-corner' }), axis];
   for (const [p, bars] of rows) {
     const range = windowRange(p);
-    const said = [range ? `예상 ${range}` : '', ...bars.filter((b) => b.kind === 'live').map((b) => `공고 나옴 ${b.label}`)].filter(Boolean).join(', ');
+    const said = [range ? `${windowPrefix(p)} ${range}` : '', ...bars.filter((b) => b.kind === 'live').map((b) => `공고 나옴 ${b.label}`)].filter(Boolean).join(', ');
     cells.push(
       h('button', {
         type: 'button', class: 'g-label', 'data-key': p.id, 'data-select': p.id, 'aria-current': String(state.selected === p.id), title: p.name ?? '',

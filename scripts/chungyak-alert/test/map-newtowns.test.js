@@ -66,7 +66,132 @@ test('a valid file is parsed and normalized', () => {
     expected: null,
     notes: null,
     sources: [],
+    preSubscriptions: [],
+    history: [],
+    plans: [],
   });
+});
+
+const BLOCKS = withTown(`    stage: 블록별 분양
+    preSubscriptions:
+      - block: A2
+        type: 공공분양
+        stage: 사전청약
+        households: 1056
+        noticeDate: "2021-11-18"
+        source: { title: 사전청약 기사, url: "https://example.com/pre", date: "2021-11-17" }
+    history:
+      - block: B-1
+        type: 민간분양
+        households: 213
+        noticeDate: "2026-10-30"
+        source: { title: 청약홈, outlet: 청약홈, url: "https://example.com/b1", date: "2026-10-30" }
+      - block: A2
+        type: 공공분양
+        households: "1,115"
+        noticeDate: "2025-03-31"
+        title: 교산 푸르지오 더 퍼스트
+        moveIn: "2029-06"
+        unknownKey: 무시
+        source:
+          - { title: LH 공고, url: "https://example.com/lh", date: "2025-03-31" }
+          - { title: 나쁜 링크, url: "javascript:alert(1)" }
+          - { title: 기사, url: "https://example.com/news", date: "2025-03-31" }
+      - block: A-4
+        type: 공공임대
+        rental: true
+        noticeDate: "2025-12"
+        source: { url: "https://example.com/a4" }
+    plans:
+      - blocks: [A5]
+        expected: "2027-09"
+        source: { title: 일정표, url: "https://example.com/plan", date: "" }
+      - blocks: [A9, A11]
+        type: 공공분양
+        households: { A9: 244, A11: 511 }
+        expected: "2026-하반기"
+        note: 지역 매체 보도
+        source: { title: "기사 (하남Times)", url: "http://example.com/times", date: "2025-12-13" }
+      - blocks: D2
+        rental: false
+        households: { D2: 100, D5: }
+        expected: "2026-상반기"
+        source: { url: "https://example.com/d" }`);
+
+test('block history, pre-subscriptions and plans are validated and sorted by date', () => {
+  const [town] = parseNewtowns(BLOCKS).towns;
+  assert.deepEqual(town.preSubscriptions, [{
+    block: 'A2', type: '공공분양', title: null, households: 1056, noticeDate: '2021-11-18', rental: false, note: null,
+    sources: [{ title: '사전청약 기사', url: 'https://example.com/pre', date: '2021-11-17' }],
+  }]);
+  assert.deepEqual(town.history.map((entry) => [entry.block, entry.noticeDate, entry.rental]), [
+    ['A2', '2025-03-31', false], ['A-4', '2025-12', true], ['B-1', '2026-10-30', false],
+  ]);
+  const a2 = town.history[0];
+  assert.equal(a2.households, 1115);
+  assert.equal(a2.moveIn, '2029-06');
+  assert.equal(a2.title, '교산 푸르지오 더 퍼스트');
+  assert.equal('unknownKey' in a2, false);
+  // 출처는 하나 또는 목록, http(s)만 남긴다
+  assert.deepEqual(a2.sources.map((source) => source.url), ['https://example.com/lh', 'https://example.com/news']);
+  assert.equal('moveIn' in town.history[1], false);
+  assert.deepEqual(town.history[1].sources, [{ title: 'https://example.com/a4', url: 'https://example.com/a4', date: null }]);
+  assert.equal(town.history[2].sources[0].outlet, '청약홈');
+
+  assert.deepEqual(town.plans.map((plan) => [plan.blocks, plan.expected, plan.from, plan.to]), [
+    [['D2'], '2026-상반기', '2026-01', '2026-06'],
+    [['A9', 'A11'], '2026-하반기', '2026-07', '2026-12'],
+    [['A5'], '2027-09', '2027-09', '2027-09'],
+  ]);
+  const [d2, a9] = town.plans;
+  assert.deepEqual([d2.households, d2.householdsByBlock], [null, { D2: 100, D5: null }]);
+  assert.deepEqual([a9.households, a9.householdsByBlock, a9.note, a9.rental], [755, { A9: 244, A11: 511 }, '지역 매체 보도', false]);
+  assert.equal(town.plans[2].sources[0].date, null);
+});
+
+test('block lists pass through to the project, empty lists are left out', () => {
+  const { asOf, towns } = parseNewtowns(BLOCKS);
+  const project = townToProject(towns[0], asOf);
+  assert.deepEqual(project.blockHistory, towns[0].history);
+  assert.deepEqual(project.preSubscriptions, towns[0].preSubscriptions);
+  assert.deepEqual(project.blockPlans, towns[0].plans);
+  const plain = townToProject(parseNewtowns(VALID).towns[0], asOf);
+  assert.equal('blockHistory' in plain, false);
+  assert.equal('preSubscriptions' in plain, false);
+  assert.equal('blockPlans' in plain, false);
+});
+
+test('bad block entries stop the build', () => {
+  const entry = (list, lines) => withTown(`    stage: 블록별 분양\n    ${list}:\n      - ${lines.join('\n        ')}`);
+  const src = 'source: { url: "https://example.com/a" }';
+  // 날짜 형식
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2025-13"', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: 2025', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2025-03-01"', 'moveIn: 내년', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026-3분기"', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026"', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026-00"', src])), { kind: 'newtowns_date' });
+  // 필수 값
+  assert.throws(() => parseNewtowns(entry('preSubscriptions', ['noticeDate: "2021-11-18"', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(entry('plans', ['blocks: []', 'expected: "2026-07"', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2025-03"', 'rental: 예', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(withTown('    stage: 블록별 분양\n    history: 없음')), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(withTown('    stage: 블록별 분양\n    plans:\n      - 그냥 글')), { kind: 'newtowns_field' });
+  // 출처가 없거나 http(s)가 아니면 newtowns_source
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2025-03"'])), { kind: 'newtowns_source' });
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2025-03"', 'source: { url: "javascript:alert(1)" }'])), { kind: 'newtowns_source' });
+  assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026-07"', 'source: { title: 주소 없음 }'])), { kind: 'newtowns_source' });
+});
+
+test('the real newtowns.yaml parses', () => {
+  const loaded = loadNewtowns(new URL('../data/newtowns.yaml', import.meta.url));
+  const byId = Object.fromEntries(loaded.projects.map((p) => [p.id, p]));
+  assert.deepEqual(byId['town-hanam-gyosan'].blockHistory.map((e) => [e.block, e.noticeDate, e.moveIn]), [['A2', '2025-03-31', '2029-06']]);
+  assert.ok(byId['town-hanam-gyosan'].blockPlans.length > 0);
+  assert.ok(byId['town-guri-galmae-station'].blockHistory.some((e) => e.rental));
+  assert.equal('blockHistory' in byId['town-guri-topyeong-hangang'], false);
 });
 
 test('towns become map projects', () => {

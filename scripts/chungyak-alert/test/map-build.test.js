@@ -3,7 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { MAX_VALUE_SKIP_RATIO, buildMap, checkSeoulValues, markAnnounced, parseArgs, run, summaryLines } from '../src/pipeline/build-map.js';
+import {
+  MAX_VALUE_SKIP_RATIO, NOTICE_LOOKBACK_DAYS, buildMap, checkSeoulValues, markAnnounced, parseArgs, run, summaryLines,
+} from '../src/pipeline/build-map.js';
 import { SEOUL_STAGES, DATASET_URL, DOWNLOAD_URL } from '../src/pipeline/seoul-redevelop.js';
 import { TOWN_STAGES } from '../src/pipeline/newtowns.js';
 import { DATA_ROWS, LISTING_HTML, UNKNOWN_STAGE_ROW, seoulFixture } from './map-fixtures.js';
@@ -257,4 +259,97 @@ test('markAnnounced: a linked notice that already ended', () => {
   assert.equal(markAnnounced(none), none);
   const done = { ...base, windowStatus: 'done', notices: ended };
   assert.equal(markAnnounced(done), done);
+});
+
+test('notices are looked up for the last 3 years, and an old ended Seoul notice is announced', async () => {
+  assert.equal(NOTICE_LOOKBACK_DAYS, 1095);
+  const calls = [];
+  const fetch = async (url) => {
+    calls.push(url);
+    const op = new URL(url).pathname.split('/').at(-1);
+    if (op !== 'getAPTLttotPblancDetail') return Response.json({ totalCount: 0, data: [] });
+    return Response.json({
+      totalCount: 2,
+      data: [
+        // 2년 반 전 서울 공고(반포미도2차): 1년 조회에는 빠졌던 공고
+        {
+          HOUSE_MANAGE_NO: '2024000003', PBLANC_NO: '2024000003', HOUSE_SECD: '01', HOUSE_NM: '반포 미도 재건축',
+          SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 서초구 반포동 60-4',
+          RCRIT_PBLANC_DE: '2024-05-02', PBLANC_URL: 'https://www.applyhome.co.kr/old',
+          GNRL_RNK1_CRSPAREA_RCPTDE: '2024-05-20', GNRL_RNK1_CRSPAREA_ENDDE: '2024-05-21',
+        },
+        // 조회 시작일보다 앞선 공고는 서버가 걸러 주지 않아도 버린다
+        {
+          HOUSE_MANAGE_NO: '2023000001', PBLANC_NO: '2023000001', HOUSE_SECD: '01', HOUSE_NM: '신영 옛 공고',
+          SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 종로구 신영동 158-2',
+          RCRIT_PBLANC_DE: '2023-11-10', PBLANC_URL: 'https://www.applyhome.co.kr/older',
+          GNRL_RNK1_CRSPAREA_RCPTDE: '2023-11-20', GNRL_RNK1_CRSPAREA_ENDDE: '2023-11-21',
+        },
+      ],
+    });
+  };
+  const data = await buildMap({ fetch, env: { DATA_GO_KR_KEY: 'k' }, today, seoulFile, newtownsFile: townsFile, sleep: noSleep });
+  const apt = calls.find((url) => url.includes('getAPTLttotPblancDetail'));
+  assert.equal(new URL(apt).searchParams.get('cond[RCRIT_PBLANC_DE::GTE]'), '2023-11-11');
+  const banpo = data.projects.find((p) => p.id === 'seoul-2002');
+  assert.equal(banpo.live, false);
+  assert.equal(banpo.windowStatus, 'announced');
+  assert.equal(banpo.windowBasis, '청약홈 공고가 이미 있었습니다(2024-05-02)');
+  assert.equal(banpo.bucket, 'announced');
+  const sinyoung = data.projects.find((p) => p.id === 'seoul-1441');
+  assert.deepEqual(sinyoung.notices, []);
+  assert.notEqual(sinyoung.windowStatus, 'announced');
+});
+
+test('블록별 분양 towns carry their block lists, label and plan window into projects.json', async () => {
+  const file = join(dir, 'blocks.yaml');
+  writeFileSync(file, `
+asOf: "2026-11-10"
+towns:
+  - id: hanam-gyosan
+    name: 하남교산
+    district: 하남
+    stage: 블록별 분양
+    stageDates:
+      블록별 분양: "2025-03-31"
+    noticeMatch: [교산]
+    preSubscriptions:
+      - { block: A2, households: 1056, noticeDate: "2021-11-18", source: { url: "https://example.com/pre" } }
+    history:
+      - { block: A2, households: 1115, noticeDate: "2025-03-31", moveIn: "2029-06", source: { url: "https://example.com/a2" } }
+    plans:
+      - { blocks: [A5], expected: "2027-09", source: { title: 일정표, outlet: 하남도시공사, url: "https://example.com/a5" } }
+      - { blocks: [A9, A11], expected: "2026-하반기", source: { title: "기사 (하남Times)", url: "http://example.com/a9", date: "2025-12-13" } }
+  - id: guri-galmae-station
+    name: 구리갈매역세권
+    district: 구리
+    stage: 블록별 분양
+    noticeMatch: [갈매역세권]
+    plans:
+      - { blocks: [B2], rental: true, expected: "2029-하반기", source: { url: "https://example.com/b2" } }
+  - id: other
+    name: 다른지구
+    district: 구리
+    stage: 지구지정
+    stageDates:
+      지구지정: "2025-12-31"
+`);
+  const data = await buildMap({ fetch: async () => { throw new Error('no fetch'); }, env: {}, today, seoulFile, newtownsFile: file, sleep: noSleep });
+  const byId = Object.fromEntries(data.projects.map((p) => [p.id, p]));
+  const gyosan = byId['town-hanam-gyosan'];
+  assert.deepEqual(gyosan.window, { from: '2026-07', to: '2026-12' });
+  assert.equal(gyosan.windowRule, 'town-plan');
+  assert.equal(gyosan.windowLabel, '다음 블록 예상');
+  assert.equal(gyosan.windowBasis, '보도된 다음 블록 계획: A9·A11 2026-하반기 (하남Times 2025-12-13)');
+  assert.equal(gyosan.bucket, 'soon');
+  assert.deepEqual(gyosan.blockHistory.map((e) => [e.block, e.noticeDate, e.moveIn]), [['A2', '2025-03-31', '2029-06']]);
+  assert.deepEqual(gyosan.preSubscriptions.map((e) => e.block), ['A2']);
+  assert.deepEqual(gyosan.blockPlans.map((e) => e.expected), ['2026-하반기', '2027-09']);
+  const galmae = byId['town-guri-galmae-station'];
+  assert.deepEqual(galmae.window, { from: '2026-11', to: '2028-11' });
+  assert.equal(galmae.windowBasis, '다음 블록 예상(규칙): 오늘부터 0~2년');
+  assert.equal(galmae.windowLabel, '다음 블록 예상');
+  assert.equal('blockHistory' in galmae, false);
+  assert.equal('windowLabel' in byId['town-other'], false);
+  assert.equal('windowLabel' in byId['seoul-1441'], false);
 });

@@ -441,3 +441,58 @@ test('pipeline bucketOf and site bucketOf agree', () => {
   assert.deepEqual(pipeline.BUCKETS, BUCKET_ORDER);
   assert.deepEqual(pipeline.LIKELY_SOLD_STAGES, app.LIKELY_SOLD_STAGES);
 });
+
+test('windowFactLabel and windowPrefix: 블록별 분양 towns say 다음 블록 예상', () => {
+  assert.equal(app.windowFactLabel({ windowLabel: '다음 블록 예상' }), '다음 블록 예상');
+  assert.equal(app.windowFactLabel({}), '예상 청약');
+  assert.equal(app.windowFactLabel({ windowLabel: '  ' }), '예상 청약');
+  assert.equal(app.windowFactLabel({ windowLabel: 3 }), '예상 청약');
+  assert.equal(app.windowFactLabel(null), '예상 청약');
+  assert.equal(app.windowPrefix({ windowLabel: '다음 블록 예상' }), '다음 블록 예상');
+  assert.equal(app.windowPrefix({}), '예상');
+});
+
+test('planRange matches the pipeline, planPassed flags plans that ended before this month', () => {
+  for (const value of ['2026-상반기', '2026-하반기', '2027-09', '2027-13', '2027', '2027-3분기', '', null, '2027-09-01']) {
+    assert.deepEqual(app.planRange(value), pipeline.planRange(value), String(value));
+  }
+  assert.equal(app.planPassed({ expected: '2026-상반기', from: '2026-01', to: '2026-06' }, today), true);
+  assert.equal(app.planPassed({ expected: '2026-하반기' }, today), false); // 12월까지
+  assert.equal(app.planPassed({ expected: '2026-10' }, today), true);
+  assert.equal(app.planPassed({ expected: '2026-11' }, today), false);
+  assert.equal(app.planPassed({ expected: '언젠가' }, today), false);
+  assert.equal(app.planPassed(null, today), false);
+});
+
+test('blockTimeline merges 본청약 and 사전청약, newest first', () => {
+  const project = {
+    preSubscriptions: [{ block: 'A2', noticeDate: '2021-11-18' }, { block: 'A5', noticeDate: '2023-09-25' }],
+    blockHistory: [{ block: 'A2', noticeDate: '2025-03-31', moveIn: '2029-06' }, null, 'x', { block: 'B-1', noticeDate: '2025-03-31', rental: true }],
+  };
+  assert.deepEqual(app.blockTimeline(project).map((e) => [e.stage, e.block, e.noticeDate]), [
+    ['본청약', 'A2', '2025-03-31'], ['본청약', 'B-1', '2025-03-31'], ['사전청약', 'A5', '2023-09-25'], ['사전청약', 'A2', '2021-11-18'],
+  ]);
+  assert.deepEqual(app.blockTimeline({}), []);
+  assert.deepEqual(app.blockTimeline({ blockHistory: 'nope' }), []);
+});
+
+test('blockPlanList sorts by expected start; planHouseholdsText', () => {
+  const plans = [{ blocks: ['A5'], expected: '2027-09' }, { blocks: ['D2'], expected: '2026-상반기' }, { blocks: ['X'], expected: '미정' }, { blocks: ['A9'], expected: '2026-하반기', from: '2026-07' }];
+  assert.deepEqual(app.blockPlanList({ blockPlans: plans }).map((p) => p.blocks[0]), ['D2', 'A9', 'A5', 'X']);
+  assert.deepEqual(app.blockPlanList({}), []);
+  assert.equal(app.planHouseholdsText({ households: 755, householdsByBlock: { A9: 244, A11: 511 } }), 'A9 244 · A11 511');
+  assert.equal(app.planHouseholdsText({ households: 1249 }), '1,249세대');
+  assert.equal(app.planHouseholdsText({ households: null, householdsByBlock: { D2: null } }), null);
+  assert.equal(app.planHouseholdsText({}), null);
+});
+
+test('sourceOutlet matches the pipeline rule and never trusts a non-http url', () => {
+  const cases = [
+    { outlet: '청약홈', title: '분양정보 (번호)' },
+    { title: '기사 (하남Times)', url: 'http://m.hanamtimes.com/a' },
+    { title: '괄호 없음', url: 'https://www.huic.co.kr/a' },
+    {},
+  ];
+  for (const source of cases) assert.equal(app.sourceOutlet(source), pipeline.sourceOutlet(source));
+  assert.equal(app.sourceOutlet({ title: '괄호 없음', url: 'javascript:alert(1)' }), '출처');
+});

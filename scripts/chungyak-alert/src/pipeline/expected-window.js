@@ -24,7 +24,8 @@ export const WINDOW_RULES = {
     지구계획승인: { from: 18, to: 36 },
     '부지조성 착공': { from: 12, to: 24, note: '블록별 순차 공고' },
     // 설계 표에 없는 확장 규칙이다. 단계 날짜가 아니라 오늘부터 잡는다.
-    '블록별 분양': { from: 0, to: 24, fromToday: true, note: '남은 블록 순차 공고(확장 규칙)' },
+    // 보도된 블록 계획(newtowns.yaml plans)이 있으면 그쪽을 먼저 쓴다(townPlanWindow).
+    '블록별 분양': { from: 0, to: 24, fromToday: true, basis: '다음 블록 예상(규칙): 오늘부터 0~2년' },
     준공: { done: '준공되어 남은 분양 없음으로 봄' },
   },
 };
@@ -83,8 +84,97 @@ function withOverdue(result, today, stage) {
   return { ...result, status: 'estimated' };
 }
 
+// 블록별 분양 중인 지구: 기간은 첫 청약이 아니라 다음 블록 예상이다(사이트 표시 이름).
+export const BLOCK_STAGE = '블록별 분양';
+export const NEXT_BLOCK_LABEL = '다음 블록 예상';
+
+export function isBlockTown(kind, stage) {
+  return kind === '공공주택지구' && stage === BLOCK_STAGE;
+}
+
+// 보도된 블록 계획 시기 -> 달 범위. 'YYYY-MM' 한 달, 'YYYY-상반기' 1~6월, 'YYYY-하반기' 7~12월. 형식이 아니면 null.
+// site/app.js의 planRange와 같게 둔다.
+export function planRange(expected) {
+  const raw = String(expected ?? '').trim();
+  const half = /^(\d{4})-(상반기|하반기)$/.exec(raw);
+  if (half) return half[2] === '상반기' ? { from: `${half[1]}-01`, to: `${half[1]}-06` } : { from: `${half[1]}-07`, to: `${half[1]}-12` };
+  if (!/^\d{4}-\d{2}$/.test(raw)) return null;
+  const month = toMonth(raw);
+  return month ? { from: month, to: month } : null;
+}
+
+// 'A-1', 'A1BL', 'A1블록' -> 'A1' (출처마다 블록 표기가 달라 비교용으로만 쓴다)
+export function blockKey(value) {
+  return String(value ?? '').toUpperCase().replace(/\s+|-|BL$|블록$/g, '');
+}
+
+// 보도 기사·자료를 낸 곳: source.outlet, 없으면 제목 끝 괄호, 없으면 주소의 호스트
+export function sourceOutlet(source) {
+  if (source?.outlet) return String(source.outlet);
+  const paren = /\(([^()]+)\)\s*$/.exec(String(source?.title ?? ''));
+  if (paren) return paren[1].trim();
+  try {
+    return new URL(String(source?.url ?? '')).hostname.replace(/^(www|m)\./, '') || '출처';
+  } catch {
+    return '출처';
+  }
+}
+
+const joinBlocks = (blocks) => blocks.join('·');
+
+// 분양 계획(임대 제외)에서 아직 공고가 안 난 블록만 남긴다. 계획 보도일(없으면 계획 시작 달) 이후의
+// 분양 이력(임대 제외)에 같은 블록이 있으면 그 블록은 공고가 난 것으로 본다.
+function pendingPlans(plans, history) {
+  const announced = (history ?? []).filter((entry) => entry && !entry.rental && entry.noticeDate);
+  return (plans ?? []).flatMap((plan) => {
+    if (!plan || plan.rental) return [];
+    const range = planRange(plan.expected);
+    if (!range) return [];
+    const since = toMonth(plan.sources?.[0]?.date) ?? range.from;
+    const blocks = (plan.blocks ?? []).filter((block) => !announced.some(
+      (entry) => blockKey(entry.block) === blockKey(block) && monthsBetween(since, entry.noticeDate) >= 0,
+    ));
+    return blocks.length ? [{ ...plan, ...range, blocks }] : [];
+  });
+}
+
+// 블록별 분양 지구의 다음 블록 예상.
+// 1) 아직 안 끝난 분양 계획이 있으면 가장 이른 계획(같은 기간이면 블록을 합침) -> town-plan
+// 2) 계획은 있는데 모두 지났고 공고도 없으면 오늘부터 12개월 -> town-plan-late
+// 3) 계획이 없으면 null(확장 규칙으로)
+export function townPlanWindow({ plans = [], history = [], today }) {
+  const pending = pendingPlans(plans, history);
+  if (pending.length === 0) return null;
+  const now = toMonth(today);
+  const upcoming = pending.filter((plan) => monthsBetween(now, plan.to) >= 0)
+    .sort((a, b) => monthsBetween(b.from, a.from) || monthsBetween(b.to, a.to));
+  if (upcoming.length > 0) {
+    const [first] = upcoming;
+    const same = upcoming.filter((plan) => plan.from === first.from && plan.to === first.to);
+    const source = first.sources?.[0];
+    const said = [sourceOutlet(source), source?.date || '날짜 없음'].join(' ');
+    return {
+      from: first.from,
+      to: first.to,
+      basis: `보도된 다음 블록 계획: ${joinBlocks(same.flatMap((plan) => plan.blocks))} ${first.expected} (${said})`,
+      rule: 'town-plan',
+      status: 'estimated',
+    };
+  }
+  // 가장 늦게 끝난 계획의 시기를 근거에 적는다
+  const latest = [...pending].sort((a, b) => monthsBetween(b.to, a.to)).at(-1);
+  return {
+    from: now,
+    to: addMonths(now, 12),
+    basis: `보도된 일정(${latest.expected})이 지났지만 공고는 아직 없습니다. 남은 블록 순차 공고`,
+    rule: 'town-plan-late',
+    status: 'estimated',
+  };
+}
+
 // expected: 보도 등으로 알려진 계획 { from, to, basis }. 있으면 규칙보다 우선한다.
-export function expectedWindow({ kind, stage, stageDates = {}, today, expected = null }) {
+// plans·history: 블록별 분양 지구의 블록 계획과 분양 이력(newtowns.yaml). 블록별 분양 단계에서만 본다.
+export function expectedWindow({ kind, stage, stageDates = {}, today, expected = null, plans = [], history = [] }) {
   const rule = WINDOW_RULES[kind]?.[stage];
   if (rule?.done) return { from: null, to: null, basis: rule.done, rule: `${kind}:${stage}`, status: 'done' };
   if (expected?.from && expected?.to) {
@@ -95,6 +185,10 @@ export function expectedWindow({ kind, stage, stageDates = {}, today, expected =
       return withOverdue({ from, to, basis, rule: 'reported' }, today, stage);
     }
   }
+  if (isBlockTown(kind, stage)) {
+    const planned = townPlanWindow({ plans, history, today });
+    if (planned) return planned;
+  }
   if (!rule) return { from: null, to: null, basis: '단계 정보가 없어 예상하지 않음', rule: 'unknown', status: 'unknown' };
   if (rule.far) return { from: null, to: null, basis: rule.far, rule: `${kind}:${stage}`, status: 'far' };
   const span = `${years(rule.from)}~${years(rule.to)}년`;
@@ -103,7 +197,7 @@ export function expectedWindow({ kind, stage, stageDates = {}, today, expected =
     return withOverdue({
       from: toMonth(today),
       to: addMonths(today, rule.to),
-      basis: `${stage} 중: 오늘부터 ${span}${note}`,
+      basis: rule.basis ?? `${stage} 중: 오늘부터 ${span}${note}`,
       rule: `${kind}:${stage}`,
     }, today, stage);
   }
@@ -119,6 +213,7 @@ export function expectedWindow({ kind, stage, stageDates = {}, today, expected =
 }
 
 // 사업에 예상 시기를 붙인다. window는 기간이 있을 때만 { from, to }.
+// 블록별 분양 지구는 windowLabel '다음 블록 예상'을 붙인다(없으면 사이트에서 '예상 청약').
 export function applyWindow(project, today) {
   const result = expectedWindow({
     kind: project.kind,
@@ -126,6 +221,8 @@ export function applyWindow(project, today) {
     stageDates: project.stageDates,
     today,
     expected: project.expected,
+    plans: project.blockPlans,
+    history: project.blockHistory,
   });
   return {
     ...project,
@@ -133,6 +230,7 @@ export function applyWindow(project, today) {
     windowBasis: result.basis,
     windowStatus: result.status,
     windowRule: result.rule,
+    ...(isBlockTown(project.kind, project.stage) ? { windowLabel: NEXT_BLOCK_LABEL } : {}),
   };
 }
 

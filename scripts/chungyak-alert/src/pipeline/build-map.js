@@ -12,7 +12,9 @@ import { DATASET_URL, SEOUL_STAGES, collectSeoul, parseSeoulWorkbook } from './s
 // 공고 연결은 실패해도 건너뛴다.
 
 export const DEFAULT_NEWTOWNS = fileURLToPath(new URL('../../data/newtowns.yaml', import.meta.url));
-const LOOKBACK_DAYS = 365;
+// 공고 연결은 최근 3년. 공공주택지구는 블록 공고 간격이 1년을 넘기도 해서(하남교산 A2 2025-03) 1년으로는 빠진다.
+// 서울 사업에 이어진 오래된 공고도 접수가 끝났으면 announced로 본다(markAnnounced).
+export const NOTICE_LOOKBACK_DAYS = 1095;
 
 // 공고 연결과 예상 시기 계산에만 쓰는 내부 값은 출력에서 뺀다.
 function toPublic(project) {
@@ -32,7 +34,7 @@ async function collectNotices({ fetch, env, today, sleep }) {
   if (!key) return { notices: [], skipped: 'no_key', errors: [] };
   maskServiceKey(key, env);
   try {
-    const result = await collectApplyhome({ fetch, key, today, lookbackDays: LOOKBACK_DAYS, sleep });
+    const result = await collectApplyhome({ fetch, key, today, lookbackDays: NOTICE_LOOKBACK_DAYS, sleep });
     if (result.failedAll) return { notices: [], skipped: result.errors[0] ?? 'applyhome_failed', errors: result.errors };
     return { notices: result.notices, skipped: null, errors: result.errors };
   } catch (error) {
