@@ -21,7 +21,7 @@ export function restrictedType(notice, market) {
   const type = compact(notice.typeLabel);
   const typeKeyword = market.restrictedNameKeywords.find((item) => type.includes(compact(item)));
   if (typeKeyword) return typeKeyword;
-  return notice.houseSecd === '10' || type.includes('신혼희망') ? '신혼희망' : null;
+  return notice.houseSecd === '10' ? '신혼희망' : null;
 }
 
 export function monthsBetween(from, to) {

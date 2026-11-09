@@ -463,9 +463,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     limits: { maxCalls: config.lh.detailMaxCalls ?? 0, timeoutMs: config.lh.detailTimeoutMs ?? 10000 },
     onSoft: addSoftError,
   });
-  const lhShapes = createShapeLog();
+  const lhShapes = createShapeLog(config.lh.labelLogWords);
   let scopedNotices = lhScope.notices;
-  let lhDetailCounts = { lh_detail_ok: 0, lh_schedule_parsed: 0, lh_models_parsed: 0 };
+  let lhDetailCounts = { lh_detail_ok: 0, lh_schedule_parsed: 0, lh_models_parsed: 0, lh_models_unattached: 0, lh_model_rows_merged: 0, lh_detail_capped: 0, lh_supply_capped: 0 };
   if (dataKey) {
     const enriched = await enrichLhNotices(lhScope.notices, {
       client: lhDetail,
@@ -529,11 +529,11 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         addError(safeError(error));
         evaluation = { status: STATUS.UNDETERMINED, reason: '판별 실패' };
       }
+      // 시세로 로또·아님을 정한 LH 공고 수. 대상 외와 판별 불가(조회 실패, 추정 없음)는 세지 않는다. 이전 판별 유지 전 값으로 센다.
+      if (isLhItem(notice) && [STATUS.LOTTO, STATUS.NOT].includes(evaluation.status)) counts.lh_evaluated += 1;
       // dry-run도 읽어 둔 행의 이전 상태로 같은 보호를 적용해 일반 실행과 건수가 같게 한다.
       evaluation = keepPreviousLotto(evaluation, (previous ?? dryRunRows?.get(notice.key))?.lotto);
       counts.evaluated += 1;
-      // 시세로 판별한 LH 공고 수. 상세 정보가 없거나 제한 유형이면 대상 외라 세지 않는다.
-      if (isLhItem(notice) && evaluation.status !== STATUS.OUT_OF_SCOPE) counts.lh_evaluated += 1;
       if (evaluation.confidence) marketCounts[evaluation.confidence] += 1;
       if (evaluation.stationState) marketCounts[stationCountNames[evaluation.stationState]] += 1;
       if (evaluation.recommendation) recommendCounts.recommended += 1;

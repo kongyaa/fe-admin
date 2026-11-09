@@ -299,7 +299,7 @@ test('every mode probes in-scope LH notices and logs field names but never value
   }
 });
 
-test('LH detail failures stay soft and change no writes, statuses or mails', async () => {
+test('LH detail failures stay soft, write the same rows and send no error mail', async () => {
   const ok = runHarness();
   assert.equal(await run({ env: ok.env, deps: ok.deps }), 0);
   const failed = runHarness({
@@ -307,11 +307,16 @@ test('LH detail failures stay soft and change no writes, statuses or mails', asy
     supply: () => new Response('<OpenAPI_ServiceResponse/>'),
   });
   assert.equal(await run({ env: failed.env, deps: failed.deps }), 0);
-  assert.deepEqual(failed.state, ok.state);
+  // 같은 행을 쓴다. 상태만 다르다: 응답에 주택형이 없으면 대상 외, 조회가 실패하면 판별 불가(저장된 로또 유지용)다.
+  assert.deepEqual(failed.state.upserts.map((item) => item.key), ok.state.upserts.map((item) => item.key));
+  assert.deepEqual(ok.state.upserts.map((item) => item.status), ['대상 외']);
+  assert.deepEqual(failed.state.upserts.map((item) => item.status), ['판별 불가']);
   assert.deepEqual(failed.mails.map((mail) => mail.subject), ok.mails.map((mail) => mail.subject));
   assert.ok(!failed.mails.some((mail) => mail.subject.includes('배치 오류')));
   assert.ok(failed.logs.includes('errors=none'), failed.logs.join('|'));
-  assert.ok(lineOf(failed, 'market').endsWith(' soft=lh_detail_http_403:1,lh_supply_parse:1'), lineOf(failed, 'market'));
+  // 상세가 실패하면 공급은 부르지 않는다.
+  assert.ok(lineOf(failed, 'market').endsWith(' soft=lh_detail_http_403:1'), lineOf(failed, 'market'));
+  assert.equal(failed.probe.supplyCalls().length, 0);
   assert.ok(lineOf(failed, 'lh_detail_schema').includes(' stopped=lh_detail_http_403 '));
   assert.ok(!failed.logs.join('\n').includes('마곡래미안테스트단지'));
 

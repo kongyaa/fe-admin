@@ -1,4 +1,5 @@
 import { lhTypeClass } from './lh-scope.js';
+import { lhDetailParams } from './sources/lh-detail.js';
 import { normalizeDate, withOverall } from './util.js';
 
 // LH 상세(lhLeaseNoticeDtlInfo1)와 공급(lhLeaseNoticeSplInfo1) 응답을 공고의 일정, 주택형, 주소로 바꾼다.
@@ -114,14 +115,19 @@ const squash = (value) => String(value ?? '').replace(/\s+/g, '');
 // 공개 로그와 단계 이름에 쓰는 분류 이름. 한글, 숫자, `·`, 괄호, `/`, 공백만 남기고 20자에서 자른다.
 export const cleanLhLabel = (value) => String(value ?? '').replace(/[^가-힣0-9·()/ ]/g, '').replace(/\s+/g, ' ').trim().slice(0, 20);
 
-// 청약 접수 대상(HS_SBSC_ACP_TRG_CD_NM)을 청약홈과 같은 단계 이름으로 바꾼다. Notion의 특별공급 접수일, 1순위, 2순위 열이
-// 이 이름의 앞부분으로 채워진다(notion-store의 buildProperties). 모르는 이름은 버리지 않고 이름 그대로(없으면 `접수`) 단계로 둔다.
+// 청약 접수 대상(HS_SBSC_ACP_TRG_CD_NM)을 청약홈과 같은 앞부분을 가진 단계 이름으로 바꾼다. Notion의 특별공급 접수일, 1순위 접수일,
+// 2순위 접수일 열이 이 앞부분으로 채워지고, 같은 앞부분이 여럿이면 가장 이른 시작일이 쓰인다(notion-store의 buildProperties).
+// 1순위·2순위가 있으면 그 순위, 순위 없는 일반공급은 1순위, 그 밖의 이름(신혼부부, 다자녀, 생애최초 등 특별공급 유형)은 특별공급이다.
+// 이름은 버리지 않고 앞부분 뒤에 붙인다(`특별공급 신혼부부`). 이미 그 앞부분으로 시작하면 그대로 둔다. 이름이 없으면 `접수`다.
 export function lhStageName(label) {
-  const text = squash(label);
-  if (text.includes('특별')) return '특별공급';
-  if (text.includes('1순위')) return '1순위';
-  if (text.includes('2순위')) return '2순위';
-  return cleanLhLabel(label) || '접수';
+  const name = cleanLhLabel(label);
+  if (!name) return '접수';
+  const text = squash(name);
+  const prefixed = (prefix) => (text.startsWith(prefix) ? name : `${prefix} ${name}`);
+  if (text.includes('1순위')) return prefixed('1순위');
+  if (text.includes('2순위')) return prefixed('2순위');
+  if (text.includes('일반')) return prefixed('1순위');
+  return prefixed('특별공급');
 }
 
 // 공급 일정(dsSplScdl) → 단계와 당첨자 발표일. 단계는 접수 기간(ACP_DTTM)이 있는 행마다 하나이고 시작일 순이다.
@@ -150,35 +156,60 @@ export function mapLhComplex(rows) {
 // 판별에 쓸 수 있는 주택형(면적과 가격이 있음)이 하나라도 있는지.
 export const hasLhModels = (models) => Array.isArray(models) && models.some((model) => model.area > 0 && model.price > 0);
 
+// 같은 주택형의 행을 하나로 합친다. 가격은 가장 높은 값(청약홈 LTTOT_TOP_AMOUNT처럼 최고 분양가)이고, 면적은 그 행의 값이다.
+// 세대수는 더한다. 하나라도 모르면 합계도 모른다(null).
+function mergeModels(items) {
+  const priceOf = (item) => (item.price > 0 ? item.price : -Infinity);
+  const top = items.reduce((best, item) => (priceOf(item) > priceOf(best) ? item : best));
+  const known = items.every((item) => Number.isFinite(item.households));
+  return {
+    houseType: top.houseType,
+    area: top.area,
+    supplyArea: top.supplyArea,
+    price: top.price,
+    households: known ? items.reduce((sum, item) => sum + item.households, 0) : null,
+    specials: { 신생아: null, 신혼부부: null, 생애최초: null },
+  };
+}
+
 // 공급 정보(dsList01) → 청약홈 주택형과 같은 모양(src/sources/applyhome.js의 normalizeModel).
 // 공고에 단지가 여럿이면(BZDT_NM이 둘 이상) 주소를 읽은 첫 단지의 주택형만 쓴다. 그 단지 이름과 맞는 행이 없으면 모두 쓴다.
+// 주택형(HTY_NM, 공백 무시)마다 하나로 합친다(mergeModels). 주택형 이름이 없으면 전용면적 값으로 묶는다. merged는 합쳐서 줄어든 행 수다.
 // 특별공급 유형별 세대수는 자료에 없어 null이다(LH는 추천을 계산하지 않는다).
 export function mapLhModels(rows, complexName = null, onFail = () => {}) {
   const list = rows ?? [];
   const names = new Set(list.map((row) => squash(row.BZDT_NM)).filter(Boolean));
   const own = complexName && names.size > 1 ? list.filter((row) => squash(row.BZDT_NM) === squash(complexName)) : [];
-  return (own.length > 0 ? own : list).map((row) => ({
-    houseType: present(row.HTY_NM) ? String(row.HTY_NM).trim() : '',
-    area: parseField(row, 'RSDN_DDO_AR', parseLhArea, onFail),
-    supplyArea: parseField(row, 'SPL_AR', parseLhArea, onFail),
-    price: parseField(row, 'SIL_AMT', parseLhPrice, onFail),
-    households: parseField(row, 'SIL_HSH_CNT', parseLhCount, onFail),
-    specials: { 신생아: null, 신혼부부: null, 생애최초: null },
-  }));
+  const selected = own.length > 0 ? own : list;
+  const groups = new Map();
+  for (const row of selected) {
+    const key = squash(row.HTY_NM) || `area:${squash(row.RSDN_DDO_AR)}`;
+    const model = {
+      houseType: present(row.HTY_NM) ? String(row.HTY_NM).trim() : '',
+      area: parseField(row, 'RSDN_DDO_AR', parseLhArea, onFail),
+      supplyArea: parseField(row, 'SPL_AR', parseLhArea, onFail),
+      price: parseField(row, 'SIL_AMT', parseLhPrice, onFail),
+      households: parseField(row, 'SIL_HSH_CNT', parseLhCount, onFail),
+    };
+    if (groups.has(key)) groups.get(key).push(model);
+    else groups.set(key, [model]);
+  }
+  return { models: [...groups.values()].map(mergeModels), merged: selected.length - groups.size };
 }
 
 // 공고에 상세·공급 응답을 덮는다. 응답이 없거나 읽지 못한 부분은 목록 API 값(예전 동작)을 둔다.
 // - 단계: 일정을 하나라도 읽으면 바꾸고 전체 시작·종료일을 단계의 가장 이른 날과 늦은 날로 다시 계산한다.
 // - 당첨자 발표일, 주소: 읽었을 때만 바꾼다.
-// - 주택형: 판별에 쓸 수 있는 주택형이 있고 단지 주소도 읽었을 때만 models에 둔다(src/lotto.js가 읽는다). 상세가 실패해
-//   목록의 공급지역(시군구까지)만 있으면 판별하지 않는다. Notion에는 쓰지 않는다.
+// - 주택형: 판별에 쓸 수 있는 주택형이 있고 단지 주소도 읽었을 때만 models에 둔다(src/lotto.js가 읽는다). 주소가 없어
+//   붙이지 않으면 lhModelsUnattached를 켠다(판별 근거 `LH 단지 주소 미매핑`). Notion에는 쓰지 않는다.
 // - 분양가상한제: 분양 유형(lhTypeClass가 sale)인 LH 공공분양은 분양가상한제 대상으로 보고 flags.priceCap을 켠다.
 export function applyLhDetail(notice, { detail = null, supply = null }, { lh = {}, onFail = () => {} } = {}) {
   const schedule = detail ? mapLhSchedule(findBlock(detail, 'dsSplScdl'), onFail) : { stages: [], winnerDate: null };
   const complex = detail ? mapLhComplex(findBlock(detail, 'dsSbd')) : null;
-  const models = supply ? mapLhModels(findBlock(supply, 'dsList01'), complex?.name, onFail) : null;
+  const mapped = supply ? mapLhModels(findBlock(supply, 'dsList01'), complex?.name, onFail) : { models: null, merged: 0 };
   const scheduleParsed = schedule.stages.length > 0;
-  const modelsParsed = hasLhModels(models);
+  const modelsParsed = hasLhModels(mapped.models);
+  const modelsAttached = modelsParsed && Boolean(complex);
   const next = {
     ...notice,
     address: complex?.address || notice.address,
@@ -186,8 +217,9 @@ export function applyLhDetail(notice, { detail = null, supply = null }, { lh = {
     stages: scheduleParsed ? schedule.stages : notice.stages,
     flags: { ...notice.flags, priceCap: lhTypeClass(notice, lh) === 'sale' },
   };
-  if (modelsParsed && complex) next.models = models;
-  return { notice: withOverall(next), scheduleParsed, modelsParsed };
+  if (modelsAttached) next.models = mapped.models;
+  else if (modelsParsed) next.lhModelsUnattached = true;
+  return { notice: withOverall(next), scheduleParsed, modelsParsed, modelsAttached, merged: mapped.merged };
 }
 
 // 공개 로그용 값 모양. 숫자는 9, 한글 음절은 가, 영문자는 a로 바꾸고 ASCII 문장부호와 공백(하나로 줄임), ㎡, ·은 둔다.
@@ -226,16 +258,22 @@ const SHAPES_PER_FIELD = 5;
 const LABELS_MAX = 20;
 export const MAX_SHAPE_LINE = 2000;
 
-export const createShapeLog = () => ({ shapes: new Map(SHAPE_FIELDS.map(([field]) => [field, new Map()])), labels: new Map() });
+// labelWords는 로그에 그대로 남겨도 되는 접수 대상 단어(config.json의 lh.labelLogWords)다.
+export const createShapeLog = (labelWords = []) => ({
+  shapes: new Map(SHAPE_FIELDS.map(([field]) => [field, new Map()])),
+  labels: new Map(),
+  labelWords: new Set(labelWords),
+});
 
 const bump = (map, key) => map.set(key, (map.get(key) ?? 0) + 1);
 
-// 접수 대상 이름에 주소(`…구 …동`, `…특별시`)나 세 자리 이상 숫자(금액, 전화번호, 지번)가 섞이면 값일 수 있어 이름 대신 (생략)으로 센다.
-const ADDRESS_LIKE = /특별시|광역시|특별자치|[가-힣]+(?:시|군|구)\s+[가-힣0-9]+(?:동|읍|면|리|로|길)(?![가-힣])|\d{3,}/;
-export function shapeLabel(value) {
+// 공개 로그용 접수 대상 이름. 정리한 이름(cleanLhLabel)을 공백, 괄호, `/`, `·`로 나눈 단어가 모두 허용 단어일 때만 남긴다.
+// 그 밖에는 값(단지명, 주소, 금액)이 섞였을 수 있어 `(기타)`로 센다. 빈 이름은 `-`다.
+export function shapeLabel(value, labelWords = new Set()) {
   const label = cleanLhLabel(value);
   if (!label) return '-';
-  return ADDRESS_LIKE.test(label) ? '(생략)' : label;
+  const words = label.split(/[\s()/·]+/).filter(Boolean);
+  return words.length > 0 && words.every((word) => labelWords.has(word)) ? label : '(기타)';
 }
 
 // 응답 하나의 값 모양과 접수 대상 이름을 센다. 없는 필드는 세지 않는다.
@@ -249,7 +287,7 @@ export function collectValueShapes({ detail = null, supply = null }, log) {
   }
   if (detail) {
     for (const row of findBlock(detail, 'dsSplScdl')) {
-      if (Object.hasOwn(row, LABEL_FIELD)) bump(log.labels, shapeLabel(row[LABEL_FIELD]));
+      if (Object.hasOwn(row, LABEL_FIELD)) bump(log.labels, shapeLabel(row[LABEL_FIELD], log.labelWords));
     }
   }
   return log;
@@ -269,35 +307,59 @@ export function formatShapeLine(log, maxLength = MAX_SHAPE_LINE) {
   return line.length <= maxLength ? line : `${line.slice(0, maxLength - 3)}...`;
 }
 
-// 범위 안 LH 공고(isTarget)마다 상세와 공급을 부르고 덮는다. 실패는 클라이언트가 soft로 이미 셌고 그 공고는 예전 동작이다.
-// 결과 건수: lh_detail_ok(상세 응답을 받은 공고), lh_schedule_parsed(단계를 바꾼 공고), lh_models_parsed(주택형을 읽은 공고).
-export async function enrichLhNotices(notices, { client, isTarget, lh, onSoft = () => {}, shapes = createShapeLog() }) {
-  const counts = { lh_detail_ok: 0, lh_schedule_parsed: 0, lh_models_parsed: 0 };
-  const quiet = async (call, codes) => {
-    try {
-      return await call(codes);
-    } catch {
-      return null;
-    }
-  };
-  const result = [];
-  for (const notice of notices) {
-    if (!isTarget(notice)) {
-      result.push(notice);
-      continue;
-    }
-    const detail = await quiet(client.fetchLhDetail, notice.lhCodes);
-    const supply = await quiet(client.fetchLhSupply, notice.lhCodes);
-    if (!detail && !supply) {
-      result.push(notice);
-      continue;
-    }
-    if (detail) counts.lh_detail_ok += 1;
-    collectValueShapes({ detail, supply }, shapes);
-    const applied = applyLhDetail(notice, { detail, supply }, { lh, onFail: (field) => onSoft(`lh_parse_failed:${field}`) });
-    if (applied.scheduleParsed) counts.lh_schedule_parsed += 1;
-    if (applied.modelsParsed) counts.lh_models_parsed += 1;
-    result.push(applied.notice);
+// 클라이언트 호출 결과. 응답, 상한(null), 실패(던짐)를 가른다. 실패는 클라이언트가 soft로 이미 셌다.
+async function callProbe(call, codes) {
+  try {
+    const body = await call(codes);
+    return body ? { body } : { capped: true };
+  } catch {
+    return { failed: true };
   }
-  return { notices: result, counts, shapes };
+}
+
+// 범위 안 LH 공고(isTarget)마다 상세와 공급을 부르고 덮는다. 상한이 고르게 걸리도록 고유 키 순서로 부르고, 결과는 원래 순서로 돌려준다.
+// 공고의 lhDetailState는 조회 상태다: ok, failed(상세 실패), capped(상한), supply_failed(공급 실패), no_codes(요청 코드 없음).
+// 상세가 실패하거나 상한이면 공급은 부르지 않는다(단지 주소가 없어 주택형을 판별에 쓰지 못한다). 그 공고는 예전 동작이다.
+// 건수: lh_detail_ok(상세 응답), lh_schedule_parsed(단계를 바꿈), lh_models_parsed(주택형을 붙임), lh_models_unattached(읽었지만
+// 단지 주소가 없어 붙이지 않음), lh_model_rows_merged(같은 주택형이라 합친 행), lh_detail_capped, lh_supply_capped(상한으로 못 부른 공고).
+export async function enrichLhNotices(notices, { client, isTarget, lh, onSoft = () => {}, shapes = createShapeLog(lh?.labelLogWords) }) {
+  const counts = {
+    lh_detail_ok: 0,
+    lh_schedule_parsed: 0,
+    lh_models_parsed: 0,
+    lh_models_unattached: 0,
+    lh_model_rows_merged: 0,
+    lh_detail_capped: 0,
+    lh_supply_capped: 0,
+  };
+  const targets = notices.filter(isTarget).sort((a, b) => String(a.key).localeCompare(String(b.key)));
+  const replaced = new Map();
+  for (const notice of targets) {
+    const done = (state, next = notice) => replaced.set(notice.key, { ...next, lhDetailState: state });
+    if (!lhDetailParams(notice.lhCodes, '', 'key')) {
+      done('no_codes');
+      continue;
+    }
+    const detail = await callProbe(client.fetchLhDetail, notice.lhCodes);
+    if (detail.failed) {
+      done('failed');
+      continue;
+    }
+    if (detail.capped) {
+      counts.lh_detail_capped += 1;
+      done('capped');
+      continue;
+    }
+    counts.lh_detail_ok += 1;
+    const supply = await callProbe(client.fetchLhSupply, notice.lhCodes);
+    if (supply.capped) counts.lh_supply_capped += 1;
+    collectValueShapes({ detail: detail.body, supply: supply.body ?? null }, shapes);
+    const applied = applyLhDetail(notice, { detail: detail.body, supply: supply.body ?? null }, { lh, onFail: (field) => onSoft(`lh_parse_failed:${field}`) });
+    if (applied.scheduleParsed) counts.lh_schedule_parsed += 1;
+    if (applied.modelsAttached) counts.lh_models_parsed += 1;
+    else if (applied.modelsParsed) counts.lh_models_unattached += 1;
+    counts.lh_model_rows_merged += applied.merged;
+    done(supply.failed ? 'supply_failed' : supply.capped ? 'capped' : 'ok', applied.notice);
+  }
+  return { notices: notices.map((notice) => replaced.get(notice.key) ?? notice), counts, shapes };
 }
