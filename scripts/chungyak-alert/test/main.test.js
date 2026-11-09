@@ -205,7 +205,7 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
       '접수 종료일': { date: null },
     },
   });
-  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, interest: false, name: '', typeLabel: null, link: null, walkMinutes: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
+  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, interest: false, name: '', typeLabel: null, region: null, source: null, link: null, walkMinutes: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
 });
 
 function notionFake(children = []) {

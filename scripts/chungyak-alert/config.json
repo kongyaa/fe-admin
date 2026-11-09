@@ -5,7 +5,19 @@
   "rentalKeywords": ["임대", "행복주택", "국민임대", "영구임대", "공공임대", "매입임대", "전세임대", "분양전환", "장기전세"],
   "lh": {
     "lookaheadDays": 90,
-    "excludeTypeKeywords": ["토지", "상가"]
+    "excludeTypeKeywords": ["토지", "상가"],
+    "filterSaleArea": true,
+    "saleTypes": ["분양주택", "공공분양", "신혼희망타운", "뉴홈", "나눔형", "일반형"],
+    "nonSaleTypes": ["임대", "행복주택", "전세", "주거복지", "토지", "상가", "매각"],
+    "excludeKeywords": ["선택형", "분양전환", "일반매각", "주택매각"],
+    "targetRegions": ["서울"],
+    "targetAreas": [
+      { "name": "하남교산", "keywords": ["하남교산", "교산"] },
+      { "name": "광명시흥", "keywords": ["광명시흥"] },
+      { "name": "구리갈매", "keywords": ["구리갈매", "갈매역세권"] },
+      { "name": "구리토평", "keywords": ["구리토평", "토평"] },
+      { "name": "남양주왕숙", "keywords": ["남양주왕숙", "왕숙"] }
+    ]
   },
   "notion": {
     "databaseTitle": "청약 정보",

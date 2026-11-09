@@ -11,6 +11,7 @@ import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } f
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
 import { parseProfile } from './recommend.js';
 import { isRental } from './rental.js';
+import { lhScopeRule, storedLhScopeRule } from './lh-scope.js';
 import {
   decodeServiceKey,
   defaultSleep,
@@ -37,7 +38,7 @@ export const SOURCES = [
   '국토부 아파트 매매 실거래가 (data.go.kr 15126469): 시세 추정에 사용',
   '국토부 아파트 분양권전매 실거래가 (data.go.kr 15126471): 같은 단지 시세와 비교 단지에 사용',
   '국토부 공동주택 단지 목록 (data.go.kr 15057332)과 기본 정보 (15058453): 비교 단지의 지하철역 거리에 사용',
-  'LH 임대공고 조회: 저장만 사용, 날짜가 없으면 알림 제외',
+  'LH 임대공고 조회: 분양 공고 중 서울과 지정 지구만 저장, 날짜가 없으면 알림 제외',
   'SH·GH 공고: v2 예정',
 ];
 
@@ -70,6 +71,32 @@ export function dedupeNotices(notices) {
   const seen = new Map();
   for (const notice of notices) if (!seen.has(notice.key)) seen.set(notice.key, notice);
   return [...seen.values()];
+}
+
+// LH 범위 밖 공고(분양이 아니거나 대상 지역 밖, src/lh-scope.js)를 가른다. 청약홈 공고는 그대로 둔다.
+// 관심을 체크한 행이 있는 공고는 빼지 않고 보통 공고처럼 다룬다. 관심 여부는 실행 시작 때 읽은 값이다.
+// 옮길 행은 이번 실행에 범위 밖으로 빠진 공고의 행과, 수집되지 않았어도 저장된 값으로 범위 밖인 행이다. 관심 행은 남기고 센다.
+export function splitLhScope(notices, rows, config) {
+  const counts = { lh_out_of_scope_skipped: 0, lh_out_of_scope_type: 0, lh_out_of_scope_area: 0, lh_out_of_scope_archived: 0, lh_out_of_scope_kept_interest: 0 };
+  const outKeys = new Set();
+  const kept = [];
+  for (const notice of notices) {
+    const reason = lhScopeRule(notice, config);
+    if (reason) outKeys.add(notice.key);
+    if (!reason || rows.get(notice.key)?.interest) {
+      kept.push(notice);
+      continue;
+    }
+    counts.lh_out_of_scope_skipped += 1;
+    counts[`lh_out_of_scope_${reason}`] += 1;
+  }
+  const archiveRows = [];
+  for (const row of rows.values()) {
+    if (!outKeys.has(row.key) && !storedLhScopeRule(row, config)) continue;
+    if (row.interest) counts.lh_out_of_scope_kept_interest += 1;
+    else archiveRows.push(row);
+  }
+  return { notices: kept, archiveRows, counts };
 }
 
 export function selectUrgent(records, today, alertRegions) {
@@ -394,8 +421,15 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     existing.delete(row.key);
     dryRunRows?.delete(row.key);
   }
+  // LH는 분양이면서 대상 지역인 공고만 남긴다(config.lh.filterSaleArea). 빠진 공고는 판별, 저장, 알림을 하지 않는다.
+  // 범위 밖 행은 알림 뒤에 휴지통으로 옮긴다. 임대 정리와 달리 관심 체크 행은 남긴다.
+  const lhScope = splitLhScope(notices, dryRunRows ?? existing, config);
+  for (const row of lhScope.archiveRows) {
+    existing.delete(row.key);
+    dryRunRows?.delete(row.key);
+  }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts };
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
@@ -410,7 +444,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const stationCountNames = { used: 'stationUsed', noInput: 'stationNoInput', noData: 'stationNoData' };
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
   const interestRows = new Map(dryRunRows ?? existing);
-  for (const notice of notices) {
+  for (const notice of lhScope.notices) {
     // 저장 대상 행은 원본의 최신 값으로 판단한다. 저장이 실패해도 같다. 로또 알림과 같은 기준이고, 옮겨진 날짜로 잘못 보내거나 놓치지 않는다.
     // 접수가 끝나 갱신하지 않는 행은 읽은 그대로 둔다. 이번 실행에 새로 만든 행은 아직 체크될 수 없어 넣지 않는다.
     const row = interestRows.get(notice.key);
@@ -557,6 +591,20 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
+  // LH 범위 밖(분양이 아니거나 대상 지역 밖) 행을 휴지통으로 옮긴다. 임대 행처럼 알림 뒤라 실패해도 발송을 막지 않는다.
+  if (store) {
+    for (const row of lhScope.archiveRows) {
+      try {
+        await store.archivePage(row.id);
+        counts.lh_out_of_scope_archived += 1;
+      } catch (error) {
+        notionFailed = true;
+        addError('lh_out_of_scope_archive_failed');
+        addError(safeError(error));
+      }
+    }
+  }
+
   // 신청할 수 없는 공고의 저장된 행을 휴지통으로 옮긴다. 이번 실행에 수집된 공고의 행만이고, 관심 체크 행은 위에서 남겼다.
   // 임대 행처럼 알림 뒤라 실패해도 발송을 막지 않는다.
   if (store) {
@@ -584,6 +632,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     if (dryRunRows) log(`dry-run rental_archive_candidates=${rentalRows.length}`);
     // 휴지통으로 옮길 신청할 수 없는 공고의 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run unapplicable_archive_candidates=${unapplicableRows.length}`);
+    // 휴지통으로 옮길 LH 범위 밖 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
+    if (dryRunRows) log(`dry-run lh_out_of_scope_archive_candidates=${lhScope.archiveRows.length}`);
   }
   if (flags.print) {
     // 로컬 조회 전용이다(Actions에서는 꺼진다). 신청할 수 없는 공고도 표시를 붙여 보여 준다.
