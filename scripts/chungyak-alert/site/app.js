@@ -190,6 +190,8 @@ export function windowLabel(project, todayYm) {
 // --- 블록별 분양 지구 ---------------------------------------------------------
 
 export const DEFAULT_WINDOW_LABEL = '예상 청약';
+// 사전청약은 본청약 전 예약이라 최근 분양에 세지 않는다(파이프라인 PRE_SUBSCRIPTION 과 같은 값)
+export const PRE_SUBSCRIPTION = '사전청약';
 
 /** 예상 기간의 이름. 블록별 분양 지구는 projects.json 의 windowLabel('다음 블록 예상'), 그 밖은 '예상 청약' */
 export function windowFactLabel(project) {
@@ -203,37 +205,11 @@ export function windowPrefix(project) {
   return label === DEFAULT_WINDOW_LABEL ? '예상' : label;
 }
 
-/** 보도된 블록 계획 시기 → 달 범위. 'YYYY-MM', 'YYYY-상반기'(1~6월), 'YYYY-하반기'(7~12월). 파이프라인 planRange 와 같게 둔다 */
-export function planRange(expected) {
-  const raw = String(expected ?? '').trim();
-  const half = /^(\d{4})-(상반기|하반기)$/.exec(raw);
-  if (half) return half[2] === '상반기' ? { from: `${half[1]}-01`, to: `${half[1]}-06` } : { from: `${half[1]}-07`, to: `${half[1]}-12` };
-  if (!/^\d{4}-\d{2}$/.test(raw)) return null;
-  const month = toYm(raw);
-  return month ? { from: month, to: month } : null;
-}
-
-/** 보도된 계획 기간이 이번 달 전에 끝났는지(보도 일정 지남). to 가 없으면 expected 로 계산 */
-export function planPassed(plan, todayYm) {
-  const to = toYm(plan?.to) ?? planRange(plan?.expected)?.to;
-  return Boolean(to) && monthsBetween(todayYm, to) < 0;
-}
-
 const entriesOf = (list) => (Array.isArray(list) ? list : []).filter((e) => e && typeof e === 'object' && !Array.isArray(e));
 
-/** 사전청약(preSubscriptions)과 본청약(blockHistory)을 한 목록으로. 최근 공고 먼저, 같은 날이면 블록 이름 순 */
-export function blockTimeline(project) {
-  return [
-    ...entriesOf(project?.blockHistory).map((e) => ({ ...e, stage: '본청약' })),
-    ...entriesOf(project?.preSubscriptions).map((e) => ({ ...e, stage: '사전청약' })),
-  ].sort((a, b) => String(b.noticeDate ?? '').localeCompare(String(a.noticeDate ?? ''))
-    || String(a.block ?? '').localeCompare(String(b.block ?? ''), 'ko'));
-}
-
-/** 보도된 다음 블록 계획. 예상 시기 순 */
-export function blockPlanList(project) {
-  const start = (plan) => toYm(plan.from) ?? planRange(plan.expected)?.from ?? '9999-12';
-  return entriesOf(project?.blockPlans).sort((a, b) => start(a).localeCompare(start(b)));
+/** 'A-1', 'A1BL', 'A1블록' → 'A1' (비교용). 파이프라인 blockKey 와 같게 둔다 */
+export function blockKey(value) {
+  return String(value ?? '').toUpperCase().replace(/\s+|-|BL$|블록$/g, '');
 }
 
 /** 출처를 낸 곳: outlet, 없으면 제목 끝 괄호, 없으면 주소의 호스트(파이프라인 sourceOutlet 과 같은 규칙) */
@@ -245,12 +221,83 @@ export function sourceOutlet(source) {
   return url ? new URL(url).hostname.replace(/^(www|m)\./, '') : '출처';
 }
 
-/** 계획 세대 수: 합계, 블록별 값이 있으면 'A9 244 · A11 511'. 모르면 null */
-export function planHouseholdsText(plan) {
-  const byBlock = plan?.householdsByBlock && typeof plan.householdsByBlock === 'object' ? Object.entries(plan.householdsByBlock) : [];
-  const known = byBlock.filter(([, n]) => typeof n === 'number' && Number.isFinite(n));
-  if (known.length) return known.map(([block, n]) => `${block} ${n.toLocaleString('ko-KR')}`).join(' · ');
-  return typeof plan?.households === 'number' && Number.isFinite(plan.households) ? `${plan.households.toLocaleString('ko-KR')}세대` : null;
+const compactName = (value) => String(value ?? '').toUpperCase().replace(/[\s\-·]/g, '');
+
+/** 공고명에 블록 이름이 있는지. 'A2'는 '…(A-2BL)'에 맞고 'A20'·'BA2'에는 맞지 않는다 */
+export function nameHasBlock(name, block) {
+  const key = blockKey(block);
+  if (key.length < 2) return false;
+  const hay = compactName(name);
+  for (let i = hay.indexOf(key); i >= 0; i = hay.indexOf(key, i + 1)) {
+    if (!/[0-9A-Z]/.test(hay[i - 1] ?? '') && !/\d/.test(hay[i + key.length] ?? '')) return true;
+  }
+  return false;
+}
+
+/** 같은 공고일인지: 둘 다 일까지 있으면 같은 날, 하나라도 달까지만 있으면 같은 달 */
+function sameNoticeDate(a, b) {
+  const x = String(a ?? '').trim();
+  const y = String(b ?? '').trim();
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  if (day.test(x) && day.test(y)) return x === y;
+  const month = toYm(x);
+  return Boolean(month) && month === toYm(y);
+}
+
+/**
+ * 연결된 청약홈 공고가 yaml 분양 이력의 그 공고인지(중복 판단). 공고일이 같고, 공고명에 블록 이름이나 단지 이름(4글자 이상)이
+ * 있을 때만 같다고 본다. 임대 이력은 청약홈 분양 공고와 맞추지 않는다. 애매하면 다른 공고로 두어 둘 다 보인다.
+ */
+export function isSameSale(entry, notice) {
+  if (!entry || !notice || entry.rental === true) return false;
+  if (!sameNoticeDate(entry.noticeDate, notice.announceDate)) return false;
+  const title = compactName(entry.title);
+  return nameHasBlock(notice.name, entry.block) || (title.length >= 4 && compactName(notice.name).includes(title));
+}
+
+const countOrNull = (n) => (typeof n === 'number' && Number.isFinite(n) ? n : null);
+
+/**
+ * 상세의 분양 이력: yaml 분양 이력(history)과 연결된 청약홈 공고(notices)를 합쳐 최근 공고 먼저(같은 날이면 이력 먼저).
+ * 이력과 같은 공고는 따로 줄을 만들지 않고 그 이력 줄에 청약홈 링크와 마감일을 붙인다.
+ * 줄: { date, block, stage, type, title, households, rental, sources: [{ title, url, date, outlet? }], end, from: 'history' | 'notice' }
+ */
+export function saleHistory(project) {
+  const notices = entriesOf(project?.notices);
+  const used = new Set();
+  const rows = entriesOf(project?.history).map((e) => {
+    const sources = entriesOf(e.sources).flatMap((src) => {
+      const url = safeHttpUrl(src.url);
+      return url ? [{ ...src, url }] : [];
+    });
+    let end = null;
+    notices.forEach((n, i) => {
+      if (used.has(i) || !isSameSale(e, n)) return;
+      used.add(i);
+      end = n.end ?? end;
+      const url = safeHttpUrl(n.url);
+      if (url && !sources.some((src) => src.url === url)) sources.push({ title: n.name || '청약홈 공고', url, date: n.announceDate ?? null, outlet: '청약홈' });
+    });
+    return {
+      date: e.noticeDate ?? null, block: e.block ?? null, stage: e.stage ?? null, type: e.type ?? null, title: e.title ?? null,
+      households: countOrNull(e.households), rental: e.rental === true, sources, end, from: 'history',
+    };
+  });
+  notices.forEach((n, i) => {
+    if (used.has(i)) return;
+    const url = safeHttpUrl(n.url);
+    rows.push({
+      date: n.announceDate ?? null, block: null, stage: null, type: n.typeLabel ?? null, title: n.name ?? null, households: null, rental: false,
+      sources: url ? [{ title: n.name || '청약홈 공고', url, date: n.announceDate ?? null, outlet: '청약홈' }] : [], end: n.end ?? null, from: 'notice',
+    });
+  });
+  return rows.sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')));
+}
+
+/** 최근 분양 'YYYY-MM': 임대·사전청약을 뺀 분양 이력과 연결된 공고 중 가장 늦은 공고일. 없으면 null */
+export function latestSale(project) {
+  const months = saleHistory(project).filter((r) => !r.rental && r.stage !== PRE_SUBSCRIPTION).map((r) => toYm(r.date)).filter(Boolean);
+  return months.length ? months.sort().at(-1) : null;
 }
 
 /** from~to(달)가 startYm 부터 months 칸 안에서 차지하는 칸. 걸치지 않으면 null */
@@ -673,6 +720,7 @@ function renderTowns() {
 
 function listItem(p) {
   const range = windowRange(p);
+  const sold = stageGroup(p) === 'town' ? latestSale(p) : null;
   return h('button', {
     type: 'button', class: 'item', 'data-key': p.id, 'data-select': p.id, 'aria-current': String(state.selected === p.id),
   },
@@ -682,7 +730,8 @@ function listItem(p) {
     h('span', {}, p.kind ?? ''),
     h('span', {}, p.region === '서울' ? shortDistrict(p.district) : placeLabel(p)),
     h('span', {}, p.stage ?? ''),
-    range ? h('span', {}, `${windowPrefix(p)} ${range}`) : null));
+    range ? h('span', {}, `${windowPrefix(p)} ${range}`) : null,
+    sold ? h('span', {}, `최근 분양 ${sold}`) : null));
 }
 
 function renderList() {
@@ -717,60 +766,36 @@ function fact(label, value, extra) {
   return h('div', { class: 'fact' }, h('small', {}, label), h('b', {}, value), extra ? h('span', { class: 'fact-extra' }, extra) : null);
 }
 
-/** 출처 링크들: '낸 곳 날짜'만 짧게 보이고 전체 제목은 title 로 */
-function sourceLinks(sources) {
-  const list = entriesOf(sources);
-  if (!list.length) return '-';
-  return list.map((src) => {
-    const label = `${sourceOutlet(src)} ${src.date || '날짜 없음'}`;
-    const url = safeHttpUrl(src.url);
-    return h('span', { class: 'blk-src' }, url
-      ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', title: src.title || null }, label)
-      : label);
-  });
+/** 출처 링크: '낸 곳 날짜'만 짧게 보이고 전체 제목은 title 로 */
+function sourceLink(src) {
+  const label = `${sourceOutlet(src)}${src?.date ? ` ${src.date}` : ''}`;
+  const url = safeHttpUrl(src?.url);
+  return url ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', title: src.title || null }, label) : h('span', {}, label);
 }
 
-const rentalChip = (entry) => (entry?.rental === true ? h('span', { class: 'chip c-rent' }, '임대') : null);
-
-function blockTable(caption, heads, rows) {
-  return h('div', { class: 'blk-scroll', tabindex: '0', role: 'region', 'aria-label': `${caption}, 표가 넓으면 가로로 스크롤` },
-    h('table', { class: 'blk-table' },
-      h('caption', { class: 'visually-hidden' }, caption),
-      h('thead', {}, h('tr', {}, heads.map((head) => h('th', { scope: 'col' }, head)))),
-      h('tbody', {}, rows)));
-}
-
-/** 블록별 분양 이력(사전청약·본청약)과 보도된 다음 블록 계획. 둘 다 없으면 null */
-function blockSection(p) {
-  const timeline = blockTimeline(p);
-  const plans = blockPlanList(p);
-  if (!timeline.length && !plans.length) return null;
-  const history = timeline.length
-    ? blockTable('사전청약·본청약 이력', ['공고일', '구분', '블록', '유형', '세대', '출처'], timeline.map((e) => h('tr', {},
-      h('td', { class: 'blk-date' }, e.noticeDate || '-'),
-      h('td', { class: e.stage === '사전청약' ? 'blk-stage blk-pre' : 'blk-stage' }, e.stage),
-      h('td', {}, h('b', {}, e.block || '-'), e.title ? h('small', {}, e.title) : null),
-      h('td', {}, e.type || '-', rentalChip(e), e.moveIn ? h('small', {}, `입주 예정 ${e.moveIn}`) : null),
-      h('td', { class: 'blk-num' }, typeof e.households === 'number' ? e.households.toLocaleString('ko-KR') : '-'),
-      h('td', {}, sourceLinks(e.sources)))))
-    : null;
-  const planTable = plans.length
-    ? blockTable('다음 블록 계획(보도)', ['예상 시기', '블록', '유형', '세대', '출처(보도일)'], plans.map((plan) => {
-      const passed = planPassed(plan, state.todayYm);
-      return h('tr', { class: passed ? 'blk-passed' : null },
-        h('td', { class: 'blk-date' }, plan.expected || '-', passed ? h('span', { class: 'chip c-late' }, '보도 일정 지남') : null),
-        h('td', {}, h('b', {}, (Array.isArray(plan.blocks) ? plan.blocks : []).join('·') || '-')),
-        h('td', {}, plan.type || '-', rentalChip(plan), plan.note ? h('small', {}, plan.note) : null),
-        h('td', { class: 'blk-num' }, planHouseholdsText(plan) ?? '-'),
-        h('td', {}, sourceLinks(plan.sources)));
-    }))
-    : null;
-  return h('section', { class: 'blocks', 'aria-labelledby': 'blocks-title' },
-    h('h3', { id: 'blocks-title' }, '블록별 분양 이력'),
-    history,
-    planTable ? h('h4', {}, '다음 블록 계획(보도)') : null,
-    planTable,
-    planTable ? h('p', { class: 'note' }, '언론·기관 보도 기준이며 공고가 아닙니다. 보도 일정이 지난 계획은 늦어지거나 바뀌었을 수 있습니다.') : null);
+/** 분양 이력(사전청약·본청약·연결된 청약홈 공고), 최근 공고 먼저. 없으면 null */
+function saleSection(p) {
+  const rows = saleHistory(p);
+  if (!rows.length) return null;
+  return h('div', { class: 'sales' },
+    h('h3', {}, '분양 이력'),
+    h('ul', {}, rows.map((r) => {
+      const open = r.end && String(r.end) >= state.today;
+      const what = [r.type, r.households !== null ? fmtCount(r.households) : null].filter(Boolean).join(' · ');
+      return h('li', { class: r.stage === PRE_SUBSCRIPTION ? 'pre' : null },
+        h('span', { class: 'sale-head' },
+          h('span', { class: 'sale-date' }, r.date || '날짜 없음'),
+          r.block ? h('b', {}, r.block) : null,
+          what ? h('span', {}, what) : null,
+          r.stage === PRE_SUBSCRIPTION ? h('span', { class: 'chip c-pre' }, '사전청약') : null,
+          r.rental ? h('span', { class: 'chip c-rent' }, '임대') : null,
+          open ? h('span', { class: 'chip c-live' }, '접수 중') : null),
+        r.title ? h('span', { class: 'sale-title' }, r.title) : null,
+        r.sources.length
+          ? h('span', { class: 'sale-src' }, '출처 ', r.sources.flatMap((src, i) => (i ? [' · ', sourceLink(src)] : [sourceLink(src)])))
+          : null);
+    })),
+    rows.some((r) => r.stage === PRE_SUBSCRIPTION) ? h('p', { class: 'note' }, '사전청약은 본청약 전 예약이라 최근 분양에 세지 않습니다.') : null);
 }
 
 function renderDetail(p, missingId) {
@@ -812,8 +837,10 @@ function renderDetail(p, missingId) {
       date ? h('small', {}, date) : null);
   }));
 
+  // 공공주택지구는 연결된 공고를 분양 이력에 합쳐 보여 준다(saleSection)
+  const town = stageGroup(p) === 'town';
   const notices = Array.isArray(p.notices) ? p.notices : [];
-  const noticeBlock = notices.length
+  const noticeBlock = !town && notices.length
     ? h('div', { class: 'notices' },
       h('h3', {}, '연결된 청약 공고'),
       h('ul', {}, notices.map((n) => {
@@ -847,9 +874,8 @@ function renderDetail(p, missingId) {
     h('div', { class: 'facts' }, facts),
     h('div', { class: 'steps-wrap', tabindex: '0', 'aria-label': '사업 단계, 가로로 스크롤' }, steps),
     h('p', { class: 'why' }, h('b', {}, '예상 근거 '), p.windowBasis || '근거 정보 없음'),
-    blockSection(p),
     typeof p.notes === 'string' && p.notes.trim() ? h('details', { class: 'memo' }, h('summary', {}, '조사 메모'), h('p', {}, p.notes)) : null,
-    noticeBlock,
+    town ? saleSection(p) : noticeBlock,
     sourceBlock,
   ].filter(Boolean));
   // 단계가 많아 가로로 넘치면 현재 단계가 보이도록 스크롤

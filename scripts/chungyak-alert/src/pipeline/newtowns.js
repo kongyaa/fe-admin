@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { AppError, normalizeDate, safeHttpUrl } from '../util.js';
-import { planRange } from './expected-window.js';
+import { PRE_SUBSCRIPTION, planRange } from './expected-window.js';
 
 // data/newtowns.yaml(직접 관리하는 공공주택지구 목록)을 읽어 지도 사업 형태로 바꾼다.
 export const TOWN_STAGES = ['후보지', '지구지정', '지구계획승인', '부지조성 착공', '블록별 분양', '준공'];
@@ -76,14 +76,20 @@ function requiredDate(value) {
   return date;
 }
 
-// 사전청약·본청약 한 건. 모르는 키는 무시한다.
+// 분양 이력의 구분. 비우면 본청약(블록 입주자모집공고). 사전청약은 이력에만 보이고 계획·최근 분양에는 쓰지 않는다.
+export const HISTORY_STAGES = ['본청약', PRE_SUBSCRIPTION];
+
+// 분양 이력 한 건(사전청약·본청약). 모르는 키는 무시한다.
 function noticeEntry(raw) {
   const entry = entryObject(raw);
   const block = text(entry.block);
   if (!block) throw new AppError('newtowns_field');
+  const stage = text(entry.stage) ?? HISTORY_STAGES[0];
+  if (!HISTORY_STAGES.includes(stage)) throw new AppError('newtowns_field');
   const moveIn = townDate(entry.moveIn);
   return {
     block,
+    stage,
     type: text(entry.type),
     title: text(entry.title),
     households: count(entry.households),
@@ -161,6 +167,8 @@ export function validateTown(town) {
       expected = { from: from.slice(0, 7), to: to.slice(0, 7), basis: text(town.expected.basis) };
     }
   }
+  // 예전 키 preSubscriptions는 history의 stage: 사전청약으로 옮겼다. 조용히 빠지지 않게 멈춘다.
+  if (!isEmpty(town.preSubscriptions)) throw new AppError('newtowns_field');
   const sources = list(town.sources).flatMap((source) => {
     const url = safeHttpUrl(source?.url);
     if (!url) return [];
@@ -179,7 +187,6 @@ export function validateTown(town) {
     expected,
     notes: text(town.notes),
     sources,
-    preSubscriptions: list(town.preSubscriptions).map(noticeEntry).sort(byNoticeDate),
     history: list(town.history).map(noticeEntry).sort(byNoticeDate),
     plans: list(town.plans).map(planEntry).sort(byPlanRange),
   };
@@ -202,8 +209,8 @@ export function parseNewtowns(source) {
   return { asOf: townDate(doc.asOf), towns };
 }
 
-// 지도 사업 형태. noticeMatch와 expected는 공고 연결·예상 시기 계산에만 쓰고 출력 전에 뺀다.
-// 블록 이력·계획은 날짜순 그대로 내보낸다(blockHistory, preSubscriptions, blockPlans). 비어 있으면 키를 두지 않는다.
+// 지도 사업 형태. noticeMatch, expected, plans는 공고 연결·예상 시기 계산에만 쓰고 출력 전에 뺀다.
+// history(분양 이력, 날짜순)는 build-map의 toPublic이 출력 형태로 줄여 내보낸다.
 export function townToProject(town, asOf) {
   return {
     id: `town-${town.id}`,
@@ -229,9 +236,8 @@ export function townToProject(town, asOf) {
     asOf,
     noticeMatch: town.noticeMatch,
     expected: town.expected,
-    ...(town.history?.length ? { blockHistory: town.history } : {}),
-    ...(town.preSubscriptions?.length ? { preSubscriptions: town.preSubscriptions } : {}),
-    ...(town.plans?.length ? { blockPlans: town.plans } : {}),
+    history: town.history ?? [],
+    plans: town.plans ?? [],
   };
 }
 

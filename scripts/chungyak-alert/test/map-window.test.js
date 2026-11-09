@@ -218,13 +218,30 @@ test('블록별 분양: rental-only plans fall back to the rule, other stages ig
 });
 
 test('applyWindow labels 블록별 분양 towns as the next block', () => {
-  const town = applyWindow({ kind: '공공주택지구', stage: '블록별 분양', stageDates: {}, blockPlans: PLANS, blockHistory: [] }, today);
+  const town = applyWindow({ kind: '공공주택지구', stage: '블록별 분양', stageDates: {}, plans: PLANS, history: [] }, today);
   assert.equal(town.windowLabel, '다음 블록 예상');
   assert.deepEqual(town.window, { from: '2026-07', to: '2026-12' });
   assert.equal(town.windowRule, 'town-plan');
   assert.equal(bucketOf(town, today), 'soon');
   const other = applyWindow({ kind: '공공주택지구', stage: '지구지정', stageDates: { 지구지정: '2025-12' } }, today);
-  assert.equal('windowLabel' in other, false);
+  assert.equal(other.windowLabel, null);
   const seoul = applyWindow({ kind: '재개발', stage: '착공', stageDates: { 착공: '2026-04-09' } }, today);
-  assert.equal('windowLabel' in seoul, false);
+  assert.equal(seoul.windowLabel, null);
+});
+
+test('블록별 분양: a 사전청약 entry never announces a planned block', () => {
+  const plans = [plan(['A5'], '2027-09')];
+  const pre = [{ block: 'A5', stage: '사전청약', noticeDate: '2026-01-10', rental: false }];
+  assert.equal(townPlanWindow({ plans, history: pre, today }).rule, 'town-plan');
+  const main = [{ block: 'A-5', stage: '본청약', noticeDate: '2026-01-10', rental: false }];
+  assert.equal(townPlanWindow({ plans, history: main, today }), null);
+});
+
+test('블록별 분양: the plan report month is the earliest source date', () => {
+  const sources = [{ title: '새 기사 (하남일보)', url: 'https://example.com/n', date: '2026-03-08' }, { title: '첫 기사', url: 'https://example.com/o', date: '2025-11-23' }];
+  const plans = [{ blocks: ['A9'], expected: '2026-하반기', sources }];
+  // 2025-12 공고는 첫 보도(2025-11) 뒤라 계획을 채운다
+  assert.equal(townPlanWindow({ plans, history: [{ block: 'A9', noticeDate: '2025-12-01' }], today }), null);
+  // 근거는 첫 번째 출처를 적는다
+  assert.equal(townPlanWindow({ plans, today }).basis, '보도된 다음 블록 계획: A9 2026-하반기 (하남일보 2026-03-08)');
 });

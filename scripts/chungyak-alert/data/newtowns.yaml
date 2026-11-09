@@ -44,59 +44,76 @@ towns:
       - title: "대우건설·LH, '교산 푸르지오 더 퍼스트' 25일 견본주택 오픈 (스마트투데이)"
         url: https://www.smarttoday.co.kr/news/articleView.html?idxno=79043
         date: "2025-04-24"
-    # 블록별 분양 이력·계획 (2026-11-10 조사). 2026-11-10 현재 LH 분양 목록에 열린 공고 없음. 본청약은 A2 하나뿐.
+    # 분양 이력·다음 블록 계획 (2026-11-10 조사). 본청약은 A2 하나뿐이고, 2026-11-10까지 다른 블록 공고는 찾지 못했다
+    # (LH 청약플러스 목록은 직접 조회하지 못해 웹·기사 검색 기준). 사전청약은 stage: 사전청약으로 적는다.
+    # A2 본청약 1,115가구 중 866가구가 사전청약 당첨자 몫이라는 수치는 뉴시스 2025-03-31·스마트투데이 2025-04-24 기준
+    # (하남일보 2025-03-31은 1,056, 2024-09-23은 1,152로 엇갈림. 전국 매체를 따른다).
     # 스마트투데이 idxno=79043은 2025-04-24 견본주택 개관 기사이고 공고 기사가 아니다.
-    preSubscriptions:
+    # A5 본청약 '2027-09'(하남도시공사 일정표)는 원문 페이지를 확인하지 못해 계획에 넣지 않는다. 오마이뉴스 2026-07-23 기준 A5 본청약 공고 전.
+    # A8(하남일보 2025-09-02), A6·A17·A21(하남일보 2025-06-18)은 사업승인·착공 목표만 있고 분양 시기가 없어 넣지 않는다.
+    history:
       - block: A2
+        stage: 사전청약
         type: 공공분양
         households: 1056
         noticeDate: "2021-11-18"
+        title: 3차 공공 사전청약 하남교산 A2
         source: { title: "국토부, 내일 3차 사전청약 4100가구 모집공고 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2021/11/17/2021111700054.html", date: "2021-11-17" }
       - block: A5
+        stage: 사전청약
         type: 나눔형 공공분양
         households: 452
         noticeDate: "2023-09-25"
-        source: { title: "마곡 3억·하남 4억대...공급난 속 '뉴홈' 3300가구 풀린다 (아주경제)", url: "https://www.ajunews.com/view/20231015151738554", date: "2023-10-15" }
-    history:
+        title: 뉴:홈 3차 사전청약 하남교산 A5
+        note: "공고일은 메트로신문 2023-09-20 기준. koscaj.com 2023-09-21은 이 회차 공고가 09-22부터라고 적음. 접수 2023-10-16~19(세계일보)"
+        source:
+          - { title: "국토부, '뉴:홈' 3300가구 사전청약 실시 (메트로신문)", url: "https://www.metroseoul.co.kr/article/20230920500364", date: "2023-09-20" }
+          - { title: "하남교산서 4억원대 공공분양···올해 세 번째 '뉴홈' 사전청약", url: "https://www.koscaj.com/news/articleView.html?idxno=302259", date: "2023-09-21" }
+          - { title: "경기 하남 교산에 첫 나눔형 사전청약 풀린다 (세계일보)", url: "https://m.segye.com/view/20231012518645", date: "2023-10-13" }
       - block: A2
+        stage: 본청약
         type: 공공분양
         households: 1115
         noticeDate: "2025-03-31"
         title: 교산 푸르지오 더 퍼스트
-        moveIn: "2029-06"  # LH 공고, 뉴시스
+        moveIn: "2029-06"  # LH 공고(하남일보 2025-03-31은 2027-10 목표로 적음)
         source:
           - { title: "교산 푸르지오 더 퍼스트(하남교산 A-2BL) 공공분양주택 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060838&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027", date: "2025-03-31" }
+          - { title: "LH, 하남교산 첫 공공분양주택 1115가구 공급 (뉴시스)", url: "https://www.newsis.com/view/NISX20250331_0003120384", date: "2025-03-31" }
           - { title: "'3기 신도시' 하남교산 내달 첫 본청약…분양가 17% 올라 (뉴시스)", url: "https://www.newsis.com/view/NISX20250331_0003120514", date: "2025-03-31" }
+    # 다음 블록 계획은 모두 지역지(하남Times·하남일보) 보도뿐이고 LH·국토부 자료는 찾지 못했다. 출처 제목에 '지역지'를 붙인다.
     plans:
       - blocks: [A9, A11]
         type: 공공분양
         households: { A9: 244, A11: 511 }
         expected: "2026-하반기"
-        note: "지역 매체(하남Times) 보도만 있고 LH·국토부 확인은 없음. 2026-11-10까지 공고 없음"
-        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+        note: "지역지 보도만 있음. 2026-11-10까지 공고 없음"
+        source:
+          - { title: "하남 교산, 3만6,697 가구 공급 로드맵 확정 (하남일보, 지역지)", outlet: 하남일보, url: "http://m.hanamilbo.net/news/articleView.html?idxno=11888", date: "2026-03-08" }
+          - { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)", outlet: 하남Times, url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+          - { title: "하남교산, 내년 A9·A11·A20·S2블록 분양 본격화 (하남Times, 지역지)", outlet: 하남Times, url: "http://m.hanamtimes.com/news/articleView.html?idxno=12508", date: "2025-11-27" }
+          - { title: "하남, \"교산신도시 분양 지도 나왔다\" (하남일보, 지역지)", outlet: 하남일보, url: "http://m.hanamilbo.net/news/articleView.html?idxno=11572", date: "2025-11-23" }
       - blocks: [A20]
         type: 통합공공임대
         rental: true
         households: 249
         expected: "2026-하반기"
-        note: "지역 매체(하남Times) 보도만 있고 LH·국토부 확인은 없음. 2026-11-10까지 공고 없음"
-        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+        note: "지역지 보도만 있음. 2026-11-10까지 공고 없음"
+        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)", outlet: 하남Times, url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
       - blocks: [S2]
-        type: 분양전환 공공임대·선택형
+        type: 분양전환 공공임대(373)·선택형(41)
         rental: true
+        households: 414
         expected: "2026-하반기"
-        note: "지역 매체(하남Times) 보도만 있고 LH·국토부 확인은 없음. 2026-11-10까지 공고 없음"
-        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+        note: "지역지 보도만 있음. 2026-11-10까지 공고 없음"
+        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)", outlet: 하남Times, url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
       - blocks: [D2, D5]
         type: 민간분양
         expected: "2026-상반기"
-        note: "일정 미확정이라고 보도"
-        source: { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times)", url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
-      - blocks: [A5]
-        type: 나눔형 공공분양
-        expected: "2027-09"
-        note: "날짜 없는 하남도시공사 일정표(같은 표의 A2 입주 2027.03이 지금 값 2029-06과 달라 오래된 일정일 수 있음)"
-        source: { title: "하남도시공사 하남교산 공공주택지구 조성사업 사업추진 일정", outlet: 하남도시공사, url: "https://www.huic.co.kr/www/selectBbsNttView.do?key=256&bbsNo=47&nttNo=9963", date: "" }
+        note: "보도도 '분양일정이 확정되진 않았지만 상반기부터 순차적으로'라고만 적음. 하남일보 2025-11-23·2026-03-08의 '2025년 상반기'는 옛 문구 반복으로 보여 하남Times를 따른다. 2026-11-10까지 공고 없음"
+        source:
+          - { title: "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)", outlet: 하남Times, url: "http://m.hanamtimes.com/news/articleView.html?idxno=12557", date: "2025-12-13" }
+          - { title: "하남교산, 내년 A9·A11·A20·S2블록 분양 본격화 (하남Times, 지역지)", outlet: 하남Times, url: "http://m.hanamtimes.com/news/articleView.html?idxno=12508", date: "2025-11-27" }
 
   - id: guri-topyeong-hangang
     name: 구리토평한강
@@ -174,19 +191,20 @@ towns:
       - title: "㈜신안, '구리갈매역세권 신안인스빌 디센트' 30일 견본주택 개관 (메트로신문)"
         url: https://www.metroseoul.co.kr/article/20261103500089
         date: "2026-11-03"
-    # 블록별 분양 이력·계획 (2026-11-10 조사). 블록 이름은 출처 표기를 따른다(A1·A-1은 같은 블록).
-    preSubscriptions:
+    # 분양 이력·계획 (2026-11-10 조사). 블록 이름은 출처 표기를 따른다(A1·A-1은 같은 블록). 사전청약은 stage: 사전청약.
+    history:
       - block: A1
+        stage: 사전청약
         type: 신혼희망타운
         households: 1125
         noticeDate: "2021-12-29"
         source: { title: "3기 신도시 등 수도권 공공택지에 사전청약 물량 1만7000호 공급 (이코노미스트)", url: "https://economist.co.kr/2021/12/28/realEstate/realEstateNormal/20211228190135672.html", date: "2021-12-28" }
       - block: A4
+        stage: 사전청약
         type: 공공분양(일반형 230)·선택형(285)
         households: 515
         noticeDate: "2023-09-22"
         source: { title: "'구리 갈매 역세권지구 A4블록 사전청약' 서울시 장애인 특별공급 기관추천 안내 (서울시)", url: "https://news.seoul.go.kr/welfare/archives/555616", date: "2023-09-21" }
-    history:
       - block: A-1
         type: 신혼희망타운
         households: 1182

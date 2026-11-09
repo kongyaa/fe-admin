@@ -16,15 +16,35 @@ export const DEFAULT_NEWTOWNS = fileURLToPath(new URL('../../data/newtowns.yaml'
 // 서울 사업에 이어진 오래된 공고도 접수가 끝났으면 announced로 본다(markAnnounced).
 export const NOTICE_LOOKBACK_DAYS = 1095;
 
-// 공고 연결과 예상 시기 계산에만 쓰는 내부 값은 출력에서 뺀다.
+function publicSources(sources) {
+  return (sources ?? []).flatMap((source) => {
+    const url = safeHttpUrl(source.url);
+    return url ? [{ ...source, url }] : [];
+  });
+}
+
+// 분양 이력 한 건의 출력 형태. 입주 예정·조사 메모 같은 나머지 값은 newtowns.yaml에만 둔다.
+function publicHistory(entry) {
+  return {
+    block: entry.block,
+    stage: entry.stage,
+    type: entry.type,
+    title: entry.title,
+    households: entry.households,
+    noticeDate: entry.noticeDate,
+    rental: entry.rental === true,
+    sources: publicSources(entry.sources),
+  };
+}
+
+// 공고 연결과 예상 시기 계산에만 쓰는 내부 값(noticeMatch, expected, plans)은 출력에서 뺀다.
+// 공공주택지구는 history(분양 이력)를 늘 배열로 내보낸다.
 function toPublic(project) {
-  const { noticeMatch, expected, ...rest } = project;
+  const { noticeMatch, expected, plans, history, ...rest } = project;
   return {
     ...rest,
-    sources: (rest.sources ?? []).flatMap((source) => {
-      const url = safeHttpUrl(source.url);
-      return url ? [{ ...source, url }] : [];
-    }),
+    ...(Array.isArray(history) ? { history: history.map(publicHistory) } : {}),
+    sources: publicSources(rest.sources),
     notices: (rest.notices ?? []).map((notice) => ({ ...notice, url: safeHttpUrl(notice.url) })),
   };
 }

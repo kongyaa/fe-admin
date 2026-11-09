@@ -301,7 +301,7 @@ test('notices are looked up for the last 3 years, and an old ended Seoul notice 
   assert.notEqual(sinyoung.windowStatus, 'announced');
 });
 
-test('블록별 분양 towns carry their block lists, label and plan window into projects.json', async () => {
+test('블록별 분양 towns carry their history, label and plan window into projects.json, plans stay internal', async () => {
   const file = join(dir, 'blocks.yaml');
   writeFileSync(file, `
 asOf: "2026-11-10"
@@ -313,10 +313,19 @@ towns:
     stageDates:
       블록별 분양: "2025-03-31"
     noticeMatch: [교산]
-    preSubscriptions:
-      - { block: A2, households: 1056, noticeDate: "2021-11-18", source: { url: "https://example.com/pre" } }
     history:
-      - { block: A2, households: 1115, noticeDate: "2025-03-31", moveIn: "2029-06", source: { url: "https://example.com/a2" } }
+      - { block: A2, stage: 사전청약, households: 1056, noticeDate: "2021-11-18", source: { url: "https://example.com/pre" } }
+      - block: A2
+        type: 공공분양
+        title: 교산 푸르지오 더 퍼스트
+        households: 1115
+        noticeDate: "2025-03-31"
+        moveIn: "2029-06"
+        note: 메모
+        source:
+          - { title: "LH 공고", outlet: LH, url: "https://example.com/a2", date: "2025-03-31" }
+          - { title: "나쁜 링크", url: "javascript:alert(1)" }
+      - { block: A20, rental: true, households: 249, noticeDate: "2026-09-01", source: { url: "https://example.com/a20" } }
     plans:
       - { blocks: [A5], expected: "2027-09", source: { title: 일정표, outlet: 하남도시공사, url: "https://example.com/a5" } }
       - { blocks: [A9, A11], expected: "2026-하반기", source: { title: "기사 (하남Times)", url: "http://example.com/a9", date: "2025-12-13" } }
@@ -342,14 +351,19 @@ towns:
   assert.equal(gyosan.windowLabel, '다음 블록 예상');
   assert.equal(gyosan.windowBasis, '보도된 다음 블록 계획: A9·A11 2026-하반기 (하남Times 2025-12-13)');
   assert.equal(gyosan.bucket, 'soon');
-  assert.deepEqual(gyosan.blockHistory.map((e) => [e.block, e.noticeDate, e.moveIn]), [['A2', '2025-03-31', '2029-06']]);
-  assert.deepEqual(gyosan.preSubscriptions.map((e) => e.block), ['A2']);
-  assert.deepEqual(gyosan.blockPlans.map((e) => e.expected), ['2026-하반기', '2027-09']);
+  assert.deepEqual(gyosan.history[1], {
+    block: 'A2', stage: '본청약', type: '공공분양', title: '교산 푸르지오 더 퍼스트', households: 1115, noticeDate: '2025-03-31', rental: false,
+    sources: [{ title: 'LH 공고', url: 'https://example.com/a2', date: '2025-03-31', outlet: 'LH' }],
+  });
+  assert.deepEqual(gyosan.history.map((e) => [e.block, e.stage, e.rental]), [['A2', '사전청약', false], ['A2', '본청약', false], ['A20', '본청약', true]]);
+  for (const key of ['plans', 'blockPlans', 'blockHistory', 'preSubscriptions', 'noticeMatch', 'expected']) assert.equal(key in gyosan, false, key);
   const galmae = byId['town-guri-galmae-station'];
   assert.deepEqual(galmae.window, { from: '2026-11', to: '2028-11' });
   assert.equal(galmae.windowBasis, '다음 블록 예상(규칙): 오늘부터 0~2년');
   assert.equal(galmae.windowLabel, '다음 블록 예상');
-  assert.equal('blockHistory' in galmae, false);
-  assert.equal('windowLabel' in byId['town-other'], false);
-  assert.equal('windowLabel' in byId['seoul-1441'], false);
+  assert.deepEqual(galmae.history, []);
+  assert.equal(byId['town-other'].windowLabel, null);
+  assert.deepEqual(byId['town-other'].history, []);
+  assert.equal(byId['seoul-1441'].windowLabel, null);
+  assert.equal('history' in byId['seoul-1441'], false);
 });

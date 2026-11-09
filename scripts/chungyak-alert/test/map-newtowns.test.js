@@ -66,21 +66,19 @@ test('a valid file is parsed and normalized', () => {
     expected: null,
     notes: null,
     sources: [],
-    preSubscriptions: [],
     history: [],
     plans: [],
   });
 });
 
 const BLOCKS = withTown(`    stage: 블록별 분양
-    preSubscriptions:
+    history:
       - block: A2
         type: 공공분양
         stage: 사전청약
         households: 1056
         noticeDate: "2021-11-18"
         source: { title: 사전청약 기사, url: "https://example.com/pre", date: "2021-11-17" }
-    history:
       - block: B-1
         type: 민간분양
         households: 213
@@ -90,6 +88,7 @@ const BLOCKS = withTown(`    stage: 블록별 분양
         type: 공공분양
         households: "1,115"
         noticeDate: "2025-03-31"
+        stage: 본청약
         title: 교산 푸르지오 더 퍼스트
         moveIn: "2029-06"
         unknownKey: 무시
@@ -118,25 +117,27 @@ const BLOCKS = withTown(`    stage: 블록별 분양
         expected: "2026-상반기"
         source: { url: "https://example.com/d" }`);
 
-test('block history, pre-subscriptions and plans are validated and sorted by date', () => {
+test('block history (사전청약·본청약) and plans are validated and sorted by date', () => {
   const [town] = parseNewtowns(BLOCKS).towns;
-  assert.deepEqual(town.preSubscriptions, [{
-    block: 'A2', type: '공공분양', title: null, households: 1056, noticeDate: '2021-11-18', rental: false, note: null,
+  assert.deepEqual(town.history[0], {
+    block: 'A2', stage: '사전청약', type: '공공분양', title: null, households: 1056, noticeDate: '2021-11-18', rental: false, note: null,
     sources: [{ title: '사전청약 기사', url: 'https://example.com/pre', date: '2021-11-17' }],
-  }]);
-  assert.deepEqual(town.history.map((entry) => [entry.block, entry.noticeDate, entry.rental]), [
-    ['A2', '2025-03-31', false], ['A-4', '2025-12', true], ['B-1', '2026-10-30', false],
+  });
+  // stage를 비우면 본청약
+  assert.deepEqual(town.history.map((entry) => [entry.block, entry.stage, entry.noticeDate, entry.rental]), [
+    ['A2', '사전청약', '2021-11-18', false], ['A2', '본청약', '2025-03-31', false],
+    ['A-4', '본청약', '2025-12', true], ['B-1', '본청약', '2026-10-30', false],
   ]);
-  const a2 = town.history[0];
+  const a2 = town.history[1];
   assert.equal(a2.households, 1115);
   assert.equal(a2.moveIn, '2029-06');
   assert.equal(a2.title, '교산 푸르지오 더 퍼스트');
   assert.equal('unknownKey' in a2, false);
   // 출처는 하나 또는 목록, http(s)만 남긴다
   assert.deepEqual(a2.sources.map((source) => source.url), ['https://example.com/lh', 'https://example.com/news']);
-  assert.equal('moveIn' in town.history[1], false);
-  assert.deepEqual(town.history[1].sources, [{ title: 'https://example.com/a4', url: 'https://example.com/a4', date: null }]);
-  assert.equal(town.history[2].sources[0].outlet, '청약홈');
+  assert.equal('moveIn' in town.history[2], false);
+  assert.deepEqual(town.history[2].sources, [{ title: 'https://example.com/a4', url: 'https://example.com/a4', date: null }]);
+  assert.equal(town.history[3].sources[0].outlet, '청약홈');
 
   assert.deepEqual(town.plans.map((plan) => [plan.blocks, plan.expected, plan.from, plan.to]), [
     [['D2'], '2026-상반기', '2026-01', '2026-06'],
@@ -149,16 +150,13 @@ test('block history, pre-subscriptions and plans are validated and sorted by dat
   assert.equal(town.plans[2].sources[0].date, null);
 });
 
-test('block lists pass through to the project, empty lists are left out', () => {
+test('history and plans pass through to the project, always as arrays', () => {
   const { asOf, towns } = parseNewtowns(BLOCKS);
   const project = townToProject(towns[0], asOf);
-  assert.deepEqual(project.blockHistory, towns[0].history);
-  assert.deepEqual(project.preSubscriptions, towns[0].preSubscriptions);
-  assert.deepEqual(project.blockPlans, towns[0].plans);
+  assert.deepEqual(project.history, towns[0].history);
+  assert.deepEqual(project.plans, towns[0].plans);
   const plain = townToProject(parseNewtowns(VALID).towns[0], asOf);
-  assert.equal('blockHistory' in plain, false);
-  assert.equal('preSubscriptions' in plain, false);
-  assert.equal('blockPlans' in plain, false);
+  assert.deepEqual([plain.history, plain.plans], [[], []]);
 });
 
 test('bad block entries stop the build', () => {
@@ -172,7 +170,11 @@ test('bad block entries stop the build', () => {
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026"', src])), { kind: 'newtowns_date' });
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026-00"', src])), { kind: 'newtowns_date' });
   // 필수 값
-  assert.throws(() => parseNewtowns(entry('preSubscriptions', ['noticeDate: "2021-11-18"', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(entry('history', ['noticeDate: "2021-11-18"', src])), { kind: 'newtowns_field' });
+  // 구분은 본청약·사전청약만
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'stage: 무순위', 'noticeDate: "2025-03"', src])), { kind: 'newtowns_field' });
+  // 예전 키 preSubscriptions는 조용히 빠지지 않게 멈춘다
+  assert.throws(() => parseNewtowns(entry('preSubscriptions', ['block: A1', 'noticeDate: "2021-11-18"', src])), { kind: 'newtowns_field' });
   assert.throws(() => parseNewtowns(entry('history', ['block: A1', src])), { kind: 'newtowns_field' });
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: []', 'expected: "2026-07"', src])), { kind: 'newtowns_field' });
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', src])), { kind: 'newtowns_field' });
@@ -188,10 +190,17 @@ test('bad block entries stop the build', () => {
 test('the real newtowns.yaml parses', () => {
   const loaded = loadNewtowns(new URL('../data/newtowns.yaml', import.meta.url));
   const byId = Object.fromEntries(loaded.projects.map((p) => [p.id, p]));
-  assert.deepEqual(byId['town-hanam-gyosan'].blockHistory.map((e) => [e.block, e.noticeDate, e.moveIn]), [['A2', '2025-03-31', '2029-06']]);
-  assert.ok(byId['town-hanam-gyosan'].blockPlans.length > 0);
-  assert.ok(byId['town-guri-galmae-station'].blockHistory.some((e) => e.rental));
-  assert.equal('blockHistory' in byId['town-guri-topyeong-hangang'], false);
+  const gyosan = byId['town-hanam-gyosan'];
+  assert.deepEqual(gyosan.history.map((e) => [e.block, e.stage, e.noticeDate]), [
+    ['A2', '사전청약', '2021-11-18'], ['A5', '사전청약', '2023-09-25'], ['A2', '본청약', '2025-03-31'],
+  ]);
+  assert.ok(gyosan.history.every((e) => e.sources.length > 0));
+  assert.deepEqual(gyosan.plans.map((p) => [p.blocks.join('·'), p.expected, p.rental]), [
+    ['D2·D5', '2026-상반기', false], ['A20', '2026-하반기', true], ['A9·A11', '2026-하반기', false], ['S2', '2026-하반기', true],
+  ]);
+  assert.ok(byId['town-guri-galmae-station'].history.some((e) => e.rental));
+  assert.ok(byId['town-guri-galmae-station'].history.some((e) => e.stage === '사전청약'));
+  assert.deepEqual(byId['town-guri-topyeong-hangang'].history, []);
 });
 
 test('towns become map projects', () => {

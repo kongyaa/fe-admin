@@ -452,38 +452,65 @@ test('windowFactLabel and windowPrefix: 블록별 분양 towns say 다음 블록
   assert.equal(app.windowPrefix({}), '예상');
 });
 
-test('planRange matches the pipeline, planPassed flags plans that ended before this month', () => {
-  for (const value of ['2026-상반기', '2026-하반기', '2027-09', '2027-13', '2027', '2027-3분기', '', null, '2027-09-01']) {
-    assert.deepEqual(app.planRange(value), pipeline.planRange(value), String(value));
-  }
-  assert.equal(app.planPassed({ expected: '2026-상반기', from: '2026-01', to: '2026-06' }, today), true);
-  assert.equal(app.planPassed({ expected: '2026-하반기' }, today), false); // 12월까지
-  assert.equal(app.planPassed({ expected: '2026-10' }, today), true);
-  assert.equal(app.planPassed({ expected: '2026-11' }, today), false);
-  assert.equal(app.planPassed({ expected: '언젠가' }, today), false);
-  assert.equal(app.planPassed(null, today), false);
+test('blockKey matches the pipeline; nameHasBlock needs the whole block name', () => {
+  for (const value of ['A-1', 'a1BL', 'A-2 블록', 'S2', 'B-1', '', null]) assert.equal(app.blockKey(value), pipeline.blockKey(value), String(value));
+  assert.equal(app.nameHasBlock('교산 푸르지오 더 퍼스트(하남교산 A-2BL)', 'A2'), true);
+  assert.equal(app.nameHasBlock('하남교산 A2블록 공공분양', 'A-2'), true);
+  assert.equal(app.nameHasBlock('하남교산 A20블록', 'A2'), false);
+  assert.equal(app.nameHasBlock('하남교산 BA2', 'A2'), false);
+  assert.equal(app.nameHasBlock('하남교산 A2', ''), false);
+  assert.equal(app.nameHasBlock(null, 'A2'), false);
 });
 
-test('blockTimeline merges 본청약 and 사전청약, newest first', () => {
+const A2 = {
+  block: 'A2', stage: '본청약', type: '공공분양', title: '교산 푸르지오 더 퍼스트', households: 1115, noticeDate: '2025-03-31', rental: false,
+  sources: [{ title: 'LH 공고 (LH청약플러스)', url: 'https://apply.lh.or.kr/a2', date: '2025-03-31' }, { title: '나쁜', url: 'javascript:alert(1)' }],
+};
+const PRE = { block: 'A2', stage: '사전청약', type: '공공분양', households: 1056, noticeDate: '2021-11-18', rental: false, sources: [] };
+const RENT = { block: 'A20', stage: '본청약', type: '통합공공임대', households: 249, noticeDate: '2026-09-01', rental: true, sources: [] };
+const notice = (name, announceDate, extra = {}) => ({ key: name, name, announceDate, end: null, url: 'https://www.applyhome.co.kr/n', typeLabel: 'APT', ...extra });
+
+test('isSameSale: same notice date and the block or complex name in the notice name', () => {
+  assert.equal(app.isSameSale(A2, notice('교산 푸르지오 더 퍼스트(하남교산 A-2BL)', '2025-03-31')), true);
+  assert.equal(app.isSameSale(A2, notice('교산푸르지오더퍼스트', '2025-03-31')), true); // 단지 이름(공백 무시)
+  assert.equal(app.isSameSale(A2, notice('하남교산 A2', '2025-04-01')), false); // 날짜가 다르면 다른 공고
+  assert.equal(app.isSameSale(A2, notice('하남교산 A20', '2025-03-31')), false);
+  assert.equal(app.isSameSale(A2, notice('하남 어딘가', '2025-03-31')), false); // 애매하면 따로 둔다
+  assert.equal(app.isSameSale({ ...A2, noticeDate: '2025-03' }, notice('하남교산 A-2', '2025-03-31')), true); // 달까지만 있으면 같은 달
+  assert.equal(app.isSameSale({ ...RENT, noticeDate: '2025-03-31' }, notice('하남교산 A20', '2025-03-31')), false); // 임대 이력은 맞추지 않음
+  assert.equal(app.isSameSale(null, notice('x', '2025-03-31')), false);
+});
+
+test('saleHistory merges history and linked notices newest first without duplicates', () => {
   const project = {
-    preSubscriptions: [{ block: 'A2', noticeDate: '2021-11-18' }, { block: 'A5', noticeDate: '2023-09-25' }],
-    blockHistory: [{ block: 'A2', noticeDate: '2025-03-31', moveIn: '2029-06' }, null, 'x', { block: 'B-1', noticeDate: '2025-03-31', rental: true }],
+    history: [PRE, A2, RENT, null, 'x'],
+    notices: [
+      notice('교산 푸르지오 더 퍼스트(하남교산 A-2BL)', '2025-03-31', { url: 'https://www.applyhome.co.kr/a2', end: '2025-05-09' }),
+      notice('하남교산 D2 민간', '2026-11-02', { url: 'javascript:alert(1)', end: '2026-11-20', typeLabel: '민영' }),
+    ],
   };
-  assert.deepEqual(app.blockTimeline(project).map((e) => [e.stage, e.block, e.noticeDate]), [
-    ['본청약', 'A2', '2025-03-31'], ['본청약', 'B-1', '2025-03-31'], ['사전청약', 'A5', '2023-09-25'], ['사전청약', 'A2', '2021-11-18'],
+  const rows = app.saleHistory(project);
+  assert.deepEqual(rows.map((r) => [r.date, r.block, r.from, r.rental]), [
+    ['2026-11-02', null, 'notice', false], ['2026-09-01', 'A20', 'history', true], ['2025-03-31', 'A2', 'history', false], ['2021-11-18', 'A2', 'history', false],
   ]);
-  assert.deepEqual(app.blockTimeline({}), []);
-  assert.deepEqual(app.blockTimeline({ blockHistory: 'nope' }), []);
+  const a2 = rows[2];
+  // 같은 공고는 이력 줄에 청약홈 링크·마감일만 붙고, http(s)가 아닌 출처는 빠진다
+  assert.deepEqual(a2.sources.map((s) => s.url), ['https://apply.lh.or.kr/a2', 'https://www.applyhome.co.kr/a2']);
+  assert.equal(a2.sources[1].outlet, '청약홈');
+  assert.equal(a2.end, '2025-05-09');
+  assert.deepEqual([a2.title, a2.households, a2.type], ['교산 푸르지오 더 퍼스트', 1115, '공공분양']);
+  // 이력에 없는 공고는 공고명이 제목, 안전하지 않은 주소면 링크 없음
+  assert.deepEqual([rows[0].title, rows[0].type, rows[0].sources, rows[0].end], ['하남교산 D2 민간', '민영', [], '2026-11-20']);
+  assert.deepEqual(app.saleHistory({}), []);
+  assert.deepEqual(app.saleHistory({ history: 'nope', notices: 3 }), []);
 });
 
-test('blockPlanList sorts by expected start; planHouseholdsText', () => {
-  const plans = [{ blocks: ['A5'], expected: '2027-09' }, { blocks: ['D2'], expected: '2026-상반기' }, { blocks: ['X'], expected: '미정' }, { blocks: ['A9'], expected: '2026-하반기', from: '2026-07' }];
-  assert.deepEqual(app.blockPlanList({ blockPlans: plans }).map((p) => p.blocks[0]), ['D2', 'A9', 'A5', 'X']);
-  assert.deepEqual(app.blockPlanList({}), []);
-  assert.equal(app.planHouseholdsText({ households: 755, householdsByBlock: { A9: 244, A11: 511 } }), 'A9 244 · A11 511');
-  assert.equal(app.planHouseholdsText({ households: 1249 }), '1,249세대');
-  assert.equal(app.planHouseholdsText({ households: null, householdsByBlock: { D2: null } }), null);
-  assert.equal(app.planHouseholdsText({}), null);
+test('latestSale skips rentals and 사전청약, and counts linked notices', () => {
+  assert.equal(app.latestSale({ history: [PRE, A2, RENT] }), '2025-03');
+  assert.equal(app.latestSale({ history: [PRE] }), null);
+  assert.equal(app.latestSale({ history: [RENT] }), null);
+  assert.equal(app.latestSale({ history: [A2], notices: [notice('구리갈매역세권 신안인스빌 디센트', '2026-10-30')] }), '2026-10');
+  assert.equal(app.latestSale({}), null);
 });
 
 test('sourceOutlet matches the pipeline rule and never trusts a non-http url', () => {

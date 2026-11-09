@@ -187,25 +187,18 @@ button, input, select { font: inherit; color: inherit; }
 .notices ul, .detail-sources ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .notices .chip { margin-left: 6px; }
 
-/* 블록별 분양 이력·계획: 표는 자기 상자 안에서 스크롤(좁은 화면에서 쪽 전체가 가로로 밀리지 않게) */
-.blocks { display: grid; gap: 6px; font-size: .86rem; min-width: 0; }
-.blocks h4 { margin: 6px 0 0; font-size: .84rem; font-weight: 700; }
-.blk-scroll { overflow: auto; max-height: 300px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); }
-.blk-scroll:focus-visible { outline-offset: 1px; }
-.blk-table { width: 100%; min-width: 600px; border-collapse: collapse; font-size: .8rem; line-height: 1.4; }
-.blk-table th, .blk-table td { text-align: left; vertical-align: top; padding: 5px 8px; border-bottom: 1px solid var(--rule); }
-.blk-table th { position: sticky; top: 0; z-index: 1; background: var(--wash); color: var(--muted); font-weight: 600; white-space: nowrap; }
-.blk-table tbody tr:last-child td { border-bottom: 0; }
-.blk-table td b { font-weight: 700; }
-.blk-table small { display: block; color: var(--muted); font-size: .74rem; }
-.blk-table .chip { margin-left: 4px; font-size: .68rem; }
-.blk-date, .blk-num, .blk-stage { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.blk-date .chip { margin: 2px 0 0; display: table; }
-.blk-pre { color: var(--muted); }
-.blk-src { display: block; white-space: nowrap; }
-.blk-passed td { background: var(--ground); }
+/* 분양 이력: 줄마다 공고일·블록·유형, 단지 이름, 출처. 좁은 화면에서는 줄바꿈으로 맞춘다(가로 스크롤 없음) */
+.sales { display: grid; gap: 4px; font-size: .86rem; min-width: 0; }
+.sales ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.sales li { display: grid; gap: 1px; padding: 6px 8px; border-left: 3px solid var(--plan); background: var(--wash); border-radius: 0 6px 6px 0; min-width: 0; overflow-wrap: anywhere; }
+.sales li.pre { border-left-color: var(--rule); }
+.sale-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.sale-date { font-family: var(--font-mono); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.sale-title { font-weight: 600; }
+.sale-src { font-size: .78rem; color: var(--muted); }
+.sale-src a { white-space: nowrap; } /* '낸 곳 날짜'가 중간에서 끊기지 않게(짧은 글자라 넘치지 않음) */
 .c-rent { background: var(--plan-soft); color: var(--plan); }
-.c-late { background: transparent; color: var(--line); border: 1px dashed var(--line); padding: 0 7px; }
+.c-pre { background: transparent; color: var(--muted); border: 1px solid var(--rule); padding: 0 7px; font-weight: 600; }
 
 /* 타임라인 */
 .gantt { overflow-x: auto; border-radius: 4px; }
