@@ -438,7 +438,12 @@ function applicantResult({ notice, models, applicant, household, config, today, 
 // (신생아, 신혼부부, 생애최초), 그다음 신청자 순서다.
 export function chooseApplicant(results) {
   const isSpecial = (result) => (result.candidate.kind === 'special' ? 1 : 0);
-  const trackRank = (result) => (result.candidate.kind === 'special' ? SPECIAL_TRACKS.indexOf(result.candidate.specialTrack) : -1);
+  // 목록에 없는 특별공급 이름은 맨 뒤로 보낸다. 특별공급이 아니면 서로 같다(isSpecial이 먼저 가른다).
+  const trackRank = (result) => {
+    if (result.candidate.kind !== 'special') return -1;
+    const rank = SPECIAL_TRACKS.indexOf(result.candidate.specialTrack);
+    return rank === -1 ? SPECIAL_TRACKS.length : rank;
+  };
   return [...results].sort((a, b) => a.candidate.date.localeCompare(b.candidate.date) || isSpecial(b) - isSpecial(a) || trackRank(a) - trackRank(b) || a.index - b.index)[0] ?? null;
 }
 
