@@ -77,6 +77,9 @@ export function pickSpecialTrack(models, tracks) {
 const stageOf = (notice, prefix) => notice.stages.find((stage) => stage.name.startsWith(prefix) && stage.start) ?? null;
 // 무순위·재공급·임의공급의 접수 단계. 상세의 첫 단계다.
 const mainStageOf = (notice) => notice.stages.find((stage) => stage.start) ?? null;
+// 무순위·재공급·임의공급의 본 접수 단계(applyhome.js의 '무순위 접수', '재공급 접수', '임의 접수', '접수').
+// 본 접수일 없이 특별공급·일반공급 상세만 있는 공고는 어느 단계가 본 접수인지 알 수 없어 null이다.
+const receiptStageOf = (notice) => notice.stages.find((stage) => stage.name.endsWith('접수') && stage.start) ?? null;
 // 접수 마감일이 오늘 이후면 아직 접수할 수 있다. 마감일이 없거나 시작일보다 이르면(잘못된 자료) 시작일 하루로 본다.
 const isOpen = (stage, today) => {
   if (!stage) return false;
@@ -148,8 +151,8 @@ function mayHaveSpecialUnits(models, tracks) {
 // 배치가 추천할 수 있는 전형의 접수가 모두 확실히 끝났는지. 필요한 단계가 없거나 날짜가 비면 끝나지 않았다고 본다.
 function myTracksEnded({ notice, models, profile, config, today }) {
   if (notice.kind !== 'apt') {
-    // 접수 단계가 끝났고 다른 단계(특별공급·일반공급 상세)도 열려 있지 않을 때만이다.
-    return hasEnded(mainStageOf(notice), today) && !notice.stages.some((stage) => isOpen(stage, today));
+    // 본 접수 단계가 끝났고 다른 단계(특별공급·일반공급 상세)도 열려 있지 않을 때만이다. 본 접수일이 없으면 빼지 않는다.
+    return hasEnded(receiptStageOf(notice), today) && !notice.stages.some((stage) => isOpen(stage, today));
   }
   const category = residenceCategory(notice, profile, config.recommendation);
   if (!hasEnded(stageOf(notice, GENERAL_STAGES[category]), today)) return false;
@@ -161,15 +164,27 @@ function myTracksEnded({ notice, models, profile, config, today }) {
   return hasEnded(stageOf(notice, '특별공급'), today);
 }
 
-// 신청할 수 없는 공고를 가린다. 빼면 Notion에 저장하지 않고 알림도 보내지 않는다. 결과는 null, 'region', 'ended' 중 하나다.
-// 'region'은 거주 시도로 1순위 대상이 아닌 공고, 'ended'는 추천할 수 있는 전형의 접수가 모두 끝난 공고다.
-// 프로필이 없거나, 추천을 계산하지 않는 종류(LH, 오피스텔 등)거나, 제한 유형이거나, 시도를 확신할 수 없으면 빼지 않는다.
+// 지역 때문에 확실히 신청할 수 없는 공고. 수도권 거주자의 수도권 밖(세종 제외) APT 공고만이다.
+// 수도권 밖 거주자는 기타지역이 광역 권역(예: 부산·울산·경남)을 따라 다르고, 무순위는 정해진 거주 요건이 없고 임의공급은 거주 요건이 없어 지역으로 빼지 않는다.
+function surelyOutOfRegion(notice, profile) {
+  return notice.kind === 'apt'
+    && CAPITAL_AREA.includes(profile.residenceSido)
+    && SIDO.includes(notice.region)
+    && !CAPITAL_AREA.includes(notice.region)
+    && !NATIONWIDE_REGIONS.includes(notice.region);
+}
+
+// 신청할 수 없는 공고를 가린다. 빼면 Notion에 저장하지 않는다. 결과는 null, 'region', 'ended' 중 하나다.
+// 'region'은 surelyOutOfRegion인 공고, 'ended'는 지역 대상인 공고 중 추천할 수 있는 전형의 접수가 모두 끝난 공고다.
+// 프로필이 없거나, 추천을 계산하지 않는 종류(LH, 오피스텔 등)거나, 제한 유형이거나, 지역을 확신할 수 없으면 빼지 않는다.
+// 추천의 지역 규칙(eligibleRegion)으로 대상이 아니지만 확실하지 않은 공고는 접수 종료도 보지 않고 남긴다.
 // models가 null이면 주택형 자료를 모르는 것으로 보고 특별공급 세대가 있을 수 있다고 본다.
 export function unapplicableReason({ notice, models, profile, config, today }) {
   if (!profile) return null;
   if (!RECOMMENDED_KINDS.includes(notice.kind)) return null;
   if (restrictedType(notice, config.market)) return null;
   if (!SIDO.includes(notice.region) || !SIDO.includes(profile.residenceSido)) return null;
-  if (!eligibleRegion(notice, profile)) return 'region';
+  if (surelyOutOfRegion(notice, profile)) return 'region';
+  if (!eligibleRegion(notice, profile)) return null;
   return myTracksEnded({ notice, models, profile, config, today }) ? 'ended' : null;
 }

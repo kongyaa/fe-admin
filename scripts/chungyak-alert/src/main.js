@@ -399,6 +399,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
+  // --print에 표시를 붙여 보여 줄, 저장하지 않고 뺀 공고
+  const unapplicableNotices = [];
 
   const molit = createMolitClient({ fetch: fetchFn, key: dataKey, sleep });
   const presale = createPresaleClient({ fetch: fetchFn, key: dataKey, sleep, now, budgetMs: config.market.presale.budgetMs, onSoft: addSoftError });
@@ -459,7 +461,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       if (stored?.lotto === STATUS.LOTTO && [STATUS.NOT, STATUS.OUT_OF_SCOPE].includes(evaluation.status)) counts.lotto_demoted += 1;
     }
     // 신청할 수 없는 공고(src/recommend.js의 unapplicableReason)는 저장하지 않고 로또·주간 알림에서도 뺀다. 건수와 사유 종류만 남긴다.
-    // 관심을 체크한 행은 남기고 갱신하지만 로또·주간 알림에는 넣지 않는다. 접수가 끝나면 주간 정리가 옮긴다.
+    // 관심을 체크한 행은 보통 공고처럼 갱신하고 로또·주간 알림도 그대로 둔다. 접수가 끝나면 주간 정리가 옮긴다.
     const unapplicable = evaluation?.unapplicable ?? null;
     if (unapplicable) {
       const stored = previous ?? dryRunRows?.get(notice.key);
@@ -467,6 +469,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         counts.unapplicable_skipped += 1;
         counts[`unapplicable_${unapplicable}`] += 1;
         if (stored) unapplicableRows.push(stored);
+        unapplicableNotices.push({ notice, status: evaluation.status, unapplicable });
         continue;
       }
       counts.unapplicable_kept_interest += 1;
@@ -479,6 +482,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       shortReason: evaluation?.shortReason ?? evaluation?.reason ?? null,
       urgentDate: previous?.urgentDate ?? null,
       pageId: previous?.id ?? null,
+      // 관심 체크로 남긴 신청할 수 없는 공고. --print 표시에만 쓴다.
+      unapplicable,
     };
     if (store) {
       try {
@@ -490,9 +495,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         addError(safeError(error));
       }
     }
-    if (!unapplicable) records.push(record);
+    records.push(record);
   }
-  // 옮길 행은 주간 정리에서 한 번 더 옮기지 않게 뺀다.
+  // 방어용이다. 접수 종료일이 지난 행은 판별 전에 건너뛰어 지금은 주간 정리 대상과 겹치지 않지만, 겹치더라도 두 번 옮기지 않게 뺀다.
   for (const row of unapplicableRows) existing.delete(row.key);
 
   // 주간 메일은 발송 기록이 필요해 Notion이 정상일 때만 보낸다.
@@ -581,8 +586,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     if (dryRunRows) log(`dry-run unapplicable_archive_candidates=${unapplicableRows.length}`);
   }
   if (flags.print) {
-    for (const { notice, status } of records) {
-      log(`${status ?? '-'} | ${notice.region ?? '-'} | ${notice.typeLabel} | ${notice.name} | ${notice.overallStart ?? '-'} ~ ${notice.overallEnd ?? '-'}`);
+    // 로컬 조회 전용이다(Actions에서는 꺼진다). 신청할 수 없는 공고도 표시를 붙여 보여 준다.
+    for (const { notice, status, unapplicable } of [...records, ...unapplicableNotices]) {
+      const mark = unapplicable ? ` (unapplicable:${unapplicable})` : '';
+      log(`${status ?? '-'} | ${notice.region ?? '-'} | ${notice.typeLabel} | ${notice.name} | ${notice.overallStart ?? '-'} ~ ${notice.overallEnd ?? '-'}${mark}`);
     }
   }
 

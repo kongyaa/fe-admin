@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { evaluateLotto } from '../src/lotto.js';
 import { buildProperties, parseExistingPage } from '../src/notion-store.js';
+import { ENDPOINTS, normalizeDetail } from '../src/sources/applyhome.js';
 import { SPECIAL_TRACKS, parseProfile, pickSpecialTrack, recommendTrack, residenceCategory, unapplicableReason } from '../src/recommend.js';
 
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
@@ -228,16 +229,31 @@ const ended = () => [
 const moved = (name, patch) => ended().map((stage) => (stage.name === name ? { ...stage, ...patch } : stage));
 const TODAY_ONLY = { start: today, end: today };
 
-test('a notice outside the profile region is unapplicable, but 세종 is open to every region', () => {
+test('only a 수도권 resident\'s APT notice outside 수도권 and 세종 is dropped for its region', () => {
+  const as = (residenceSido) => ({ ...PROFILE, residenceSido });
   assert.equal(unapplicable(apt({ region: '부산' })), 'region');
-  assert.equal(unapplicable(apt({ kind: 'remainder', houseSecd: '04', region: '대구', stages: [{ name: '무순위 접수', start: '2026-11-12', end: '2026-11-12' }] }), null), 'region');
-  assert.equal(unapplicable(apt({ kind: 'arbitrary', houseSecd: '', region: '대구' }), null), 'region');
+  assert.equal(unapplicable(apt({ region: '부산' }), ZERO_UNITS, as('서울')), 'region');
+  assert.equal(unapplicable(apt({ region: '제주' }), ZERO_UNITS, as('경기')), 'region');
+  // 접수가 끝났어도 사유는 지역이다.
+  assert.equal(unapplicable(apt({ region: '부산', stages: ended() }), ZERO_UNITS, as('서울')), 'region');
   // 수도권 공고는 수도권 거주자에게 열려 있다.
   for (const region of ['서울', '경기', '인천']) assert.equal(unapplicable(apt({ region })), null, region);
-  assert.equal(unapplicable(apt({ region: '서울' }), ZERO_UNITS, { ...PROFILE, residenceSido: '부산' }), 'region');
-  assert.equal(unapplicable(apt({ region: '부산' }), ZERO_UNITS, { ...PROFILE, residenceSido: '부산' }), null);
+  // 무순위는 정해진 거주 요건이 없고 임의공급은 거주 요건이 없어 지역으로 빼지 않는다.
+  const remainder = (region, stages = [{ name: '무순위 접수', start: '2026-11-12', end: '2026-11-12' }]) => apt({ kind: 'remainder', houseSecd: '04', region, stages });
+  assert.equal(unapplicable(remainder('대구'), null, as('서울')), null);
+  assert.equal(unapplicable(apt({ kind: 'arbitrary', houseSecd: '', region: '대구', stages: [{ name: '임의 접수', start: '2026-11-12', end: '2026-11-12' }] }), null, as('서울')), null);
+  // 접수가 끝난 지역 밖 무순위도 지역 대상인지 확실하지 않아 남긴다. 접수 종료 정리가 옮긴다.
+  assert.equal(unapplicable(remainder('대구', [{ name: '무순위 접수', start: '2026-11-03', end: '2026-11-04' }]), null, as('서울')), null);
+  // 수도권 밖 거주자는 기타지역이 광역 권역을 따라 달라 지역으로 빼지 않는다.
+  assert.equal(unapplicable(apt({ region: '부산' }), ZERO_UNITS, as('울산')), null);
+  assert.equal(unapplicable(apt({ region: '부산' }), ZERO_UNITS, as('경북')), null);
+  assert.equal(unapplicable(apt({ region: '부산', stages: ended() }), ZERO_UNITS, as('울산')), null);
+  assert.equal(unapplicable(apt({ region: '서울' }), ZERO_UNITS, as('부산')), null);
+  // 같은 시도 공고는 접수가 끝나면 뺀다.
+  assert.equal(unapplicable(apt({ region: '부산' }), ZERO_UNITS, as('부산')), null);
+  assert.equal(unapplicable(apt({ region: '부산', stages: ended() }), ZERO_UNITS, as('부산')), 'ended');
   // 세종 공고는 어느 시도 거주자든 대상이다.
-  for (const residenceSido of ['인천', '부산', '세종']) assert.equal(unapplicable(apt({ region: '세종' }), ZERO_UNITS, { ...PROFILE, residenceSido }), null, residenceSido);
+  for (const residenceSido of ['인천', '부산', '세종']) assert.equal(unapplicable(apt({ region: '세종' }), ZERO_UNITS, as(residenceSido)), null, residenceSido);
 });
 
 test('세종 notices recommend 1순위 기타지역 to other regions and 해당지역 to 세종 residents', () => {
@@ -356,6 +372,22 @@ test('remainder, resupply and arbitrary notices are dropped once their 접수 ha
   assert.equal(unapplicable(notice([]), null), null);
   assert.equal(unapplicable(notice([{ ...main, end: null }]), null), null);
   assert.equal(unapplicable(notice([{ ...main, end: '2026-11-01' }]), null), null);
+});
+
+test('a remainder notice without its main 접수 stage is kept even when its detail stages have ended', () => {
+  // 청약홈 상세에 SUBSCRPT_RCEPT 접수일이 없고 특별공급·일반공급 접수일만 있는 공고. 어느 단계가 본 접수인지 몰라 빼지 않는다.
+  const detail = (op, extra) => normalizeDetail(ENDPOINTS.find((item) => item.op === op), {
+    HOUSE_MANAGE_NO: '1', PBLANC_NO: '1', HOUSE_NM: '단지', SUBSCRPT_AREA_CODE_NM: '인천', HSSPLY_ADRES: '인천광역시 연수구 송도동 1',
+    SPSPLY_RCEPT_BGNDE: '2026-11-01', SPSPLY_RCEPT_ENDDE: '2026-11-01', GNRL_RCEPT_BGNDE: '2026-11-02', GNRL_RCEPT_ENDDE: '2026-11-03', ...extra,
+  });
+  const remainder = detail('getRemndrLttotPblancDetail', { HOUSE_SECD: '04' });
+  assert.deepEqual(remainder.stages.map((stage) => stage.name), ['특별공급', '일반공급']);
+  assert.equal(unapplicable(remainder, null), null);
+  assert.equal(unapplicable(detail('getOPTLttotPblancDetail', {}), null), null);
+  // 본 접수일이 있으면 그 단계로 판단한다.
+  const withMain = detail('getRemndrLttotPblancDetail', { HOUSE_SECD: '04', SUBSCRPT_RCEPT_BGNDE: '2026-11-01', SUBSCRPT_RCEPT_ENDDE: '2026-11-03' });
+  assert.equal(withMain.stages[0].name, '무순위 접수');
+  assert.equal(unapplicable(withMain, null), 'ended');
 });
 
 test('evaluation carries the unapplicable reason only with a profile, and a failed model lookup counts as unknown units', async () => {
