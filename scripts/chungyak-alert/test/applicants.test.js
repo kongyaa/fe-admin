@@ -287,9 +287,9 @@ test('an applicant short of the deposit gets no 민영 track and the reason says
   // 둘 다 모자라면 추천은 비우고 부족액만 적는다.
   const both = v2With({ account: { ...A.account, depositManwon: 100 } }, { account: { ...B.account, depositManwon: 190 } });
   assert.deepEqual(recommend(apt(), UNITS, both), { recommendation: null, text: '추천 없음; 신청자A 예치금 150만 부족; 신청자B 예치금 60만 부족' });
-  // 국민 공고는 예치금을 보지 않아 둘 다 특별공급이고, 같은 날이라 신청자 순서다.
+  // 국민 공고는 예치금을 보지 않아 둘 다 특별공급이고, 같은 날이라 신생아가 생애최초보다 먼저다.
   const national = recommend(apt({ sector: '국민' }), UNITS, both);
-  assert.equal(national.recommendation.track, '신청자A 특별(생애최초)');
+  assert.equal(national.recommendation.track, '신청자B 특별(신생아)');
   assert.ok(national.text.startsWith('추천: 신청자A 생애최초 특별공급 11/9 (20세대, 1순위 해당지역 11/10도 가능) / 신청자B 신생아 특별공급 11/9 (30세대, 1순위 해당지역 11/10도 가능)'), national.text);
 });
 
@@ -383,12 +383,38 @@ test('the notice recommendation takes the earliest date, then a special track, t
   assert.equal(picked.text, '추천: 신청자A 1순위 해당지역 11/10 (가점 약 28점) / 신청자B 신생아 특별공급 11/9 (30세대, 1순위 해당지역 11/10도 가능, 가점 약 9점(통장 제외)); 확인: 신청자B 통장 가입일; 세대주·청약통장 요건 확인; 가점은 추정');
   // 특별공급이 끝난 다음 날에는 둘 다 1순위라 신청자 순서다.
   assert.equal(recommend(apt(), UNITS, profile, '2026-11-10').recommendation.track, '신청자A 1순위');
-  // 같은 날 특별공급끼리는 신청자 순서다.
-  const both = v2With({}, { account: { ...B.account, depositManwon: 300 } });
+  // 같은 날 같은 특별공급끼리는 신청자 순서다.
+  const both = v2With({}, { specialTracks: ['생애최초'], account: { ...B.account, depositManwon: 300 } });
   assert.equal(recommend(apt(), UNITS, both).recommendation.track, '신청자A 특별(생애최초)');
   // 신청자마다 거주지가 달라 접수일이 다르면 이른 쪽이다. 경기 거주 신청자A의 인천 공고는 기타지역(11/11)이다.
   const apart = v2With({ residenceSido: '경기', specialTracks: [] }, { specialTracks: [], account: { ...B.account, depositManwon: 300 } });
   assert.equal(recommend(apt(), UNITS, apart).recommendation.track, '신청자B 1순위');
+});
+
+const specialResult = (index, date, specialTrack) => ({ index, candidate: { kind: 'special', specialTrack, track: `특별(${specialTrack})`, date } });
+
+test('on one special date, 신생아 beats 생애최초 even for a later applicant', () => {
+  assert.equal(chooseApplicant([specialResult(0, '2026-11-09', '생애최초'), specialResult(1, '2026-11-09', '신생아')]).index, 1);
+  assert.equal(chooseApplicant([specialResult(0, '2026-11-09', '생애최초'), specialResult(1, '2026-11-09', '신혼부부')]).index, 1);
+  assert.equal(chooseApplicant([specialResult(0, '2026-11-09', '신혼부부'), specialResult(1, '2026-11-09', '신생아')]).index, 1);
+  // 공고 하나에서: 신청자A는 생애최초, 신청자B는 신생아 특별공급이 같은 날이라 추천 전형은 신청자B 특별(신생아)다.
+  const profile = v2With({}, { account: { ...B.account, depositManwon: 300 } });
+  const picked = recommend(apt(), UNITS, profile);
+  assert.deepEqual([picked.recommendation.track, picked.recommendation.date], ['신청자B 특별(신생아)', '2026-11-09']);
+  const notice = { key: '1-1', name: '공고단지', region: '인천', typeLabel: 'APT', stages: [] };
+  assert.deepEqual(buildProperties(notice, { status: '아님', recommendation: picked.recommendation }, today)['추천 전형'], { select: { name: '신청자B 특별(신생아)' } });
+});
+
+test('two applicants with the same special track on one date fall back to applicant order', () => {
+  assert.equal(chooseApplicant([specialResult(0, '2026-11-09', '생애최초'), specialResult(1, '2026-11-09', '생애최초')]).index, 0);
+  assert.equal(chooseApplicant([specialResult(0, '2026-11-09', '신생아'), specialResult(1, '2026-11-09', '신생아')]).index, 0);
+  const same = v2With({}, { specialTracks: ['생애최초'], account: { ...B.account, depositManwon: 300 } });
+  assert.equal(recommend(apt(), UNITS, same).recommendation.track, '신청자A 특별(생애최초)');
+});
+
+test('an earlier date still wins over special track priority', () => {
+  assert.equal(chooseApplicant([specialResult(0, '2026-11-08', '생애최초'), specialResult(1, '2026-11-09', '신생아')]).index, 0);
+  assert.equal(chooseApplicant([specialResult(0, '2026-11-09', '신생아'), specialResult(1, '2026-11-08', '생애최초')]).index, 1);
 });
 
 test('a remainder notice lists all applicants once with their shared track', () => {
