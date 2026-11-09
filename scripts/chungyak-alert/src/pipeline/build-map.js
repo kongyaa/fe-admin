@@ -40,6 +40,30 @@ async function collectNotices({ fetch, env, today, sleep }) {
   }
 }
 
+// 단계·유형 값을 몰라 건너뛴 행이 이 비율을 넘으면 원자료 값이 바뀐 것으로 보고 멈춘다.
+export const MAX_VALUE_SKIP_RATIO = 0.05;
+
+// 서울 자료에서 건너뛴 행 검사. 데이터 행 = 읽은 사업 + 건너뛴 행(중복 포함).
+export function checkSeoulValues({ projects, skipped = {} }) {
+  const valueSkips = (skipped.stage ?? 0) + (skipped.kind ?? 0);
+  const rows = projects.length + Object.values(skipped).reduce((sum, count) => sum + count, 0);
+  if (rows > 0 && valueSkips / rows > MAX_VALUE_SKIP_RATIO) throw new AppError('seoul_values');
+}
+
+// 공고는 연결됐지만 모두 접수가 끝났으면 announced. 기간은 그대로 두고 근거만 바꾼다.
+// 서울 정비사업만 바꾼다. 공공주택지구는 블록별로 여러 번 공고하므로 지난 블록 공고가 있어도
+// 규칙·보도 기간을 그대로 둔다. 준공(done)도 그대로 둔다.
+export function markAnnounced(project) {
+  const notices = project.notices ?? [];
+  if (project.region !== '서울' || project.live || notices.length === 0 || project.windowStatus === 'done') return project;
+  const latest = notices.map((notice) => notice.announceDate).filter(Boolean).sort().at(-1);
+  return {
+    ...project,
+    windowStatus: 'announced',
+    windowBasis: latest ? `청약홈 공고가 이미 있었습니다(${latest})` : '청약홈 공고가 이미 있었습니다',
+  };
+}
+
 function tally(values) {
   const counts = {};
   for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
@@ -59,6 +83,7 @@ export async function buildMap({
   const seoul = seoulFile
     ? parseSeoulWorkbook(readFile(seoulFile), { fileName: basename(seoulFile) })
     : await collectSeoul({ fetch, sleep });
+  checkSeoulValues(seoul);
   const towns = loadTowns(newtownsFile);
 
   const notices = await collectNotices({ fetch, env, today, sleep });
@@ -66,12 +91,15 @@ export async function buildMap({
   const linkedResult = notices.skipped
     ? { projects: base, linked: 0, checked: 0 }
     : linkNotices(base, notices.notices, today);
-  const projects = linkedResult.projects.map((project) => toPublic({ ...project, bucket: bucketOf(project, today) }));
+  const projects = linkedResult.projects.map(markAnnounced)
+    .map((project) => toPublic({ ...project, bucket: bucketOf(project, today) }));
 
   return {
     generatedAt: today,
     sources: {
-      seoul: { asOf: seoul.asOf, title: seoul.title, url: DATASET_URL, count: seoul.projects.length },
+      seoul: {
+        asOf: seoul.asOf, title: seoul.title, url: DATASET_URL, count: seoul.projects.length, skipped: { ...seoul.skipped },
+      },
       newtowns: towns
         ? { asOf: towns.asOf, count: towns.projects.length, skipped: null }
         : { asOf: null, count: 0, skipped: 'newtowns_missing' },
@@ -92,7 +120,8 @@ export function summaryLines(data) {
   const noticePart = notices.skipped
     ? `notices skipped=${notices.skipped}`
     : `notices checked=${notices.checked} linked=${notices.linked}`;
-  const lines = [`map seoul=${seoul.count} asOf=${seoul.asOf} towns=${newtowns.count} ${noticePart}`];
+  const skipped = Object.entries(seoul.skipped ?? {}).map(([reason, count]) => `${reason}:${count}`).join(',') || '0';
+  const lines = [`map seoul=${seoul.count} skipped=${skipped} asOf=${seoul.asOf} towns=${newtowns.count} ${noticePart}`];
   if (newtowns.skipped) lines.push(`newtowns skipped=${newtowns.skipped}`);
   if (!notices.skipped && notices.errors.length > 0) lines.push(`notices errors=${notices.errors.join(',')}`);
   const buckets = tally(data.projects.map((project) => project.bucket));

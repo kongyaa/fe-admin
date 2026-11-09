@@ -61,9 +61,24 @@ export function monthsBetween(a, b) {
 
 const years = (months) => String(months / 12);
 
-function withOverdue(result, today) {
+// 이 단계에서 예상 시기가 지났으면 이미 분양했을 가능성이 크다(공고 연결이 안 됐을 뿐).
+// 그 앞 단계(사업시행인가, 관리처분인가, 공공주택지구 단계)는 지연으로 본다.
+export const LIKELY_SOLD_STAGES = ['이주', '착공', '일반분양'];
+
+// 기간이 다 지났을 때의 상태: 단계에 따라 likely_sold 또는 overdue
+export function passedStatus(stage) {
+  return LIKELY_SOLD_STAGES.includes(stage) ? 'likely_sold' : 'overdue';
+}
+
+const PASSED_BASIS = {
+  likely_sold: '예상 시기가 지났습니다. 이미 분양했을 가능성이 큽니다(공고 미확인)',
+  overdue: '예상 시기가 지났습니다(지연 가능성)',
+};
+
+function withOverdue(result, today, stage) {
   if (monthsBetween(today, result.to) < 0) {
-    return { ...result, status: 'overdue', basis: `${result.basis}. 예상 시기가 지났습니다(지연 가능성)` };
+    const status = passedStatus(stage);
+    return { ...result, status, basis: `${result.basis}. ${PASSED_BASIS[status]}` };
   }
   return { ...result, status: 'estimated' };
 }
@@ -77,7 +92,7 @@ export function expectedWindow({ kind, stage, stageDates = {}, today, expected =
     const to = toMonth(expected.to);
     if (from && to) {
       const basis = expected.basis ? `알려진 계획: ${expected.basis}` : '알려진 계획';
-      return withOverdue({ from, to, basis, rule: 'reported' }, today);
+      return withOverdue({ from, to, basis, rule: 'reported' }, today, stage);
     }
   }
   if (!rule) return { from: null, to: null, basis: '단계 정보가 없어 예상하지 않음', rule: 'unknown', status: 'unknown' };
@@ -90,7 +105,7 @@ export function expectedWindow({ kind, stage, stageDates = {}, today, expected =
       to: addMonths(today, rule.to),
       basis: `${stage} 중: 오늘부터 ${span}${note}`,
       rule: `${kind}:${stage}`,
-    }, today);
+    }, today, stage);
   }
   const stageDate = toMonth(stageDates?.[stage]);
   const base = stageDate ?? toMonth(today);
@@ -100,7 +115,7 @@ export function expectedWindow({ kind, stage, stageDates = {}, today, expected =
     to: addMonths(base, rule.to),
     basis: `${label} 뒤 ${span}${note}`,
     rule: `${kind}:${stage}`,
-  }, today);
+  }, today, stage);
 }
 
 // 사업에 예상 시기를 붙인다. window는 기간이 있을 때만 { from, to }.
@@ -121,15 +136,23 @@ export function applyWindow(project, today) {
   };
 }
 
-export const BUCKETS = ['live', 'soon', 'mid', 'far', 'overdue', 'done'];
+// 정렬 순서이기도 하다. site/app.js의 BUCKET_ORDER와 같게 둔다.
+export const BUCKETS = ['live', 'soon', 'mid', 'far', 'announced', 'overdue', 'likely_sold', 'done'];
 
-// live(공고 연결) > done > overdue > far(기간 없음 포함) > 시작까지 12개월 미만 soon, 36개월 미만 mid
+// 상태가 곧 구간인 값
+const STATUS_BUCKETS = ['done', 'announced', 'likely_sold', 'overdue'];
+
+// live(접수 중인 공고 연결) > done·announced(지난 공고만 연결)·likely_sold·overdue(상태 그대로)
+// > 기간 없음 far > 기간이 다 지났으면 단계로 likely_sold 또는 overdue(만든 뒤 시간이 지난 자료 대비)
+// > 시작까지 12개월 미만 soon, 36개월 미만 mid, 나머지 far
 export function bucketOf(project, today) {
   if (project.live) return 'live';
-  if (project.windowStatus === 'done') return 'done';
-  if (project.windowStatus === 'overdue') return 'overdue';
-  const months = project.window?.from ? monthsBetween(today, project.window.from) : null;
+  const status = project.windowStatus;
+  if (STATUS_BUCKETS.includes(status)) return status;
+  const from = project.window?.from ?? null;
+  const months = from && status !== 'far' ? monthsBetween(today, from) : null;
   if (months === null) return 'far';
+  if (monthsBetween(today, project.window.to ?? from) < 0) return passedStatus(project.stage);
   if (months < 12) return 'soon';
   if (months < 36) return 'mid';
   return 'far';

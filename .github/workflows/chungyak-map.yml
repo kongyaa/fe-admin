@@ -13,7 +13,10 @@ on:
 permissions:
   contents: read
 
-concurrency: chungyak-map
+# PR은 브랜치마다 따로 돌고 새 커밋이 오면 이전 실행을 취소한다. main 배포는 하나씩 끝까지 돈다.
+concurrency:
+  group: chungyak-map-${{ github.event_name == 'pull_request' && github.head_ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   TZ: Asia/Seoul

@@ -91,10 +91,11 @@ export function columnIndex(ref) {
   return index - 1;
 }
 
-function textRuns(xml) {
+export function textRuns(xml) {
   // 윗주(<rPh>)는 읽기 표기라 빼고, 서식 런(<r>)으로 나뉜 <t>는 이어 붙인다.
+  // 빈 <t/>를 먼저 맞춰야 여는 태그로 읽혀 다음 런까지 삼키지 않는다.
   const body = xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '');
-  return [...body.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>|<t\b[^>]*\/>/g)].map((m) => decodeXml(m[1] ?? '')).join('');
+  return [...body.matchAll(/<t(?:\s[^>]*?)?\/>|<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((m) => decodeXml(m[1] ?? '')).join('');
 }
 
 export function parseSharedStrings(xml) {
@@ -252,6 +253,13 @@ export function kindOf(subKind) {
   return null;
 }
 
+// 이주시작일이 자료 기준월(asOf, 'YYYY-MM')의 말일까지인지. 기준월을 모르면 날짜만 있으면 시작으로 본다.
+export function moveStarted(moveStart, asOf) {
+  if (!moveStart) return false;
+  if (!asOf) return true;
+  return String(moveStart).slice(0, 7) <= asOf;
+}
+
 // 원자료 한 행 -> 지도 사업. 코드나 구역명이 없는 행(빈 행, 합계 행)은 null.
 // 단계 값을 모르면 { skipped: 'stage' }를 돌려 호출하는 쪽이 센다.
 export function normalizeSeoulRow(row, columns, { asOf = null, title = sourceTitle(asOf) } = {}) {
@@ -274,8 +282,8 @@ export function normalizeSeoulRow(row, columns, { asOf = null, title = sourceTit
     이주: date(columns.moveStart),
     착공: date(columns.construction),
   };
-  // 관리처분인가 뒤 이주가 시작됐으면 현재 단계를 이주로 본다.
-  if (stage === '관리처분인가' && stageDates.이주) stage = '이주';
+  // 관리처분인가 뒤 이주가 시작됐으면 현재 단계를 이주로 본다. 이주시작일이 자료 기준월 뒤면 아직 예정이다.
+  if (stage === '관리처분인가' && moveStarted(stageDates.이주, asOf)) stage = '이주';
   // 건립세대 총합계가 0이면 계획이 정해지지 않은 것으로 본다.
   const total = cellCount(row, columns.totalHouseholds);
   const planned = total !== null && total > 0;

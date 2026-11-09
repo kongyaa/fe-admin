@@ -101,7 +101,10 @@ export const DATA_ROWS = {
   },
   // 빈 행
   9: { A: null, B: null },
-  // 모르는 단계 값
+};
+
+// 모르는 단계 값. 행이 적은 기본 자료에 넣으면 값 이상 비율(5%)을 넘으므로 따로 둔다.
+export const UNKNOWN_STAGE_ROW = {
   10: { A: 2003, C: '마포구', D: '아현9', I: '주택정비형 재개발', J: '기타' },
 };
 

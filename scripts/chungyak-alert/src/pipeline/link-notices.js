@@ -9,8 +9,10 @@ export function compact(value) {
 
 // '신영동158-2' -> '신영동158', '쌍문2동 81번지' -> '쌍문2동81', '신문로1가158' -> '신문로1가158'.
 // 산 지번은 '신영동산12'처럼 '산'을 동 쪽에 붙여 둔다. 동 이름에 한글이 없거나 본번이 없으면 null.
+// 지번이 여럿이면('이촌동193-3,5', '청담동65,삼성동53-2') 첫 지번만 쓴다.
 export function lotKey(address) {
-  const value = compact(address).replace(/(일대|일원|외\d*필지|외)$/, '');
+  const first = compact(address).split(/[,·]/)[0];
+  const value = first.replace(/(일대|일원|외\d*필지|외)$/, '');
   const match = /^(.*?)(\d+)(?:-\d+)?$/.exec(value);
   if (!match || !/[가-힣]/.test(match[1]) || match[1].length < 2) return null;
   return `${match[1]}${match[2]}`;
@@ -22,15 +24,18 @@ export function zoneKey(name) {
   return value.length >= 3 ? value : null;
 }
 
-// haystack에 key가 있고, key가 숫자로 끝나면 바로 뒤가 숫자가 아닐 때만 (신당1 ≠ 신당10, 신영동158 ≠ 신영동1580)
+// 숫자로 끝나는 key 바로 뒤에 오면 다른 것을 가리키는 글자: 숫자, 차, 단지, 동, 가
+// (신당1 ≠ 신당10, 신길2 ≠ 신길2차·신길2동, 신영동158 ≠ 신영동1580)
+const NUMBER_TAIL = /^(\d|차|단지|동|가)/;
+
+// haystack에 key가 있고, key가 숫자로 끝나면 바로 뒤가 NUMBER_TAIL이 아닐 때만
 export function containsToken(haystack, key) {
   if (!key) return false;
   let from = 0;
   for (;;) {
     const index = haystack.indexOf(key, from);
     if (index < 0) return false;
-    const next = haystack[index + key.length];
-    if (!/\d$/.test(key) || next === undefined || !/\d/.test(next)) return true;
+    if (!/\d$/.test(key) || !NUMBER_TAIL.test(haystack.slice(index + key.length))) return true;
     from = index + 1;
   }
 }

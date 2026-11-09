@@ -143,7 +143,9 @@ button, input, select { font: inherit; color: inherit; }
 .c-soon { background: var(--line-soft); color: var(--line); }
 .c-mid { background: var(--zone-soft); color: var(--ink); }
 .c-far { background: var(--wash); color: var(--muted); }
+.c-ann { background: transparent; color: var(--green); border: 1px solid var(--green); padding: 0 7px; font-weight: 600; }
 .c-over { background: transparent; color: var(--muted); border: 1px dashed var(--muted); padding: 0 7px; }
+.c-sold { background: var(--wash); color: var(--muted); font-weight: 600; }
 .c-done { background: var(--wash); color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 
 /* 상세 */

@@ -2,9 +2,9 @@
   "sample": true,
   "generatedAt": "2026-11-10",
   "sources": {
-    "seoul": { "asOf": "2026-06", "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do", "count": 9 },
+    "seoul": { "asOf": "2026-06", "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do", "count": 11, "skipped": {} },
     "newtowns": { "asOf": "2026-11-10", "count": 3 },
-    "notices": { "linked": 2, "checked": 120, "skipped": null }
+    "notices": { "linked": 3, "checked": 120, "skipped": null }
   },
   "stages": {
     "seoul": ["구역지정", "추진위", "조합설립", "건축심의", "사업시행인가", "관리처분인가", "이주", "착공", "일반분양"],
@@ -78,7 +78,7 @@
       "operator": "민간", "stage": "착공", "stageIndex": 7,
       "stageDates": { "구역지정": "2012-01-01", "조합설립": "2014-06-01", "사업시행인가": "2018-10-01", "관리처분인가": "2020-09-01", "이주": "2021-06-01", "착공": "2023-02-01" },
       "households": 870, "saleHouseholds": 760, "rentalHouseholds": 110, "generalSupply": null,
-      "window": { "from": "2023-02", "to": "2024-02" }, "windowBasis": "착공(2023-02) 뒤 0~1년. 예상 시기가 지났습니다(지연 가능성)", "windowStatus": "overdue",
+      "window": { "from": "2023-02", "to": "2024-02" }, "windowBasis": "착공(2023-02) 뒤 0~1년, 일반분양은 착공 전후가 많음. 예상 시기가 지났습니다. 이미 분양했을 가능성이 큽니다(공고 미확인)", "windowStatus": "likely_sold",
       "notices": [], "live": false,
       "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
     },
@@ -100,6 +100,27 @@
       "households": 1340, "saleHouseholds": 1100, "rentalHouseholds": 240, "generalSupply": null,
       "window": { "from": "2027-01", "to": "2029-01" }, "windowBasis": "사업시행인가(2024-01) 뒤 3~5년", "windowStatus": "estimated",
       "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90010", "name": "예시 성북J", "kind": "재개발", "subKind": "주택정비형 재개발",
+      "region": "서울", "district": "성북구", "address": "예시동 10", "roadAddress": "",
+      "operator": "민간", "stage": "관리처분인가", "stageIndex": 5,
+      "stageDates": { "구역지정": "2011-06-01", "조합설립": "2013-09-01", "사업시행인가": "2017-04-01", "관리처분인가": "2020-09-01" },
+      "households": 1100, "saleHouseholds": 900, "rentalHouseholds": 200, "generalSupply": null,
+      "window": { "from": "2022-03", "to": "2023-09" }, "windowBasis": "관리처분인가(2020-09) 뒤 1.5~3년. 예상 시기가 지났습니다(지연 가능성)", "windowStatus": "overdue",
+      "notices": [], "live": false,
+      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
+    },
+    {
+      "id": "seoul-90011", "name": "예시 서초K", "kind": "재건축", "subKind": "공동주택재건축",
+      "region": "서울", "district": "서초구", "address": "예시동 11", "roadAddress": "예시대로 11",
+      "operator": "민간", "stage": "착공", "stageIndex": 7,
+      "stageDates": { "구역지정": "2014-05-01", "조합설립": "2016-03-01", "사업시행인가": "2019-11-01", "관리처분인가": "2022-07-01", "이주": "2023-03-01", "착공": "2025-06-01" },
+      "households": 1500, "saleHouseholds": 1250, "rentalHouseholds": 250, "generalSupply": 320,
+      "window": { "from": "2025-06", "to": "2026-06" }, "windowBasis": "청약홈 공고가 이미 있었습니다(2026-04-14)", "windowStatus": "announced",
+      "notices": [{ "key": "sample-2026000003", "name": "예시 서초K 아파트 (예시 공고)", "announceDate": "2026-04-14", "end": "2026-04-30", "url": "https://www.applyhome.co.kr/", "typeLabel": "민영" }],
+      "live": false,
       "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
     },
     {

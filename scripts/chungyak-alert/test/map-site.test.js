@@ -1,11 +1,13 @@
 // 정적 사이트(site/app.js)의 순수 함수 검사. DOM 없이 import 되어야 한다.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const app = await import('../site/app.js');
+const pipeline = await import('../src/pipeline/expected-window.js');
 const {
-  bucketOf, compareProjects, ganttBars, idFromHash, kstYmd, matchesFilters, monthsBetween, safeHttpUrl,
-  shortDistrict, sortProjects, spanOf, tileClass, tileStats, whenMatches, windowLabel, windowRange,
+  BUCKET_ORDER, BUCKET_INFO, bucketOf, compareProjects, dataFile, ganttBars, idFromHash, kstYmd, latestAnnounce, matchesFilters,
+  monthsBetween, safeHttpUrl, shortDistrict, sortProjects, spanOf, tileClass, tileStats, whenMatches, windowLabel, windowRange,
 } = app;
 
 const today = '2026-11';
@@ -178,4 +180,121 @@ test('tile map: per-구 counts and 3-step colour', () => {
   assert.equal(shortDistrict('종로구'), '종로');
   assert.equal(shortDistrict('중구'), '중구');
   assert.equal(shortDistrict('하남시'), '하남');
+});
+
+test('bucketOf: likely_sold and announced', () => {
+  assert.equal(bucketOf({ stage: '착공', windowStatus: 'likely_sold', window: { from: '2023-02', to: '2024-02' } }, today), 'likely_sold');
+  assert.equal(bucketOf({ windowStatus: 'announced', window: { from: '2027-01', to: '2028-01' } }, today), 'announced');
+  assert.equal(bucketOf({ windowStatus: 'announced', window: null, live: true }, today), 'live');
+  // 상태가 estimated인데 범위가 다 지났으면 단계로 가른다
+  assert.equal(bucketOf({ ...win('2024-01', '2025-01'), stage: '착공' }, today), 'likely_sold');
+  assert.equal(bucketOf({ ...win('2024-01', '2025-01'), stage: '이주' }, today), 'likely_sold');
+  assert.equal(bucketOf({ ...win('2024-01', '2025-01'), stage: '관리처분인가' }, today), 'overdue');
+  assert.equal(BUCKET_INFO.likely_sold.label, '분양했을 가능성');
+  assert.equal(BUCKET_INFO.announced.label, '공고 있었음');
+});
+
+test('likely_sold and announced: labels, filters, tile stats', () => {
+  const sold = { stage: '착공', windowStatus: 'likely_sold', window: { from: '2023-02', to: '2024-02' } };
+  const announced = {
+    windowStatus: 'announced', window: null,
+    notices: [{ announceDate: '2026-03-31' }, { announceDate: '2026-05-02' }, { announceDate: null }],
+  };
+  assert.equal(windowLabel(sold, today), '2023-02~2024-02 (지남, 분양했을 가능성)');
+  assert.equal(windowLabel({ ...sold, window: null }, today), '분양했을 가능성');
+  assert.equal(windowLabel(announced, today), '공고 있었음(2026-05)');
+  assert.equal(windowLabel({ ...announced, notices: [] }, today), '공고 있었음');
+  assert.equal(latestAnnounce(announced), '2026-05');
+  for (const bucket of ['likely_sold', 'announced']) {
+    assert.equal(whenMatches(bucket, '12'), false);
+    assert.equal(whenMatches(bucket, '36'), false);
+    assert.equal(whenMatches(bucket, 'all'), true);
+  }
+  assert.equal(matchesFilters(sold, { ...ALL, when: '36' }, today), false);
+  assert.equal(matchesFilters(announced, { ...ALL, when: '12' }, today), false);
+  const stats = tileStats([
+    { region: '서울', district: '종로구', b: 'likely_sold' },
+    { region: '서울', district: '종로구', b: 'announced' },
+    { region: '서울', district: '종로구', b: 'soon' },
+  ], (p) => p.b);
+  assert.deepEqual(stats.get('종로구'), { n: 3, soon: 1, mid: 0 });
+});
+
+test('sort order puts announced after far, likely_sold after overdue', () => {
+  assert.deepEqual(BUCKET_ORDER, ['live', 'soon', 'mid', 'far', 'announced', 'overdue', 'likely_sold', 'done']);
+  const list = [
+    { id: 'done', name: '가', windowStatus: 'done', window: null },
+    { id: 'sold', name: '가', stage: '착공', windowStatus: 'likely_sold', window: { from: '2022-01', to: '2023-01' } },
+    { id: 'overdue', name: '가', windowStatus: 'overdue', window: { from: '2022-01', to: '2023-01' } },
+    { id: 'announced', name: '가', windowStatus: 'announced', window: null, notices: [{ announceDate: '2026-01-02' }] },
+    { id: 'far', name: '가', windowStatus: 'far', window: null },
+    { id: 'soon', name: '가', ...win('2027-01') },
+  ];
+  assert.deepEqual(sortProjects(list, today).map((p) => p.id), ['soon', 'far', 'announced', 'overdue', 'sold', 'done']);
+});
+
+test('?sample=1 loads the sample file', () => {
+  assert.equal(dataFile('?sample=1'), 'sample-projects.json');
+  assert.equal(dataFile('?x=2&sample=1'), 'sample-projects.json');
+  assert.equal(dataFile(''), 'projects.json');
+  assert.equal(dataFile('?sample=0'), 'projects.json');
+  assert.equal(dataFile(undefined), 'projects.json');
+});
+
+test('sample-projects.json is valid and covers every bucket but done', () => {
+  const sample = JSON.parse(readFileSync(new URL('../site/sample-projects.json', import.meta.url), 'utf8'));
+  assert.equal(sample.sample, true);
+  const buckets = new Set(sample.projects.map((p) => bucketOf(p, '2026-11')));
+  for (const bucket of ['live', 'soon', 'mid', 'far', 'announced', 'overdue', 'likely_sold']) assert.ok(buckets.has(bucket), bucket);
+  assert.equal(new Set(sample.projects.map((p) => p.id)).size, sample.projects.length);
+});
+
+// 파이프라인(만들 때 bucket 저장)과 사이트(볼 때 다시 계산)가 같은 구간을 내야 한다.
+// 파이프라인 today는 'YYYY-MM-DD', 사이트는 'YYYY-MM'. 나머지 입력 모양은 같다.
+test('pipeline bucketOf and site bucketOf agree', () => {
+  const pipelineToday = '2026-11-10';
+  const siteToday = pipelineToday.slice(0, 7);
+  const est = (from, to, extra = {}) => ({ window: { from, to }, windowStatus: 'estimated', ...extra });
+  const table = [
+    [{ live: true, ...est('2030-01', '2031-01') }, 'live'],
+    [{ live: true, window: null, windowStatus: 'done' }, 'live'],
+    [{ live: true, window: null, windowStatus: 'announced' }, 'live'],
+    [{ window: null, windowStatus: 'done' }, 'done'],
+    [{ window: null, windowStatus: 'announced' }, 'announced'],
+    [{ window: { from: '2027-01', to: '2028-01' }, windowStatus: 'announced' }, 'announced'],
+    [{ stage: '착공', window: { from: '2023-02', to: '2024-02' }, windowStatus: 'likely_sold' }, 'likely_sold'],
+    [{ stage: '관리처분인가', window: { from: '2020-01', to: '2021-06' }, windowStatus: 'overdue' }, 'overdue'],
+    [{ window: null, windowStatus: 'far' }, 'far'],
+    [{ window: null, windowStatus: 'unknown' }, 'far'],
+    [{ window: null }, 'far'],
+    [{}, 'far'],
+    [est('2026-04', '2027-04'), 'soon'],
+    [est('2026-11', '2026-11'), 'soon'],
+    [est('2027-10', '2029-10'), 'soon'],
+    [est('2027-11', '2029-11'), 'mid'],
+    [est('2029-10', '2031-10'), 'mid'],
+    [est('2029-11', '2031-11'), 'far'],
+    [est('2025-01', '2026-10', { stage: '착공' }), 'likely_sold'],
+    [est('2025-01', '2026-10', { stage: '이주' }), 'likely_sold'],
+    [est('2025-01', '2026-10', { stage: '일반분양' }), 'likely_sold'],
+    [est('2025-01', '2026-10', { stage: '관리처분인가' }), 'overdue'],
+    [est('2025-01', '2026-10', { stage: '지구계획승인' }), 'overdue'],
+    [est('2025-01', '2026-11', { stage: '착공' }), 'soon'],
+  ];
+  // 파이프라인이 실제로 만드는 값(applyWindow)도 표에 넣는다
+  for (const [kind, stage, date] of [
+    ['재개발', '착공', '2020-01-15'], ['재개발', '착공', '2026-04-09'], ['재건축', '이주', '2024-01-01'],
+    ['재건축', '관리처분인가', '2020-01-01'], ['재개발', '사업시행인가', '2026-03-06'], ['재개발', '추진위', '2026-01-01'],
+    ['공공주택지구', '지구지정', '2019-10'], ['공공주택지구', '블록별 분양', '2025-05'], ['공공주택지구', '준공', '2030-01'],
+  ]) {
+    table.push([pipeline.applyWindow({ kind, stage, stageDates: { [stage]: date } }, pipelineToday), null]);
+  }
+  for (const [project, expected] of table) {
+    const fromPipeline = pipeline.bucketOf(project, pipelineToday);
+    const fromSite = bucketOf(structuredClone(project), siteToday);
+    assert.equal(fromSite, fromPipeline, JSON.stringify(project));
+    if (expected) assert.equal(fromPipeline, expected, JSON.stringify(project));
+  }
+  assert.deepEqual(pipeline.BUCKETS, BUCKET_ORDER);
+  assert.deepEqual(pipeline.LIKELY_SOLD_STAGES, app.LIKELY_SOLD_STAGES);
 });

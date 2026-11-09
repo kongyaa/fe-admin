@@ -23,6 +23,16 @@ test('lot key keeps the 동 and 본번', () => {
   assert.equal(lotKey(null), null);
 });
 
+test('lot key of a multi-lot address uses the first lot', () => {
+  assert.equal(lotKey('이촌동193-3,5'), '이촌동193');
+  assert.equal(lotKey('여의도동37,37-1'), '여의도동37');
+  assert.equal(lotKey('청담동65,삼성동53-2'), '청담동65');
+  assert.equal(lotKey('대조동 88, 89 일대'), '대조동88');
+  assert.equal(lotKey('여의도동30-2·3'), '여의도동30');
+  const project = seoul({ district: '용산구', name: '이촌', address: '이촌동193-3,5' });
+  assert.equal(matchesProject(project, notice({ address: '서울특별시 용산구 이촌동 193-3번지' })), true);
+});
+
 test('zone key strips 구역 and spaces and needs 3 characters', () => {
   assert.equal(zoneKey('한남3구역'), '한남3');
   assert.equal(zoneKey('반포 미도2차'), '반포미도2차');
@@ -36,6 +46,19 @@ test('numbered keys do not match a longer number', () => {
   assert.equal(containsToken('신영동1580,신영동158-2', '신영동158'), true);
   assert.equal(containsToken('신영동1580', '신영동158'), false);
   assert.equal(containsToken('반포미도2차아파트', '반포미도2차'), true);
+});
+
+test('numbered keys do not match 차, 단지, 동, 가 right after the number', () => {
+  assert.equal(containsToken('신길2차아파트', '신길2'), false);
+  assert.equal(containsToken('신길2단지', '신길2'), false);
+  assert.equal(containsToken('신길2동주민센터', '신길2'), false);
+  assert.equal(containsToken('신문로2가', '신문로2'), false);
+  assert.equal(containsToken('신길2구역재개발', '신길2'), true);
+  assert.equal(containsToken('신길2차,신길2구역', '신길2'), true);
+  assert.equal(containsToken('신길2', '신길2'), true);
+  const project = seoul({ district: '영등포구', name: '신길2구역', address: '신길동190' });
+  assert.equal(matchesProject(project, notice({ address: '서울특별시 영등포구 신길동 1', name: '신길2차 아파트' })), false);
+  assert.equal(matchesProject(project, notice({ address: '서울특별시 영등포구 신길동 1', name: '신길2구역 자이' })), true);
 });
 
 test('seoul notices match by 구 + 지번', () => {

@@ -6,6 +6,7 @@ import {
   DOWNLOAD_URL,
   SEOUL_STAGES,
   collectSeoul,
+  moveStarted,
   columnIndex,
   decodeXml,
   excelSerialToDate,
@@ -18,8 +19,9 @@ import {
   readXlsx,
   resolveColumns,
   sourceTitle,
+  textRuns,
 } from '../src/pipeline/seoul-redevelop.js';
-import { HEADER, LISTING_HTML, buildXlsx, seoulFixture } from './map-fixtures.js';
+import { DATA_ROWS, HEADER, LISTING_HTML, UNKNOWN_STAGE_ROW, buildXlsx, seoulFixture } from './map-fixtures.js';
 
 const noSleep = async () => {};
 
@@ -46,6 +48,13 @@ test('xml entities and column letters', () => {
 test('shared strings join rich text runs and skip phonetic runs', () => {
   const xml = '<sst><si><t>순번</t></si><si><r><t>구역</t></r><r><t xml:space="preserve">명</t></r><rPh sb="0" eb="1"><t>ク</t></rPh></si><si><t>A&amp;B</t></si><si/></sst>';
   assert.deepEqual(parseSharedStrings(xml), ['순번', '구역명', 'A&B', '']);
+});
+
+test('an empty self-closing <t/> does not swallow the next run', () => {
+  assert.equal(textRuns('<r><t/></r><r><t>구역</t></r><r><t xml:space="preserve"/></r><r><t>명</t></r>'), '구역명');
+  assert.equal(textRuns('<t />'), '');
+  const xml = '<sst><si><r><t/></r><r><t>신영1</t></r></si><si><t>다음</t></si></sst>';
+  assert.deepEqual(parseSharedStrings(xml), ['신영1', '다음']);
 });
 
 test('as-of month comes from the file title or the sheet name', () => {
@@ -88,7 +97,7 @@ test('not a zip -> seoul_xlsx', () => {
 });
 
 test('seoul rows normalize into map projects', () => {
-  const result = parseSeoulWorkbook(seoulFixture());
+  const result = parseSeoulWorkbook(seoulFixture(UNKNOWN_STAGE_ROW));
   assert.equal(result.asOf, '2026-06');
   assert.equal(result.title, '서울시 정비사업 추진현황 (26년 6월기준)');
   assert.deepEqual(result.skipped, { stage: 1 });
@@ -142,6 +151,7 @@ test('seoul rows normalize into map projects', () => {
   assert.equal(gaepo.stageDates.이주, '2026-01-01');
 
   assert.equal(banpo.stage, '관리처분인가');
+  assert.equal(banpo.stageIndex, SEOUL_STAGES.indexOf('관리처분인가'));
   assert.equal(banpo.kind, '재건축');
   assert.equal(banpo.households, 500);
 });
@@ -186,4 +196,23 @@ test('a download that is not a zip or fails is a seoul error', async () => {
   await assert.rejects(collectSeoul({ fetch: html, sleep: noSleep }), { kind: 'seoul_download' });
   const down = async () => new Response('', { status: 503 });
   await assert.rejects(collectSeoul({ fetch: down, sleep: noSleep }), { kind: 'seoul_http_503' });
+});
+
+test('관리처분 becomes 이주 only when the move started by the end of the as-of month', () => {
+  assert.equal(moveStarted('2026-06-30', '2026-06'), true);
+  assert.equal(moveStarted('2026-07-01', '2026-06'), false);
+  assert.equal(moveStarted('2025-01-01', '2026-06'), true);
+  assert.equal(moveStarted(null, '2026-06'), false);
+  assert.equal(moveStarted('2026-07-01', null), true);
+  // 2026-07-01(46204)은 6월 기준 자료에서 아직 예정, 2026-06-30(46203)은 시작
+  const rows = {
+    ...HEADER,
+    5: { ...DATA_ROWS[8], A: 3001, U: 46204 },
+    6: { ...DATA_ROWS[8], A: 3002, U: 46203 },
+  };
+  const [planned, started] = parseSeoulWorkbook(buildXlsx({ rows })).projects;
+  assert.equal(planned.stage, '관리처분인가');
+  assert.equal(planned.stageDates.이주, '2026-07-01');
+  assert.equal(started.stage, '이주');
+  assert.equal(parseSeoulWorkbook(buildXlsx({ rows }), { asOf: '2026-09' }).projects[0].stage, '이주');
 });

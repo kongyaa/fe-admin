@@ -44,13 +44,25 @@ test('a missing stage date uses today and says so', () => {
   assert.equal(result.basis, '관리처분인가(날짜 없음, 오늘 기준) 뒤 1.5~3년');
 });
 
-test('a window that ended before this month is overdue, one ending this month is not', () => {
+test('a passed window at 착공·이주·일반분양 is likely_sold, one ending this month is not', () => {
   const old = win('재개발', '착공', { 착공: '2020-01-15' });
-  assert.equal(old.status, 'overdue');
+  assert.equal(old.status, 'likely_sold');
   assert.deepEqual([old.from, old.to], ['2020-01', '2021-01']);
-  assert.equal(old.basis, '착공(2020-01) 뒤 0~1년, 일반분양은 착공 전후가 많음. 예상 시기가 지났습니다(지연 가능성)');
+  assert.equal(old.basis, '착공(2020-01) 뒤 0~1년, 일반분양은 착공 전후가 많음. 예상 시기가 지났습니다. 이미 분양했을 가능성이 큽니다(공고 미확인)');
   assert.equal(win('재개발', '착공', { 착공: '2025-11-30' }).status, 'estimated');
-  assert.equal(win('재개발', '착공', { 착공: '2025-10-01' }).status, 'overdue');
+  assert.equal(win('재개발', '착공', { 착공: '2025-10-01' }).status, 'likely_sold');
+  const moved = win('재건축', '이주', { 이주: '2024-01-01' });
+  assert.equal(moved.status, 'likely_sold');
+  assert.equal(moved.basis, '이주(2024-01) 뒤 0.5~2년. 예상 시기가 지났습니다. 이미 분양했을 가능성이 큽니다(공고 미확인)');
+  assert.equal(win('재개발', '일반분양', { 일반분양: '2024-01-01' }).status, 'likely_sold');
+});
+
+test('a passed window before 이주 is overdue (지연 가능성)', () => {
+  const disposal = win('재개발', '관리처분인가', { 관리처분인가: '2020-01-01' });
+  assert.equal(disposal.status, 'overdue');
+  assert.equal(disposal.basis, '관리처분인가(2020-01) 뒤 1.5~3년. 예상 시기가 지났습니다(지연 가능성)');
+  assert.equal(win('재건축', '사업시행인가', { 사업시행인가: '2015-01-01' }).status, 'overdue');
+  assert.equal(win('공공주택지구', '부지조성 착공', { '부지조성 착공': '2020-01' }).status, 'overdue');
 });
 
 test('공공주택지구 window rules', () => {
@@ -106,6 +118,17 @@ test('bucket boundaries at 12 and 36 months', () => {
   assert.equal(bucketOf({ window: null, windowStatus: 'unknown' }, today), 'far');
   assert.equal(bucketOf({ window: null, windowStatus: 'done' }, today), 'done');
   assert.equal(at('2020-01', { windowStatus: 'overdue' }), 'overdue');
+  assert.equal(bucketOf({ window: { from: '2020-01', to: '2021-01' }, windowStatus: 'likely_sold' }, today), 'likely_sold');
+  assert.equal(bucketOf({ window: null, windowStatus: 'announced' }, today), 'announced');
+  assert.equal(bucketOf({ window: { from: '2027-01', to: '2028-01' }, windowStatus: 'announced' }, today), 'announced');
+});
+
+test('a window that passed after the build is split by stage', () => {
+  const passed = (stage) => bucketOf({ stage, window: { from: '2025-01', to: '2026-10' }, windowStatus: 'estimated' }, today);
+  assert.equal(passed('착공'), 'likely_sold');
+  assert.equal(passed('이주'), 'likely_sold');
+  assert.equal(passed('관리처분인가'), 'overdue');
+  assert.equal(passed('지구계획승인'), 'overdue');
 });
 
 test('live wins over every other bucket', () => {

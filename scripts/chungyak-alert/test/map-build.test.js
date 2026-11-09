@@ -3,10 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { buildMap, parseArgs, run, summaryLines } from '../src/pipeline/build-map.js';
+import { MAX_VALUE_SKIP_RATIO, buildMap, checkSeoulValues, markAnnounced, parseArgs, run, summaryLines } from '../src/pipeline/build-map.js';
 import { SEOUL_STAGES, DATASET_URL, DOWNLOAD_URL } from '../src/pipeline/seoul-redevelop.js';
 import { TOWN_STAGES } from '../src/pipeline/newtowns.js';
-import { LISTING_HTML, seoulFixture } from './map-fixtures.js';
+import { DATA_ROWS, LISTING_HTML, UNKNOWN_STAGE_ROW, seoulFixture } from './map-fixtures.js';
 
 const today = '2026-11-10';
 const noSleep = async () => {};
@@ -45,8 +45,15 @@ function applyhomeFetch(calls = []) {
     const op = new URL(url).pathname.split('/').at(-1);
     if (op !== 'getAPTLttotPblancDetail') return Response.json({ totalCount: 0, data: [] });
     return Response.json({
-      totalCount: 2,
+      totalCount: 3,
       data: [
+        // 접수가 끝난 서울 공고 (반포미도2차) -> announced
+        {
+          HOUSE_MANAGE_NO: '2026000005', PBLANC_NO: '2026000005', HOUSE_SECD: '01', HOUSE_NM: '반포 미도 재건축',
+          SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 서초구 반포동 60-4',
+          RCRIT_PBLANC_DE: '2026-05-04', PBLANC_URL: 'https://www.applyhome.co.kr/y',
+          GNRL_RNK1_CRSPAREA_RCPTDE: '2026-05-20', GNRL_RNK1_CRSPAREA_ENDDE: '2026-05-21',
+        },
         {
           HOUSE_MANAGE_NO: '2026000001', PBLANC_NO: '2026000001', HOUSE_SECD: '01', HOUSE_NM: '신영 센트럴',
           SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 종로구 신영동 158-2번지 일원',
@@ -77,10 +84,10 @@ test('buildMap from a local Seoul file links notices and computes windows', asyn
   assert.ok(calls.every((url) => url.startsWith('https://api.odcloud.kr/')));
   assert.equal(data.generatedAt, today);
   assert.deepEqual(data.sources.seoul, {
-    asOf: '2026-06', title: '서울시 정비사업 추진현황 (26년 6월기준)', url: DATASET_URL, count: 4,
+    asOf: '2026-06', title: '서울시 정비사업 추진현황 (26년 6월기준)', url: DATASET_URL, count: 4, skipped: {},
   });
   assert.deepEqual(data.sources.newtowns, { asOf: '2026-11-01', count: 1, skipped: null });
-  assert.deepEqual(data.sources.notices, { linked: 2, checked: 2, skipped: null, errors: [] });
+  assert.deepEqual(data.sources.notices, { linked: 3, checked: 3, skipped: null, errors: [] });
   assert.deepEqual(data.stages, { seoul: SEOUL_STAGES, town: TOWN_STAGES });
   assert.equal(data.projects.length, 5);
 
@@ -95,12 +102,24 @@ test('buildMap from a local Seoul file links notices and computes windows', asyn
 
   const gyosan = data.projects.find((p) => p.id === 'town-hanam-gyosan');
   assert.equal(gyosan.live, false);
+  // 공공주택지구는 지난 블록 공고가 있어도 보도된 기간을 그대로 쓴다(공고 목록에는 남김)
+  assert.deepEqual(gyosan.notices.map((n) => [n.key, n.announceDate, n.end]), [['2025000009-2025000009', '2026-03-31', '2026-04-21']]);
   assert.equal(gyosan.notices[0].url, null);
   assert.deepEqual(gyosan.window, { from: '2027-06', to: '2029-06' });
+  assert.equal(gyosan.windowStatus, 'estimated');
   assert.equal(gyosan.windowBasis, '알려진 계획: 보도된 계획');
   assert.equal(gyosan.bucket, 'soon');
   assert.equal('noticeMatch' in gyosan, false);
   assert.equal('expected' in gyosan, false);
+
+  // 서울 사업에 접수가 끝난 공고만 이어지면 기간은 두고 announced
+  const banpo = data.projects.find((p) => p.id === 'seoul-2002');
+  assert.equal(banpo.live, false);
+  assert.deepEqual(banpo.notices.map((n) => n.key), ['2026000005-2026000005']);
+  assert.deepEqual(banpo.window, { from: '2027-07', to: '2029-01' });
+  assert.equal(banpo.windowStatus, 'announced');
+  assert.equal(banpo.windowBasis, '청약홈 공고가 이미 있었습니다(2026-05-04)');
+  assert.equal(banpo.bucket, 'announced');
 
   const susong = data.projects.find((p) => p.id === 'seoul-1460');
   assert.equal(susong.window, null);
@@ -108,8 +127,8 @@ test('buildMap from a local Seoul file links notices and computes windows', asyn
   assert.equal(susong.bucket, 'far');
 
   assert.deepEqual(summaryLines(data).slice(0, 2), [
-    'map seoul=4 asOf=2026-06 towns=1 notices checked=2 linked=2',
-    'map buckets live=1 soon=3 mid=0 far=1 overdue=0 done=0',
+    'map seoul=4 skipped=0 asOf=2026-06 towns=1 notices checked=3 linked=3',
+    'map buckets live=1 soon=2 mid=0 far=1 announced=1 overdue=0 likely_sold=0 done=0',
   ]);
 });
 
@@ -126,7 +145,7 @@ test('buildMap downloads the latest Seoul file and skips notices without a key',
   assert.equal(data.sources.seoul.count, 4);
   assert.deepEqual(data.sources.newtowns, { asOf: null, count: 0, skipped: 'newtowns_missing' });
   assert.deepEqual(data.sources.notices, { linked: 0, checked: 0, skipped: 'no_key', errors: [] });
-  assert.equal(summaryLines(data)[0], 'map seoul=4 asOf=2026-06 towns=0 notices skipped=no_key');
+  assert.equal(summaryLines(data)[0], 'map seoul=4 skipped=0 asOf=2026-06 towns=0 notices skipped=no_key');
 });
 
 test('a notice failure is not fatal', async () => {
@@ -147,7 +166,7 @@ test('run writes the file and logs counts only', async () => {
     log: (line) => lines.push(line),
   });
   assert.equal(code, 0);
-  assert.equal(lines[0], 'map seoul=4 asOf=2026-06 towns=1 notices skipped=no_key');
+  assert.equal(lines[0], 'map seoul=4 skipped=0 asOf=2026-06 towns=1 notices skipped=no_key');
   const written = JSON.parse(readFileSync(out, 'utf8'));
   assert.equal(written.projects.length, 5);
   assert.ok(lines.every((line) => !line.includes('http')));
@@ -180,4 +199,62 @@ test('argument parsing', () => {
   assert.equal(parseArgs(['--seoul-file', 'a.xlsx']).seoulFile, 'a.xlsx');
   assert.throws(() => parseArgs(['--out']), { kind: 'map_args' });
   assert.throws(() => parseArgs(['--what']), { kind: 'map_args' });
+});
+
+test('skipped Seoul rows are reported, and too many unknown values fail the build', async () => {
+  // 행 5개 중 1개(20%)가 모르는 단계
+  const drift = join(dir, 'drift.xlsx');
+  writeFileSync(drift, seoulFixture(UNKNOWN_STAGE_ROW));
+  await assert.rejects(buildMap({ env: {}, today, seoulFile: drift, newtownsFile: townsFile }), { kind: 'seoul_values' });
+  const lines = [];
+  const code = await run({ argv: ['--out', join(dir, 'drift.json'), '--seoul-file', drift, '--newtowns', townsFile], env: {}, today, log: (l) => lines.push(l) });
+  assert.equal(code, 1);
+  assert.deepEqual(lines, ['map failed=seoul_values']);
+
+  // 대부분이 모르는 단계 값(원자료 값이 바뀐 경우)
+  const unknown = {};
+  for (let i = 0; i < 12; i += 1) unknown[20 + i] = { A: 5000 + i, C: '마포구', D: `새구역${i}`, I: '주택정비형 재개발', J: '정비계획수립' };
+  const mostly = join(dir, 'mostly.xlsx');
+  writeFileSync(mostly, seoulFixture(unknown));
+  await assert.rejects(buildMap({ env: {}, today, seoulFile: mostly, newtownsFile: townsFile }), { kind: 'seoul_values' });
+
+  // 5% 이하면 계속하고 건너뛴 수를 남긴다: 행 21개 중 모르는 단계 1개
+  const filler = {};
+  for (let i = 0; i < 16; i += 1) filler[40 + i] = { ...DATA_ROWS[8], A: 6000 + i };
+  const fine = join(dir, 'fine.xlsx');
+  writeFileSync(fine, seoulFixture({ ...UNKNOWN_STAGE_ROW, ...filler }));
+  const data = await buildMap({ env: {}, today, seoulFile: fine, newtownsFile: townsFile });
+  assert.deepEqual(data.sources.seoul.skipped, { stage: 1 });
+  assert.equal(data.sources.seoul.count, 20);
+  assert.equal(summaryLines(data)[0], 'map seoul=20 skipped=stage:1 asOf=2026-06 towns=1 notices skipped=no_key');
+});
+
+test('checkSeoulValues counts stage and kind skips against all data rows', () => {
+  const projects = (n) => Array.from({ length: n }, (_, i) => ({ id: String(i) }));
+  assert.equal(MAX_VALUE_SKIP_RATIO, 0.05);
+  assert.doesNotThrow(() => checkSeoulValues({ projects: projects(19), skipped: { stage: 1 } })); // 1/20 = 5%
+  assert.throws(() => checkSeoulValues({ projects: projects(18), skipped: { stage: 1, kind: 1 } }), { kind: 'seoul_values' });
+  assert.throws(() => checkSeoulValues({ projects: projects(9), skipped: { kind: 1 } }), { kind: 'seoul_values' });
+  // 중복은 값 이상이 아니지만 행 수에는 들어간다
+  assert.doesNotThrow(() => checkSeoulValues({ projects: projects(10), skipped: { duplicate: 9, stage: 1 } }));
+  assert.doesNotThrow(() => checkSeoulValues({ projects: projects(3) }));
+});
+
+test('markAnnounced: a linked notice that already ended', () => {
+  const base = { id: 'x', region: '서울', stage: '착공', window: { from: '2026-04', to: '2027-04' }, windowStatus: 'estimated', windowBasis: '착공 뒤', live: false };
+  const ended = [{ key: 'b', announceDate: '2026-03-02' }, { key: 'a', announceDate: '2026-05-10' }];
+  const marked = markAnnounced({ ...base, notices: ended });
+  assert.equal(marked.windowStatus, 'announced');
+  assert.equal(marked.windowBasis, '청약홈 공고가 이미 있었습니다(2026-05-10)');
+  assert.deepEqual(marked.window, base.window);
+  assert.equal(markAnnounced({ ...base, window: null, notices: [{ key: 'c', announceDate: null }] }).windowBasis, '청약홈 공고가 이미 있었습니다');
+  // 공공주택지구(서울 밖), 접수 중(live), 공고 없음, 준공은 그대로
+  const town = { ...base, region: '경기', kind: '공공주택지구', stage: '블록별 분양', notices: ended };
+  assert.equal(markAnnounced(town), town);
+  const live = { ...base, live: true, notices: ended };
+  assert.equal(markAnnounced(live), live);
+  const none = { ...base, notices: [] };
+  assert.equal(markAnnounced(none), none);
+  const done = { ...base, windowStatus: 'done', notices: ended };
+  assert.equal(markAnnounced(done), done);
 });

@@ -11,16 +11,23 @@ export const DEFAULT_STAGES = {
   town: ['후보지', '지구지정', '지구계획승인', '부지조성 착공', '블록별 분양', '준공'],
 };
 
-// 정렬 순서이기도 하다: 공고 나옴 → 1년 안 → 3년 안 → 3년 뒤·미정 → 예상 지남 → 준공
-export const BUCKET_ORDER = ['live', 'soon', 'mid', 'far', 'overdue', 'done'];
+// 정렬 순서이기도 하다: 공고 나옴 → 1년 안 → 3년 안 → 3년 뒤·미정 → 공고 있었음 → 예상 지남 → 분양했을 가능성 → 준공
+// 파이프라인(src/pipeline/expected-window.js)의 BUCKETS와 같게 둔다.
+export const BUCKET_ORDER = ['live', 'soon', 'mid', 'far', 'announced', 'overdue', 'likely_sold', 'done'];
 export const BUCKET_INFO = {
   live: { label: '공고 나옴', cls: 'c-live' },
   soon: { label: '1년 안', cls: 'c-soon' },
   mid: { label: '3년 안', cls: 'c-mid' },
   far: { label: '3년 뒤·미정', cls: 'c-far' },
+  announced: { label: '공고 있었음', cls: 'c-ann' },
   overdue: { label: '예상 지남', cls: 'c-over' },
+  likely_sold: { label: '분양했을 가능성', cls: 'c-sold' },
   done: { label: '준공', cls: 'c-done' },
 };
+
+// 이 단계에서 예상 시기가 지났으면 지연이 아니라 이미 분양했을 가능성으로 본다(파이프라인과 같은 목록)
+export const LIKELY_SOLD_STAGES = ['이주', '착공', '일반분양'];
+const STATUS_BUCKETS = ['done', 'announced', 'likely_sold', 'overdue'];
 
 /** 한국 시간 기준 오늘 날짜 'YYYY-MM-DD' */
 export function kstYmd(date = new Date()) {
@@ -53,18 +60,19 @@ export function addMonths(ym, n) {
 }
 
 /**
- * 예상 시기 구간: live(공고 나옴) | soon(12개월 안) | mid(36개월 안) | far(그 뒤·미정) | overdue(예상 지남) | done(준공)
+ * 예상 시기 구간: live(공고 나옴) | soon(12개월 안) | mid(36개월 안) | far(그 뒤·미정)
+ * | announced(지난 공고만 연결) | overdue(예상 지남) | likely_sold(분양했을 가능성) | done(준공)
  * todayYm 은 'YYYY-MM' (한국 시간 기준 이번 달)
  */
 export function bucketOf(project, todayYm) {
   if (project?.live) return 'live';
   const status = project?.windowStatus;
-  if (status === 'done') return 'done';
-  if (status === 'overdue') return 'overdue';
+  if (STATUS_BUCKETS.includes(status)) return status;
   const from = toYm(project?.window?.from);
   if (status === 'far' || !from) return 'far';
   const to = toYm(project?.window?.to) ?? from;
-  if (monthsBetween(todayYm, to) < 0) return 'overdue';
+  // 만든 뒤 시간이 지나 범위가 다 지났으면 단계로 가른다
+  if (monthsBetween(todayYm, to) < 0) return LIKELY_SOLD_STAGES.includes(project?.stage) ? 'likely_sold' : 'overdue';
   const months = monthsBetween(todayYm, from);
   if (months < 12) return 'soon';
   if (months < 36) return 'mid';
@@ -153,12 +161,28 @@ export function windowRange(project) {
   return from === to ? from : `${from}~${to}`;
 }
 
+/** 연결된 공고 중 가장 늦은 공고일의 'YYYY-MM'. 없으면 null */
+export function latestAnnounce(project) {
+  const months = (Array.isArray(project?.notices) ? project.notices : []).map((n) => toYm(n?.announceDate)).filter(Boolean);
+  return months.length ? months.sort().at(-1) : null;
+}
+
+/** 읽을 자료 파일: 주소에 ?sample=1 이 있으면 예시 자료, 아니면 projects.json */
+export function dataFile(search) {
+  return new URLSearchParams(String(search ?? '')).get('sample') === '1' ? 'sample-projects.json' : 'projects.json';
+}
+
 /** 상세·목록에 보여줄 예상 청약 문구 */
 export function windowLabel(project, todayYm) {
   const bucket = bucketOf(project, todayYm);
   const range = windowRange(project);
   if (bucket === 'done') return '준공';
   if (bucket === 'overdue') return range ? `${range} (지남)` : '예상 지남';
+  if (bucket === 'likely_sold') return range ? `${range} (지남, 분양했을 가능성)` : '분양했을 가능성';
+  if (bucket === 'announced') {
+    const latest = latestAnnounce(project);
+    return latest ? `공고 있었음(${latest})` : '공고 있었음';
+  }
   if (bucket === 'live') return range ?? '공고 나옴';
   return range ?? '3년 뒤·미정';
 }
@@ -338,7 +362,7 @@ async function load() {
   status.replaceChildren('사업 목록을 불러오는 중…');
   status.hidden = false;
   try {
-    const res = await fetch('projects.json', { cache: 'no-cache' });
+    const res = await fetch(dataFile(location.search), { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     let data;
     try {
@@ -364,7 +388,7 @@ function showError(kind) {
     load();
   });
   status.replaceChildren(
-    h('b', {}, '사업 목록(projects.json)을 불러오지 못했습니다.'),
+    h('b', {}, `사업 목록(${dataFile(location.search)})을 불러오지 못했습니다.`),
     h('span', {}, ` 잠시 뒤 다시 시도해 주세요. (${kind})`),
     h('div', {}, retry),
   );
