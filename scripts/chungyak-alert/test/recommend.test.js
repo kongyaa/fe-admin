@@ -23,9 +23,15 @@ const model = (specials) => ({ houseType: '084A', area: 84, price: 100000, house
 const recommend = (notice, models, profile = PROFILE, on = today) => recommendTrack({ notice, models, profile, config, today: on });
 
 test('the profile secret is parsed strictly and its absence turns the feature off', () => {
-  assert.deepEqual(parseProfile(JSON.stringify(PROFILE)), { profile: PROFILE, status: 'ok' });
-  assert.deepEqual(parseProfile('{"residenceSido":" 인천 ","residenceYears":0,"specialTracks":["신혼부부","신혼부부"]}').profile, { residenceSido: '인천', residenceYears: 0, specialTracks: ['신혼부부'] });
-  assert.deepEqual(parseProfile('{"residenceSido":"인천","residenceYears":3}').profile.specialTracks, []);
+  // v1은 이름표 없는 신청자 한 명과 혼인 여부를 모르는 세대로 정규화한다.
+  const v1 = (applicant) => ({
+    version: 1,
+    applicants: [{ label: '', birthYear: null, account: null, pregnant: null, childBirths: null, ...applicant }],
+    household: { married: null, marriageRegistered: null },
+  });
+  assert.deepEqual(parseProfile(JSON.stringify(PROFILE)), { profile: v1(PROFILE), status: 'ok' });
+  assert.deepEqual(parseProfile('{"residenceSido":" 인천 ","residenceYears":0,"specialTracks":["신혼부부","신혼부부"]}').profile, v1({ residenceSido: '인천', residenceYears: 0, specialTracks: ['신혼부부'] }));
+  assert.deepEqual(parseProfile('{"residenceSido":"인천","residenceYears":3}').profile.applicants[0].specialTracks, []);
   for (const text of [undefined, null, '', '  ']) assert.deepEqual(parseProfile(text), { profile: null, status: 'missing' });
   for (const text of ['{', '[]', 'null', '"서울"', '{"residenceSido":"","residenceYears":3}', '{"residenceSido":"인천"}', '{"residenceSido":"인천","residenceYears":-1}', '{"residenceSido":"인천","residenceYears":"3"}', '{"residenceSido":"인천","residenceYears":3,"specialTracks":["다자녀"]}', '{"residenceSido":"인천","residenceYears":3,"specialTracks":"신혼부부"}']) {
     assert.deepEqual(parseProfile(text), { profile: null, status: 'invalid' }, text);

@@ -26,7 +26,16 @@
     "remainderMaxRound": 3
   },
   "recommendation": {
-    "localResidenceYears": 2
+    "localResidenceYears": 2,
+    "privateDeposit": {
+      "note": "민영주택 청약 예치금 기준 요약(만원). 신청자 거주 시도와 전용면적(85, 102, 135㎡ 이하, 그 외)별 금액이다. 공고문으로 확인한다.",
+      "maxAreas": [85, 102, 135],
+      "groups": [
+        { "sido": ["서울", "부산"], "manwon": [300, 600, 1000, 1500] },
+        { "sido": ["대구", "인천", "광주", "대전", "울산"], "manwon": [250, 400, 700, 1000] }
+      ],
+      "otherManwon": [200, 300, 400, 500]
+    }
   },
   "market": {
     "restrictedNameKeywords": ["토지임대", "지분적립", "신혼희망"],
