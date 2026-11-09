@@ -2,12 +2,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import vm from 'node:vm';
 
 const app = await import('../site/app.js');
 const pipeline = await import('../src/pipeline/expected-window.js');
 const {
   BUCKET_ORDER, BUCKET_INFO, bucketOf, compareProjects, dataFile, ganttBars, idFromHash, kstYmd, latestAnnounce, matchesFilters,
   monthsBetween, safeHttpUrl, shortDistrict, sortProjects, spanOf, tileClass, tileStats, whenMatches, windowLabel, windowRange,
+  THEME_KEY, THEME_CHOICES, normalizeTheme, colorSchemeFor, readTheme, writeTheme,
 } = app;
 
 const today = '2026-11';
@@ -247,6 +249,98 @@ test('sample-projects.json is valid and covers every bucket but done', () => {
   const buckets = new Set(sample.projects.map((p) => bucketOf(p, '2026-11')));
   for (const bucket of ['live', 'soon', 'mid', 'far', 'announced', 'overdue', 'likely_sold']) assert.ok(buckets.has(bucket), bucket);
   assert.equal(new Set(sample.projects.map((p) => p.id)).size, sample.projects.length);
+});
+
+// --- 화면 테마 ---------------------------------------------------------------
+
+/** 가짜 localStorage. blocked 이면 모든 호출이 예외를 던진다(저장소 차단 흉내) */
+function fakeStorage(initial = {}, { blocked = false } = {}) {
+  const map = new Map(Object.entries(initial));
+  const guard = () => {
+    if (blocked) throw new Error('SecurityError');
+  };
+  return {
+    map,
+    getItem: (k) => (guard(), map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => (guard(), map.set(k, String(v)), undefined),
+    removeItem: (k) => (guard(), map.delete(k), undefined),
+  };
+}
+
+test('normalizeTheme: only light/dark are kept, anything else is system', () => {
+  assert.deepEqual(THEME_CHOICES, ['system', 'light', 'dark']);
+  assert.equal(normalizeTheme('light'), 'light');
+  assert.equal(normalizeTheme('dark'), 'dark');
+  assert.equal(normalizeTheme(' DARK '), 'dark');
+  for (const v of ['system', '', null, undefined, 'auto', 'blue', 1, {}]) assert.equal(normalizeTheme(v), 'system', String(v));
+});
+
+test('colorSchemeFor matches the color-scheme meta values', () => {
+  assert.equal(colorSchemeFor('system'), 'light dark');
+  assert.equal(colorSchemeFor('light'), 'light');
+  assert.equal(colorSchemeFor('dark'), 'dark');
+  assert.equal(colorSchemeFor('nonsense'), 'light dark');
+});
+
+test('readTheme / writeTheme: store light/dark, system removes the key, blocked storage never throws', () => {
+  const s = fakeStorage();
+  assert.equal(readTheme(s), 'system');
+  assert.equal(writeTheme(s, 'dark'), true);
+  assert.equal(s.map.get(THEME_KEY), 'dark');
+  assert.equal(readTheme(s), 'dark');
+  assert.equal(writeTheme(s, 'light'), true);
+  assert.equal(readTheme(s), 'light');
+  assert.equal(writeTheme(s, 'system'), true);
+  assert.equal(s.map.has(THEME_KEY), false);
+  assert.equal(readTheme(fakeStorage({ [THEME_KEY]: 'purple' })), 'system');
+  const blocked = fakeStorage({ [THEME_KEY]: 'dark' }, { blocked: true });
+  assert.equal(readTheme(blocked), 'system');
+  assert.equal(writeTheme(blocked, 'dark'), false);
+  assert.equal(readTheme(null), 'system');
+  assert.equal(writeTheme(null, 'dark'), false);
+});
+
+/** theme-init.js 를 가짜 document·localStorage 위에서 실행하고 결과를 돌려준다 */
+function runThemeInit(storage) {
+  const attrs = new Map();
+  const meta = { content: 'light dark', setAttribute: (k, v) => { if (k === 'content') meta.content = v; } };
+  const document = {
+    documentElement: { setAttribute: (k, v) => attrs.set(k, v) },
+    querySelector: (sel) => (sel === 'meta[name="color-scheme"]' ? meta : null),
+  };
+  const window = {};
+  Object.defineProperty(window, 'localStorage', {
+    get() {
+      if (storage === 'throw') throw new Error('SecurityError');
+      return storage;
+    },
+  });
+  vm.runInNewContext(readFileSync(new URL('../site/theme-init.js', import.meta.url), 'utf8'), { window, document });
+  return { theme: attrs.get('data-theme') ?? null, scheme: meta.content };
+}
+
+test('theme-init.js applies a stored theme before paint and ignores bad or blocked storage', () => {
+  assert.deepEqual(runThemeInit(fakeStorage({ [THEME_KEY]: 'dark' })), { theme: 'dark', scheme: 'dark' });
+  assert.deepEqual(runThemeInit(fakeStorage({ [THEME_KEY]: 'light' })), { theme: 'light', scheme: 'light' });
+  assert.deepEqual(runThemeInit(fakeStorage()), { theme: null, scheme: 'light dark' });
+  assert.deepEqual(runThemeInit(fakeStorage({ [THEME_KEY]: 'system' })), { theme: null, scheme: 'light dark' });
+  assert.deepEqual(runThemeInit(fakeStorage({ [THEME_KEY]: 'dark' }, { blocked: true })), { theme: null, scheme: 'light dark' });
+  assert.deepEqual(runThemeInit('throw'), { theme: null, scheme: 'light dark' });
+  // 키를 바꿀 때 두 파일을 같이 바꾸도록
+  assert.ok(readFileSync(new URL('../site/theme-init.js', import.meta.url), 'utf8').includes(`'${THEME_KEY}'`));
+});
+
+test('index.html loads theme-init.js as a classic script before the stylesheet, with no inline script', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  const init = html.indexOf('<script src="theme-init.js"></script>');
+  assert.ok(init > 0, 'theme-init.js script tag');
+  assert.ok(init > html.indexOf('name="color-scheme"'), 'after the color-scheme meta (it updates it)');
+  assert.ok(init < html.indexOf('href="style.css"'), 'before the stylesheet');
+  assert.ok(init < html.indexOf('</head>'));
+  assert.equal(/<script(?![^>]*\ssrc=)[^>]*>/.test(html), false, 'no inline <script>');
+  assert.equal(/\sstyle=/.test(html), false, 'no inline style attribute');
+  for (const choice of THEME_CHOICES) assert.ok(html.includes(`data-theme-choice="${choice}"`), choice);
+  assert.ok(html.includes('aria-label="화면 테마"'));
 });
 
 // 파이프라인(만들 때 bucket 저장)과 사이트(볼 때 다시 계산)가 같은 구간을 내야 한다.

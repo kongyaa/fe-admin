@@ -259,6 +259,45 @@ export function idFromHash(hash) {
   }
 }
 
+// --- 화면 테마: 시스템(기기 설정, 기본) · 라이트 · 다크 -----------------------
+// 키는 site/theme-init.js 와 같게 둔다(그쪽은 처음 그리기 전에 같은 값을 읽는다).
+export const THEME_KEY = 'bunyang-map-theme';
+export const THEME_CHOICES = ['system', 'light', 'dark'];
+
+/** 저장값·버튼값을 'light' | 'dark' | 'system' 으로. 모르는 값은 시스템 */
+export function normalizeTheme(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  return v === 'light' || v === 'dark' ? v : 'system';
+}
+
+/** <meta name="color-scheme"> 값: 시스템이면 'light dark', 고정이면 그 하나 */
+export function colorSchemeFor(theme) {
+  const t = normalizeTheme(theme);
+  return t === 'system' ? 'light dark' : t;
+}
+
+/** 저장된 테마. 저장소가 없거나 막혀 있으면(예외) 시스템 */
+export function readTheme(storage) {
+  try {
+    return normalizeTheme(storage?.getItem(THEME_KEY));
+  } catch {
+    return 'system';
+  }
+}
+
+/** 테마 저장. 시스템이면 저장값을 지운다. 저장소가 없거나 막혀 있으면 false */
+export function writeTheme(storage, theme) {
+  const t = normalizeTheme(theme);
+  try {
+    if (!storage) return false;
+    if (t === 'system') storage.removeItem(THEME_KEY);
+    else storage.setItem(THEME_KEY, t);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 화면
 // ---------------------------------------------------------------------------
@@ -765,9 +804,49 @@ function renderGantt() {
   else note.textContent = `36개월 안에 걸친 ${total.toLocaleString('ko-KR')}곳`;
 }
 
+// --- 화면 테마 ---------------------------------------------------------------
+
+/** window.localStorage 는 접근만으로도 예외가 날 수 있다(저장소 차단) */
+function themeStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** data-theme·color-scheme 메타·버튼 눌림 상태를 테마에 맞춘다. 시스템이면 data-theme 를 뗀다 */
+function applyTheme(theme) {
+  const t = normalizeTheme(theme);
+  const root = document.documentElement;
+  if (t === 'system') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', t);
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', colorSchemeFor(t));
+  for (const btn of document.querySelectorAll('[data-theme-choice]')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.themeChoice === t));
+  }
+  return t;
+}
+
+function initTheme() {
+  // theme-init.js 가 먼저 붙인 값과 같지만, 버튼 상태까지 맞추려고 한 번 더 적용한다
+  applyTheme(readTheme(themeStorage()));
+  // 자료를 못 불러와도 테마는 바꿀 수 있어야 하므로 아래 공통 click 처리와 따로 둔다
+  $('theme').addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-theme-choice]') : null;
+    if (!btn) return;
+    writeTheme(themeStorage(), applyTheme(btn.dataset.themeChoice));
+  });
+  // 다른 탭에서 바꾸면 따라간다
+  window.addEventListener('storage', (e) => {
+    if (e.key === THEME_KEY || e.key === null) applyTheme(readTheme(themeStorage()));
+  });
+}
+
 // --- 이벤트 -----------------------------------------------------------------
 
 function init() {
+  initTheme();
   document.addEventListener('click', (e) => {
     const btn = e.target instanceof Element ? e.target.closest('button') : null;
     if (!btn || !state.data) return;
