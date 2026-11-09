@@ -259,6 +259,64 @@ export function idFromHash(hash) {
   }
 }
 
+// --- 화면 테마: 시스템(기기 설정, 기본) · 라이트 · 다크 -----------------------
+// 키는 site/theme-init.js 와 같게 둔다(그쪽은 처음 그리기 전에 같은 값을 읽는다).
+export const THEME_KEY = 'bunyang-map-theme';
+export const THEME_CHOICES = ['system', 'light', 'dark'];
+
+/** 저장값·버튼값을 'light' | 'dark' | 'system' 으로. 정확히 'light'·'dark' 만 고정하고 나머지는 시스템(theme-init.js 와 같은 규칙) */
+export function normalizeTheme(value) {
+  return value === 'light' || value === 'dark' ? value : 'system';
+}
+
+/** <meta name="color-scheme"> 값: 시스템이면 'light dark', 고정이면 그 하나 */
+export function colorSchemeFor(theme) {
+  const t = normalizeTheme(theme);
+  return t === 'system' ? 'light dark' : t;
+}
+
+/** 저장된 테마. 저장소가 없거나 막혀 있으면(예외) 시스템 */
+export function readTheme(storage) {
+  try {
+    return normalizeTheme(storage?.getItem(THEME_KEY));
+  } catch {
+    return 'system';
+  }
+}
+
+/** 테마 저장. 시스템이면 저장값을 지운다. 저장소가 없거나 막혀 있으면 false */
+export function writeTheme(storage, theme) {
+  const t = normalizeTheme(theme);
+  try {
+    if (!storage) return false;
+    if (t === 'system') storage.removeItem(THEME_KEY);
+    else storage.setItem(THEME_KEY, t);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** storage 이벤트가 테마와 관련 있는지: 테마 키가 바뀌었거나 저장소 전체가 지워졌을 때(key 가 null) */
+export function isThemeStorageKey(key) {
+  return key === THEME_KEY || key === null;
+}
+
+/**
+ * data-theme·color-scheme 메타·버튼 눌림 상태를 테마에 맞춘다. 시스템이면 data-theme 를 뗀다.
+ * DOM 은 인자로 받는다({ root, meta, buttons }) — node 에서 가짜 객체로 검사하려고. 적용한 테마를 돌려준다.
+ */
+export function applyTheme(theme, { root, meta, buttons = [] }) {
+  const t = normalizeTheme(theme);
+  if (t === 'system') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', t);
+  meta?.setAttribute('content', colorSchemeFor(t));
+  for (const btn of buttons) {
+    btn.setAttribute('aria-pressed', String(btn.getAttribute('data-theme-choice') === t));
+  }
+  return t;
+}
+
 // ---------------------------------------------------------------------------
 // 화면
 // ---------------------------------------------------------------------------
@@ -765,9 +823,69 @@ function renderGantt() {
   else note.textContent = `36개월 안에 걸친 ${total.toLocaleString('ko-KR')}곳`;
 }
 
+// --- 화면 테마 ---------------------------------------------------------------
+
+/** window.localStorage 는 접근만으로도 예외가 날 수 있다(저장소 차단) */
+function themeStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function themeDom() {
+  return {
+    root: document.documentElement,
+    meta: document.querySelector('meta[name="color-scheme"]'),
+    buttons: document.querySelectorAll('[data-theme-choice]'),
+  };
+}
+
+let switchToken = 0;
+
+/**
+ * 처음 이후에 테마를 바꿀 때. 배경색만 전환 효과가 있어서 그대로 바꾸면 잠깐 글자색과 배경색이 어긋난다(어두운 글자에 어두운 배경).
+ * 실제로 바뀔 때만 html.theme-switching 으로 전환 효과를 끄고, 두 프레임 뒤에 되돌린다.
+ */
+function switchTheme(theme) {
+  const dom = themeDom();
+  const t = normalizeTheme(theme);
+  if (normalizeTheme(dom.root.getAttribute('data-theme')) !== t) {
+    const token = ++switchToken;
+    dom.root.classList.add('theme-switching');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (token === switchToken) dom.root.classList.remove('theme-switching');
+    }));
+  }
+  return applyTheme(t, dom);
+}
+
+let storageWarned = false;
+
+function initTheme() {
+  // theme-init.js 가 먼저 붙인 값과 같지만, 버튼 상태까지 맞추려고 한 번 더 적용한다(처음에는 전환 효과를 끄지 않음)
+  applyTheme(readTheme(themeStorage()), themeDom());
+  // 자료를 못 불러와도 테마는 바꿀 수 있어야 하므로 아래 공통 click 처리와 따로 둔다
+  $('theme').addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-theme-choice]') : null;
+    if (!btn) return;
+    const saved = writeTheme(themeStorage(), switchTheme(btn.getAttribute('data-theme-choice')));
+    if (!saved && !storageWarned) {
+      storageWarned = true;
+      announce('이 브라우저에는 테마 선택이 저장되지 않습니다');
+    }
+  });
+  // 다른 탭에서 바꾸면 따라간다
+  window.addEventListener('storage', (e) => {
+    if (isThemeStorageKey(e.key)) switchTheme(readTheme(themeStorage()));
+  });
+}
+
 // --- 이벤트 -----------------------------------------------------------------
 
 function init() {
+  initTheme();
   document.addEventListener('click', (e) => {
     const btn = e.target instanceof Element ? e.target.closest('button') : null;
     if (!btn || !state.data) return;
