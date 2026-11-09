@@ -596,11 +596,15 @@ export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.mi
 // 신뢰도 하인 주택형의 큰 마진이 기준을 넘는 다른 주택형을 가리지 않게 한다.
 export const qualifiesByPrice = (candidate, lotto) => meetsPriceRule(candidate, lotto) && candidate.confidence !== CONFIDENCE.LOW;
 
-// 기준을 넘는 주택형 중 마진이 가장 큰 것을, 없으면 전체에서 마진이 가장 큰 것을 돌려준다.
-export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, lotto, market, today }) {
+// 신뢰도 중 이상이면서 기준을 넘는 주택형 중 마진이 가장 큰 것을, 없으면 전체에서 마진이 가장 큰 것을 돌려준다.
+// preferConfident(가격을 확인하는 조건형 로또 후보)이면 그 사이에 신뢰도 중 이상 주택형 중 마진이 가장 큰 것을 둔다.
+// 신뢰도 하인 주택형의 마진이 더 커도 중 이상 주택형을 가리지 않게 한다. 조건 없는 공고는 예전 순서라
+// 신뢰도 하인 큰 마진이 남아 keepPreviousLotto의 보호를 받는다.
+export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, preferConfident = false, lotto, market, today }) {
   const context = { market, lotto, today };
   const inputs = { stations, stationLookupFailed, presaleOk };
   let best = null;
+  let bestConfident = null;
   let bestQualifying = null;
   for (const model of models) {
     if (!(model.area > 0) || !(model.price > 0)) continue;
@@ -609,9 +613,12 @@ export function estimateBestMargin({ models, rows, subject, stations = new Map()
       ?? estimateFromComparables(model, rows, subject, inputs, context);
     if (!candidate) continue;
     if (!best || candidate.margin > best.margin) best = candidate;
+    if (candidate.confidence !== CONFIDENCE.LOW && (!bestConfident || candidate.margin > bestConfident.margin)) {
+      bestConfident = candidate;
+    }
     if (qualifiesByPrice(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) {
       bestQualifying = candidate;
     }
   }
-  return bestQualifying ?? best;
+  return bestQualifying ?? (preferConfident ? bestConfident : null) ?? best;
 }

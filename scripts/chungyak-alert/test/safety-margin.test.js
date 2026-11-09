@@ -1506,6 +1506,51 @@ test('a weak estimate cannot quietly drop a previous 로또, while a 중 estimat
   assert.equal(firm.store.state.upserts[0].evaluation.confidence, '중');
 });
 
+test('a 분양가상한제 notice that was 로또 is demoted by a confident negative margin and counted', async () => {
+  const wasLotto = new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]]);
+  const lowPrice = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount: '84,000' }));
+  const h = harness({ store: fakeStore(wasLotto), fetch: worldFetch({ rows: [aptRow({ PARCPRC_ULS_AT: 'Y' })], trades: lowPrice }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const evaluation = h.store.state.upserts[0].evaluation;
+  assert.equal(evaluation.status, '아님');
+  assert.equal(evaluation.confidence, '중');
+  assert.ok(evaluation.reason.startsWith('분양가상한제 적용 해당이나 시세 대비 이점 없음; '), evaluation.reason);
+  assert.equal(h.kakao.length, 0);
+  assert.ok(summaryLine(h).includes('lotto_demoted=1'));
+  assert.ok(!h.logs.join('\n').includes('비밀공고단지'));
+});
+
+test('a repeated-round 무순위 notice with no trades is 아님, sends no alert and counts a stored 로또 as demoted', async () => {
+  const wasLotto = () => new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]]);
+  const remainderFetch = (name) => {
+    const row = aptRow({ HOUSE_SECD: '04', HOUSE_NM: name, SUBSCRPT_RCEPT_BGNDE: THU, SUBSCRPT_RCEPT_ENDDE: THU });
+    const world = worldFetch({ rows: [], trades: [] });
+    return async (url) => {
+      const text = String(url);
+      if (text.includes('getRemndrLttotPblancDetail')) return Response.json({ totalCount: 1, data: [row] });
+      if (text.includes('getRemndrLttotPblancMdl')) return Response.json({ totalCount: 1, data: [{ HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '100,000' }] });
+      return world.fetch(url);
+    };
+  };
+
+  const h = harness({ store: fakeStore(wasLotto()), fetch: remainderFetch('합성반복단지(14차)') });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const evaluation = h.store.state.upserts[0].evaluation;
+  assert.equal(evaluation.status, '아님');
+  assert.equal(evaluation.repeatedRound, 14);
+  assert.ok(evaluation.reason.startsWith('수도권 무순위·잔여세대 14차 반복 공급; 시세 추정 없음'), evaluation.reason);
+  assert.equal(h.kakao.length, 0);
+  assert.ok(summaryLine(h).includes('lotto_demoted=1'));
+  assert.ok(!h.logs.join('\n').includes('합성반복단지'));
+
+  // 차수가 없으면 같은 공고가 예전처럼 로또로 남고 알림이 간다.
+  const plain = harness({ store: fakeStore(wasLotto()), fetch: remainderFetch('합성반복단지') });
+  assert.equal(await run({ env: plain.env, deps: plain.deps }), 0);
+  assert.equal(plain.store.state.upserts[0].evaluation.status, '로또');
+  assert.equal(plain.kakao.length, 1);
+  assert.ok(summaryLine(plain).includes('lotto_demoted=0'));
+});
+
 test('complexes dropped as outliers are counted in the market log line', async () => {
   const trades = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}신도시`, jibun: String(300 + index), amount: '200,000' }));
   trades.push(tradeTags({ name: '싼단지', jibun: '399', amount: '100,000' }));
