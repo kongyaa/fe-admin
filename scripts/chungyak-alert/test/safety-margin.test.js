@@ -609,7 +609,8 @@ test('a real client with a small cap degrades later notices without further call
 });
 
 test('restricted types are 대상 외 with empty margin before triggers, reading only model rows for the average price', async () => {
-  for (const name of ['고덕강일 3단지 토지임대부', '광교 자연앤 센트레빌 59㎡ 지분적립형', '하남교산 신혼희망타운']) {
+  // 신혼희망타운과 나눔형은 참고 마진을 계산한다(test/shared-gain.test.js). 여기서는 실거래를 보지 않는 유형만 본다.
+  for (const name of ['고덕강일 3단지 토지임대부', '광교 자연앤 센트레빌 59㎡ 지분적립형', '하남교산 토지임대부 나눔형']) {
     for (const flags of [{ priceCap: false, publicDistrict: false }, { priceCap: true, publicDistrict: true }]) {
       let models = 0;
       let lookups = 0;

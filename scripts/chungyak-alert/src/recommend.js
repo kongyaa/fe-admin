@@ -1,11 +1,14 @@
 // 공고마다 지원할 전형과 그 접수일을 추천한다. 외부 호출과 입출력이 없는 순수 함수만 둔다.
 // 소득, 자산, 세대주 요건은 보지 않는다. 청약통장(민영 예치금)과 특별공급 시점 요건은 v2 신청자 정보가 있을 때만 대략 본다.
 // 사용자가 공고문으로 확인해야 한다.
-import { restrictedType } from './market-estimate.js';
+import { hasLhSpecialWord } from './lh-detail-map.js';
+import { lhTypeClass } from './lh-scope.js';
+import { restrictedKeywords, restrictedType } from './market-estimate.js';
 
 export const SPECIAL_TRACKS = ['신생아', '신혼부부', '생애최초'];
 const CAPITAL_AREA = ['서울', '경기', '인천'];
 // 추천을 계산하는 공고 종류. 신청할 수 없는 공고를 가릴 때도 이 종류만 본다.
+// LH 분양 공고는 상세 일정이 있을 때만 따로 추천하고(lhRecommendable), 신청할 수 없는 공고로는 빼지 않는다.
 const RECOMMENDED_KINDS = ['apt', 'remainder', 'arbitrary'];
 // 행복도시(세종) 공고는 기타지역 1순위가 전국이라 어느 시도 거주자든 기타지역으로 신청할 수 있다.
 const NATIONWIDE_REGIONS = ['세종'];
@@ -350,7 +353,8 @@ function v1Text(candidate) {
 // v2 신청자 한 명의 추천 조각(이름표 제외)
 function segmentText(candidate, points) {
   const details = [];
-  if (candidate.kind === 'special') details.push(`${candidate.units}세대`, alsoGeneralText(candidate));
+  // LH 특별공급은 유형별 세대수를 몰라(units: null) 세대수를 적지 않는다.
+  if (candidate.kind === 'special') details.push(Number.isFinite(candidate.units) ? `${candidate.units}세대` : null, alsoGeneralText(candidate));
   if (candidate.kind === 'general') details.push(sameCityText(candidate));
   if (points) details.push(`가점 약 ${points.total}점${points.account === null ? '(통장 제외)' : ''}`);
   const shown = details.filter(Boolean);
@@ -450,6 +454,104 @@ export function chooseApplicant(results) {
 // 추천 전형 열의 짧은 이름. v1은 이름표가 없어 예전과 같다.
 export const recommendLabel = (label, track) => (label ? `${label} ${track}` : track);
 
+// ---------- LH 공공분양 ----------
+// LH 단계 이름은 src/lh-detail-map.js의 lhStageName이 공급 일정의 접수 대상 이름으로 만든다:
+// `특별공급 <이름>`, `1순위 <이름>`, `2순위 <이름>`, 무순위·잔여·추가는 이름 그대로다.
+// LH 자료에는 특별공급 유형별 세대수가 없어 세대수가 아니라 단계 이름으로 전형을 고른다.
+const LH_PENDING_STATES = ['failed', 'capped', 'supply_failed'];
+const LH_REMAINDER_WORDS = ['무순위', '잔여', '추가'];
+const LH_INCOME_CHECK = '소득·자산 기준 확인';
+const LH_SAVING_NOTE = '공공분양 일반공급은 납입 인정 금액 순';
+const squash = (value) => String(value ?? '').replace(/\s+/g, '');
+
+const isLhSale = (notice, config) => notice.kind === 'lh' && lhTypeClass(notice, config.lh ?? {}) === 'sale';
+
+// 추천을 계산하는 LH 공고: 분양 유형이고 상세·공급 조회가 성공해(lhDetailState ok) 단계가 있는 공고.
+// 나눔형, 신혼희망타운, 토지임대부도 제한 유형이지만 접수 단계는 같아 추천한다.
+export function lhRecommendable(notice, config) {
+  return isLhSale(notice, config) && notice.lhDetailState === 'ok' && Array.isArray(notice.stages) && notice.stages.length > 0;
+}
+
+// 이번 실행에 LH 상세·공급 조회가 실패했거나 상한에 걸린 분양 공고. 단계를 몰라 저장된 추천을 그대로 둔다(src/lotto.js).
+export function lhRecommendPending(notice, config) {
+  return isLhSale(notice, config) && LH_PENDING_STATES.includes(notice.lhDetailState);
+}
+
+// LH 단계 이름이 가리키는 신청자 특별공급 전형(SPECIAL_TRACKS 순서). 신생아 → 신생아, 신혼부부·예비신혼부부 → 신혼부부,
+// 생애최초 → 생애최초다. 다자녀, 노부모부양, 한부모가족, 기관추천, 청년 등은 신청자 전형이 아니라 빈 배열이다.
+export function lhStageTracks(name) {
+  const text = squash(name);
+  return SPECIAL_TRACKS.filter((track) => text.includes(track));
+}
+
+const isLhRemainderStage = (stage) => !/^(특별공급|1순위|2순위)/.test(stage.name) && LH_REMAINDER_WORDS.some((word) => squash(stage.name).includes(word));
+const openStages = (notice, today, match) => notice.stages.filter((stage) => stage.start && match(stage) && isOpen(stage, today));
+
+// 전형에 맞는 열린 특별공급 단계. 신혼희망타운은 1순위 단계라도 이름에 신혼부부가 있으면 신혼부부 단계로 본다.
+// 신혼부부 단계가 신혼부부와 예비신혼부부로 나뉘면 혼인하지 않은 세대(married: false)는 예비신혼부부, 그 밖은 신혼부부를 먼저 본다.
+function lhSpecialStage({ notice, track, household, today, newlywedTown }) {
+  const special = (stage) => stage.name.startsWith('특별공급') || (newlywedTown && stage.name.startsWith('1순위'));
+  const stages = openStages(notice, today, (stage) => special(stage) && lhStageTracks(stage.name).includes(track));
+  if (track !== '신혼부부') return stages[0] ?? null;
+  const engaged = household?.married === false;
+  return stages.find((stage) => squash(stage.name).includes('예비신혼부부') === engaged) ?? stages[0] ?? null;
+}
+
+// 열린 일반공급 1순위 단계. 특별공급 유형 단어가 있는 1순위(신혼희망타운의 `1순위 신혼부부` 등)는 그 유형만의 접수라 고르지 않는다.
+// 이름에 해당·기타 중 하나만 적혀 있으면 신청자의 거주 구분과 어긋나는 단계는 고르지 않는다. 둘 다 있으면(`해당지역·기타지역`) 함께 받는 단계다.
+function lhRank1Stage({ notice, applicant, config, today }) {
+  const local = residenceCategory(notice, applicant, config.recommendation) === '해당지역';
+  const avoid = local ? '기타' : '해당';
+  const mismatched = (text) => text.includes(avoid) && !(text.includes('해당') && text.includes('기타'));
+  const general = (stage) => stage.name.startsWith('1순위') && !hasLhSpecialWord(stage.name) && !mismatched(squash(stage.name));
+  return openStages(notice, today, general)[0] ?? null;
+}
+
+// 무순위·잔여·추가 단계의 짧은 이름. 무순위는 청약홈처럼 `무순위`, 잔여·추가는 단계 이름 그대로다(`잔여세대`, `추가모집`).
+const lhRemainderLabel = (stage) => (squash(stage.name).includes('무순위') ? REMAINDER_LABELS.무순위 : stage.name);
+
+// 신청자 한 명의 LH 후보(특별공급, 1순위, 무순위 순). 없으면 null이다. 모양은 applicantCandidate와 같고 units는 null이다.
+// 특별공급은 신청자 전형 중 열린 단계가 있는 것을 신생아, 신혼부부, 생애최초 순으로 고른다(같은 날 특별공급 순서와 같다).
+// 신혼희망타운은 신생아나 신혼부부 전형이 있으면 신혼부부 단계로 추천한다. checkTrack은 시점 요건 확인을 가져올 전형이다.
+// 신혼부부 전형이 시점 요건으로 빠졌으면(dropped) 신생아 전형으로 신혼부부 단계를 고르지 않는다.
+function lhApplicantCandidate({ notice, applicant, household, tracks, dropped, config, today }) {
+  if (!eligibleRegion(notice, applicant)) return null;
+  const newlywedTown = restrictedKeywords(notice, config.market).includes('신혼희망');
+  const sources = new Map(tracks.map((track) => [track, track]));
+  if (newlywedTown && !sources.has('신혼부부') && sources.has('신생아') && !dropped.includes('신혼부부')) sources.set('신혼부부', '신생아');
+  const rank1 = lhRank1Stage({ notice, applicant, config, today });
+  for (const track of SPECIAL_TRACKS) {
+    if (!sources.has(track)) continue;
+    const stage = lhSpecialStage({ notice, track, household, today, newlywedTown });
+    if (stage) {
+      // 같은 단계를 `…도 가능`으로 다시 적지 않는다.
+      const general = rank1 && rank1 !== stage ? { track: rank1.name, stage: rank1 } : null;
+      return { kind: 'special', specialTrack: track, checkTrack: sources.get(track), track: specialLabel(track), name: `${track} 특별공급`, date: stage.start, end: stage.end ?? null, units: null, general };
+    }
+  }
+  if (rank1) return { kind: 'general', track: GENERAL_LABEL, name: rank1.name, date: rank1.start, end: rank1.end ?? null, category: null };
+  const remainder = openStages(notice, today, isLhRemainderStage)[0];
+  if (remainder) {
+    const label = lhRemainderLabel(remainder);
+    return { kind: 'remainder', track: label, name: label, date: remainder.start, end: remainder.end ?? null };
+  }
+  return null;
+}
+
+// LH 신청자 한 명의 결과. applicantResult와 같은 모양이다. 통장·예치금은 보지 않는다(LH 공고에는 자료가 없다).
+function lhApplicantResult({ notice, applicant, household, config, today, index }) {
+  const trackChecks = new Map(applicant.specialTracks.map((track) => [track, specialTrackCheck(track, { applicant, household, notice, today })]));
+  const tracks = applicant.specialTracks.filter((track) => trackChecks.get(track).valid);
+  const dropped = applicant.specialTracks.filter((track) => !trackChecks.get(track).valid);
+  const candidate = lhApplicantCandidate({ notice, applicant, household, tracks, dropped, config, today });
+  if (!candidate) return null;
+  const checks = candidate.kind === 'special' ? trackChecks.get(candidate.checkTrack).notes : [];
+  return { applicant, index, candidate, remarks: [], checks: [...new Set(checks)] };
+}
+
+// LH 추천 문구 끝에 붙일 안내. 소득·자산 기준은 늘 적고, 1순위를 추천하면 납입 인정 금액 순을 적는다.
+const lhNotes = (candidates) => [LH_INCOME_CHECK, ...(candidates.some((candidate) => candidate.kind === 'general') ? [LH_SAVING_NOTE] : [])];
+
 // 공고 하나의 추천. 결과는 { recommendation, text }이다.
 // recommendation은 { track, date, end, text } 또는 null이고, text는 판별 근거에 붙일 줄(없으면 null)이다.
 // v2에서 통장·예치금 때문에 아무도 신청할 수 없으면 recommendation은 null이고 text에 그 까닭을 적는다.
@@ -457,18 +559,21 @@ export function recommendForProfile({ notice, models, profile, config, today }) 
   const none = { recommendation: null, text: null };
   const target = toProfile(profile);
   if (!target) return none;
-  if (!RECOMMENDED_KINDS.includes(notice.kind)) return none;
-  if (restrictedType(notice, config.market)) return none;
+  const lh = lhRecommendable(notice, config);
+  if (!RECOMMENDED_KINDS.includes(notice.kind) && !lh) return none;
+  if (!lh && restrictedType(notice, config.market)) return none;
   const at = noticeBaseDate(notice, today);
+  const resultOf = lh ? lhApplicantResult : applicantResult;
   const results = target.applicants
-    .map((applicant, index) => applicantResult({ notice, models, applicant, household: target.household, config, today, index }))
+    .map((applicant, index) => resultOf({ notice, models, applicant, household: target.household, config, today, index }))
     .filter(Boolean);
   const able = results.filter((result) => result.candidate);
   const chosen = chooseApplicant(able);
 
   if (target.version === 1) {
     if (!chosen) return none;
-    const text = v1Text(chosen.candidate);
+    // LH는 v2와 같은 조각에 LH 안내를 붙인다. 청약홈 공고는 예전과 글자까지 같다.
+    const text = lh ? [`추천: ${segmentText(chosen.candidate, null)}`, ...lhNotes([chosen.candidate])].join('; ') : v1Text(chosen.candidate);
     return { recommendation: { track: chosen.candidate.track, date: chosen.candidate.date, end: chosen.candidate.end, text }, text };
   }
 
@@ -485,6 +590,7 @@ export function recommendForProfile({ notice, models, profile, config, today }) 
   const parts = [chosen ? `추천: ${joinSegments(segments)}` : '추천 없음', ...remarks];
   if (checks.length > 0) parts.push(`확인: ${checks.join(', ')}`);
   if (chosen && notice.kind === 'apt') parts.push(CHECKS);
+  if (chosen && lh) parts.push(...lhNotes(able.map((result) => result.candidate)));
   if (segments.some((item) => item.points)) parts.push('가점은 추정');
   const text = parts.join('; ');
   if (!chosen) return { recommendation: null, text };

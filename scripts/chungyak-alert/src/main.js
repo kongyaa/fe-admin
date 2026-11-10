@@ -478,7 +478,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     lhDetailCounts = enriched.counts;
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0 };
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
@@ -531,6 +531,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       }
       // 시세로 로또·아님을 정한 LH 공고 수. 대상 외와 판별 불가(조회 실패, 추정 없음)는 세지 않는다. 이전 판별 유지 전 값으로 센다.
       if (isLhItem(notice) && [STATUS.LOTTO, STATUS.NOT].includes(evaluation.status)) counts.lh_evaluated += 1;
+      // 추천한 LH 공고 수와 참고 마진(차익 공유 유형)을 적은 공고 수. 건수만 남긴다.
+      if (isLhItem(notice) && evaluation.recommendation) counts.lh_recommended += 1;
+      if (evaluation.referenceMargin) counts.reference_margin += 1;
       // dry-run도 읽어 둔 행의 이전 상태로 같은 보호를 적용해 일반 실행과 건수가 같게 한다.
       evaluation = keepPreviousLotto(evaluation, (previous ?? dryRunRows?.get(notice.key))?.lotto);
       counts.evaluated += 1;
