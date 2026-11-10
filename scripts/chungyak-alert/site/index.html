@@ -14,6 +14,7 @@
 </head>
 <body>
 <div class="wrap">
+  <a class="skip" href="#list-title">목록으로 건너뛰기</a>
   <header class="top">
     <div class="top-row">
       <h1>분양 예정 지도</h1>
@@ -25,7 +26,11 @@
     </div>
     <p class="sub">서울 재개발·재건축과 경기 공공주택지구의 사업 단계를 지역별로 보고, 청약이 언제쯤 나올지 미리 가늠합니다.</p>
     <p class="asof" id="asof">기준일을 불러오는 중…</p>
-    <p class="disclaimer">예상 청약 시기는 현재 단계와 인가일로 계산한 <b>대략적인 규칙 기반 추정</b>입니다. 실제 일정은 사업 사정에 따라 크게 달라질 수 있으니 청약 공고와 공식 발표를 꼭 확인하세요. <a href="#sources">데이터 출처</a></p>
+    <!-- 기본은 펼침(open). 휴대폰에서는 app.js initFolds 가 한 줄로 접고, 넓은 화면에서는 CSS 가 접기 제목을 숨긴다 -->
+    <details class="disclaimer fold auto" id="disclaimer" open>
+      <summary>예상 청약 시기는 규칙 기반 추정입니다. <span class="fold-more">자세히</span></summary>
+      <p>예상 청약 시기는 현재 단계와 인가일로 계산한 <b>대략적인 규칙 기반 추정</b>입니다. 실제 일정은 사업 사정에 따라 크게 달라질 수 있으니 청약 공고와 공식 발표를 꼭 확인하세요. <a href="#sources">데이터 출처</a></p>
+    </details>
   </header>
 
   <div id="status" class="status" role="status" aria-live="polite">사업 목록을 불러오는 중…</div>
@@ -33,17 +38,19 @@
   <main id="app" class="app" hidden>
     <p id="sample-banner" class="sample-banner" hidden>예시 데이터로 화면을 보여주는 중입니다. 이름에 “예시”가 붙은 구역과 지구 일정은 실제가 아닙니다.</p>
 
+    <details class="filters-box fold auto" id="filters-box" open>
+    <summary id="filters-summary">필터</summary>
     <div class="filters" role="group" aria-label="필터">
       <div class="seg" role="group" aria-label="지역">
         <button type="button" data-filter="area" data-value="all" aria-pressed="true">전체</button>
         <button type="button" data-filter="area" data-value="서울" aria-pressed="false">서울</button>
-        <button type="button" data-filter="area" data-value="경기" aria-pressed="false">경기 공공주택지구</button>
+        <button type="button" data-filter="area" data-value="경기" aria-pressed="false">경기</button>
       </div>
-      <div class="seg" role="group" aria-label="유형">
+      <div class="seg" role="group" aria-label="유형" id="kind-group">
+        <span class="visually-hidden" id="kind-locked-note">경기는 공공주택지구만 있어 유형을 고를 수 없습니다.</span>
         <button type="button" data-filter="kind" data-value="all" aria-pressed="true">전체</button>
         <button type="button" data-filter="kind" data-value="재개발" aria-pressed="false">재개발</button>
         <button type="button" data-filter="kind" data-value="재건축" aria-pressed="false">재건축</button>
-        <button type="button" data-filter="kind" data-value="공공주택지구" aria-pressed="false">공공주택지구</button>
       </div>
       <div class="seg" role="group" aria-label="예상 청약 시기">
         <button type="button" data-filter="when" data-value="all" aria-pressed="true">모든 시기</button>
@@ -56,18 +63,19 @@
       </label>
       <label class="field field-search">
         <span>검색</span>
-        <input type="search" id="f-q" placeholder="구역명·주소" autocomplete="off" spellcheck="false">
+        <input type="search" id="f-q" placeholder="구역명·구·동" autocomplete="off" spellcheck="false">
       </label>
       <button type="button" class="btn ghost" id="f-reset">필터 초기화</button>
     </div>
+    </details>
 
     <div class="grid">
       <div class="panel" id="browse">
-        <div class="panel-title"><h2 class="h3">서울 25개 구</h2><small>1년 안 = 공고 나옴 포함 · 누르면 그 구만 보기</small></div>
+        <div class="panel-title"><h2 class="h3">서울 25개 구</h2><small>큰 숫자는 1년 안 예상(공고 중 포함), 작은 숫자는 전체 · 누르면 그 구만</small></div>
         <div class="tiles" id="tiles"></div>
-        <div class="legend" aria-hidden="true"><span class="l-hot">1년 안 3곳 이상</span><span class="l-has">1년 안 1~2곳 또는 3년 안</span><span class="l-none">없음</span></div>
+        <div class="legend" aria-hidden="true"><span class="l-hot">1년 안 3곳 이상</span><span class="l-has">1년 안 1~2곳 또는 3년 안</span><span class="l-none">1년·3년 안 없음</span></div>
 
-        <div class="panel-title"><h2 class="h3">경기 공공주택지구</h2><small>직접 관리하는 목록</small></div>
+        <div class="panel-title" id="towns-title"><h2 class="h3">경기 공공주택지구</h2><small>보도·지자체 자료로 정리</small></div>
         <div class="towns" id="towns"></div>
 
         <div class="panel-title list-head">
@@ -81,8 +89,8 @@
       <section class="panel detail" id="detail" aria-label="사업 상세"></section>
     </div>
 
-    <section class="panel" aria-labelledby="gantt-title">
-      <div class="panel-title"><h2 class="h3" id="gantt-title">향후 36개월 청약 예상</h2><small>빗금 = 추정 범위, 초록 = 공고 나옴, 빨간 선 = 오늘</small></div>
+    <section class="panel" id="gantt-panel" aria-labelledby="gantt-title">
+      <div class="panel-title"><h2 class="h3" id="gantt-title">향후 36개월 청약 예상</h2><div class="legend" aria-hidden="true"><span class="l-est">추정 범위</span><span class="l-live">공고 중</span><span class="l-now">오늘</span></div></div>
       <div class="gantt" tabindex="0" aria-label="36개월 타임라인, 가로로 스크롤"><div class="gantt-inner" id="gantt"></div></div>
       <p class="note" id="gantt-note"></p>
     </section>

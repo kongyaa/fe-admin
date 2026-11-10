@@ -635,3 +635,175 @@ test('block labels: total, type, date, timeline and plan', () => {
   assert.equal(app.blockPlanLabel({ expected: '2027-09', source: null }, '2026-11'), '2027-09');
   assert.equal(app.blockPlanLabel(null, '2026-11'), null);
 });
+
+// --- 화면 다듬기: 검색·타일 숫자·필터·빈 결과·주소 해시·예상 범위 문구 ---
+
+test('search covers 구 names (full and short) and subKind, not only name and address', () => {
+  const p = { name: '개포주공5단지', district: '강남구', subKind: '아파트지구재건축', address: '개포동 187', roadAddress: null, ...win('2027-01') };
+  assert.equal(app.searchText(p), '개포주공5단지개포동187강남구강남아파트지구재건축');
+  for (const q of ['강남구', '강남', '강남 구', '개포', '아파트지구']) assert.equal(matchesFilters(p, { ...ALL, q }, today), true, q);
+  assert.equal(matchesFilters(p, { ...ALL, q: '서초구' }, today), false);
+  // 미리 계산한 검색 글자를 넘기면 그것으로 찾는다
+  assert.equal(matchesFilters(p, { ...ALL, q: '강남' }, today, undefined, app.searchText(p)), true);
+  assert.equal(matchesFilters(p, { ...ALL, q: '강남' }, today, undefined, 'other'), false);
+  assert.equal(app.searchText({}), '');
+  assert.equal(app.searchText(null), '');
+});
+
+test('tileCount: the big number is the 1년 안 count (same question as the colour), total is small', () => {
+  const stats = tileStats([
+    { region: '서울', district: '중구', b: 'soon' }, { region: '서울', district: '중구', b: 'live' },
+    { region: '서울', district: '중구', b: 'far' }, { region: '서울', district: '중구', b: 'mid' },
+  ], (p) => p.b);
+  assert.deepEqual(app.tileCount(stats.get('중구')), { main: 2, total: 4 });
+  assert.equal(tileClass(stats.get('중구')), 'has'); // 큰 숫자 2 → 1~2곳 색
+  assert.deepEqual(app.tileCount({ n: 36, soon: 12, mid: 3 }), { main: 12, total: 36 });
+  assert.equal(tileClass({ n: 36, soon: 12, mid: 3 }), 'hot');
+  assert.deepEqual(app.tileCount(undefined), { main: 0, total: 0 });
+});
+
+test('nextFilters: 지역 경기 replaces the duplicate 유형 공공주택지구 and locks 유형', () => {
+  assert.deepEqual(app.DEFAULT_FILTERS, ALL);
+  const gyeonggi = app.nextFilters({ ...ALL, kind: '재개발', district: '종로구' }, 'area', '경기');
+  assert.deepEqual(gyeonggi, { ...ALL, area: '경기' }); // 유형과 서울 구 선택은 풀린다
+  assert.equal(app.kindLocked(gyeonggi), true);
+  assert.equal(app.kindLocked({ ...ALL, area: '서울' }), false);
+  assert.deepEqual(app.nextFilters(gyeonggi, 'kind', '재건축'), gyeonggi); // 잠겨 있으면 그대로
+  assert.deepEqual(app.nextFilters(gyeonggi, 'district', '강남구'), { ...ALL, district: '강남구' }); // 서울 구를 고르면 지역 전체로
+  assert.deepEqual(app.nextFilters({ ...ALL, district: '강남구' }, 'district', null), ALL);
+  assert.deepEqual(app.nextFilters(ALL, 'q', '개포'), { ...ALL, q: '개포' });
+  assert.deepEqual(app.nextFilters(undefined, 'when', '12'), { ...ALL, when: '12' });
+  // 원래 필터는 바꾸지 않는다
+  const before = { ...ALL };
+  app.nextFilters(before, 'area', '경기');
+  assert.deepEqual(before, ALL);
+
+  // 합친 뒤에도 결과 수가 같다: 예전 '유형 공공주택지구'와 '지역 경기 공공주택지구'는 같은 사업만 골랐다
+  const list = [
+    { region: '서울', kind: '재개발', district: '종로구', stage: '이주', ...win('2027-01') },
+    { region: '서울', kind: '재건축', district: '강남구', stage: '착공', ...win('2028-01') },
+    { region: '경기', kind: '공공주택지구', district: '하남시', stage: '블록별 분양', ...win('2026-12') },
+    { region: '경기', kind: '공공주택지구', district: '구리시', stage: '지구지정', ...win('2029-01') },
+  ];
+  const ids = (f) => list.filter((p) => matchesFilters(p, f, today)).map((p) => p.district);
+  for (const when of ['all', '12', '36']) {
+    assert.deepEqual(ids({ ...ALL, when, area: '경기' }), ids({ ...ALL, when, kind: '공공주택지구' }), when);
+    assert.deepEqual(ids({ ...ALL, when, area: '경기' }), ids({ ...ALL, when, area: '경기', kind: '공공주택지구' }), when);
+  }
+});
+
+test('filter summary counts only the controls inside the 필터 box', () => {
+  assert.equal(app.activeFilterCount(ALL), 0);
+  assert.equal(app.filterSummary(ALL), '필터');
+  assert.equal(app.activeFilterCount({ ...ALL, district: '강남구' }), 0); // 구는 지도에서 고른다
+  const many = { ...ALL, area: '서울', kind: '재건축', when: '12', stage: 'seoul:이주', q: '개포' };
+  assert.equal(app.activeFilterCount(many), 5);
+  assert.equal(app.filterSummary({ ...ALL, when: '36', q: '개포' }), '필터 (2개 적용)');
+  assert.equal(app.filterSummary(undefined), '필터');
+});
+
+test('emptyState: one message with the active conditions and the right way out', () => {
+  assert.deepEqual(app.emptyState({ ...ALL, q: '강남구' }), {
+    title: '‘강남구’에 맞는 사업이 없습니다.', conditions: ['검색 ‘강남구’'], clearQuery: true, reset: false,
+  });
+  assert.deepEqual(app.emptyState({ ...ALL, area: '경기', when: '12', stage: 'town:준공', district: null }), {
+    title: '지금 조건에 맞는 사업이 없습니다.', conditions: ['경기 공공주택지구', '1년 안', '단계 준공'], clearQuery: false, reset: true,
+  });
+  const both = app.emptyState({ ...ALL, area: '서울', kind: '재개발', when: '36', district: '중구', q: 'x' });
+  assert.deepEqual(both.conditions, ['서울', '재개발', '3년 안', '중구', '검색 ‘x’']);
+  assert.deepEqual([both.clearQuery, both.reset], [true, true]);
+  assert.deepEqual(app.emptyState(ALL), { title: '표시할 사업이 없습니다.', conditions: [], clearQuery: false, reset: false });
+});
+
+test('parseHash / hashFor: detail and 구 selection round-trip; old #p= links still work', () => {
+  assert.deepEqual(app.parseHash('#p=seoul-1441'), { id: 'seoul-1441', district: null });
+  assert.deepEqual(app.parseHash('#gu=%EA%B0%95%EB%82%A8%EA%B5%AC'), { id: null, district: '강남구' });
+  assert.deepEqual(app.parseHash('#gu=%EA%B0%95%EB%82%A8%EA%B5%AC&p=seoul-1012'), { id: 'seoul-1012', district: '강남구' });
+  assert.deepEqual(app.parseHash('#p=%E0&gu=%EC%A4%91%EA%B5%AC'), { id: null, district: '중구' }); // 깨진 값만 버린다
+  assert.deepEqual(app.parseHash('#sources'), { id: null, district: null });
+  assert.deepEqual(app.parseHash('#=x&p='), { id: null, district: null });
+  assert.deepEqual(app.parseHash(undefined), { id: null, district: null });
+  for (const s of [{ id: 'seoul-1441', district: null }, { id: null, district: '강남구' }, { id: 'a&b=c', district: '중구' }, { id: '예시', district: null }]) {
+    assert.deepEqual(app.parseHash(app.hashFor(s)), s);
+  }
+  assert.equal(app.hashFor({ id: 'seoul-1441' }), '#p=seoul-1441');
+  assert.equal(app.hashFor({ district: '중구', id: 'x' }), '#gu=%EC%A4%91%EA%B5%AC&p=x');
+  assert.equal(app.hashFor({}), '');
+  assert.equal(app.hashFor(), '');
+  // 화면 상태 해시와 문서 안 이동(#sources, #list-title)을 가른다(뒤로 가기 처리)
+  assert.equal(app.isStateHash(''), true);
+  assert.equal(app.isStateHash('#'), true);
+  assert.equal(app.isStateHash('#p=x'), true);
+  assert.equal(app.isStateHash('#gu=%EC%A4%91%EA%B5%AC'), true);
+  assert.equal(app.isStateHash('#sources'), false);
+  assert.equal(app.isStateHash('#list-title'), false);
+  assert.equal(idFromHash('#gu=%EC%A4%91%EA%B5%AC&p=seoul-1'), 'seoul-1');
+});
+
+test('windowRangeLabel: a 1년 안 range that already started reads 지금~end (presentation only)', () => {
+  const started = win('2024-11', '2026-11');
+  assert.equal(bucketOf(started, today), 'soon');
+  assert.equal(app.windowRangeLabel(started, today), '지금~2026-11');
+  assert.equal(windowLabel(started, today), '지금~2026-11');
+  assert.equal(app.windowRangeLabel(win('2026-04', '2027-04'), today), '지금~2027-04');
+  assert.deepEqual(started.window, { from: '2024-11', to: '2026-11' }); // 자료는 그대로
+  assert.equal(windowRange(started), '2024-11~2026-11');
+  // 이번 달 시작·앞으로의 범위는 그대로
+  assert.equal(app.windowRangeLabel(win('2026-11', '2027-11'), today), '2026-11~2027-11');
+  assert.equal(app.windowRangeLabel(win('2027-03'), today), '2027-03');
+  // 지난 범위(예상 지남)와 공고 중은 원래 범위
+  assert.equal(windowLabel(win('2024-01', '2025-01'), today), '2024-01~2025-01 (지남)');
+  assert.equal(app.windowRangeLabel({ ...win('2026-04', '2027-04'), live: true }, today), '2026-04~2027-04');
+  assert.equal(app.windowRangeLabel({ window: { from: null, to: null } }, today), null);
+});
+
+test('live projects say 공고 중 (open notice, may be before 접수 starts; block statuses keep the pipeline names); a chip colour never means two different states', () => {
+  assert.equal(BUCKET_INFO.live.label, '공고 중');
+  assert.equal(windowLabel({ live: true, window: null }, today), '공고 중');
+  const projectClass = new Map(Object.values(BUCKET_INFO).map((info) => [info.cls, info.label]));
+  // 사업 칩과 같은 클래스를 쓰는 블록 상태는 뜻이 같은 것뿐
+  const shared = Object.entries(app.BLOCK_STATUS_CLASS).filter(([, cls]) => projectClass.has(cls)).map(([status, cls]) => [status, projectClass.get(cls)]);
+  assert.deepEqual(shared, [['접수 중', '공고 중'], ['본청약 공고', '공고 있었음'], ['예정 지남(보도)', '예상 지남'], ['미정', '3년 뒤·미정']]);
+  const blockClasses = Object.values(app.BLOCK_STATUS_CLASS);
+  assert.equal(new Set(blockClasses).size, blockClasses.length);
+  const css = readFileSync(new URL('../site/style.css', import.meta.url), 'utf8');
+  for (const cls of blockClasses) assert.ok(css.includes(`.${cls} {`), cls);
+});
+
+test('index.html: merged 지역/유형 filters, collapsible filter box, skip link', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.equal(html.includes('data-filter="kind" data-value="공공주택지구"'), false);
+  assert.ok(html.includes('data-filter="area" data-value="경기" aria-pressed="false">경기</button>'));
+  for (const id of ['filters-box', 'filters-summary', 'kind-group', 'disclaimer', 'towns-title', 'gantt-panel']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('href="#list-title"'));
+  assert.ok(html.includes('placeholder="구역명·구·동"'));
+  // 잠긴 유형 버튼의 이유(aria-describedby 대상)
+  assert.ok(html.includes('id="kind-locked-note"'));
+});
+
+test('auto folds: every <details class="fold auto"> ships open and is the initFolds list; other folds keep their summary on wide screens', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  const autos = [...html.matchAll(/<details\b[^>]*>/g)].map((m) => m[0]).filter((tag) => /class="[^"]*\bfold\b[^"]*\bauto\b/.test(tag));
+  assert.deepEqual(autos.map((tag) => /id="([^"]+)"/.exec(tag)?.[1]).sort(), [...app.AUTO_FOLD_IDS].sort());
+  // 스크립트가 없어도 넓은 화면에서 내용이 보이게 기본은 펼침
+  for (const tag of autos) assert.match(tag, /\sopen[\s>]/, tag);
+  // 넓은 화면에서 접기 제목을 숨기는 규칙은 auto 에만(블록 표 설명처럼 닫혀 있는 보통 접기는 제목으로 열 수 있어야 한다)
+  const css = readFileSync(new URL('../site/style.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.fold.auto > summary { display: none; }'));
+  assert.equal(/(^|[\s,}])\.fold > summary \{[^}]*display: none/.test(css), false);
+  const js = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("h('details', { class: 'fold note' }"), 'block table note is a normal fold');
+});
+
+test('edge cases: year boundary range, duplicate hash keys, district-only empty state', () => {
+  // 시작 달이 지난해 12월, 오늘이 1월이어도 이미 시작된 범위
+  assert.equal(app.windowRangeLabel(win('2025-12', '2026-06'), '2026-01'), '지금~2026-06');
+  assert.equal(app.windowRangeLabel(win('2026-01', '2026-06'), '2026-01'), '2026-01~2026-06');
+  // 같은 키가 두 번이면 뒤의 값
+  assert.deepEqual(app.parseHash('#p=a&p=b'), { id: 'b', district: null });
+  assert.deepEqual(app.parseHash('#gu=%EC%A4%91%EA%B5%AC&gu=%EA%B0%95%EB%82%A8%EA%B5%AC&p=x'), { id: 'x', district: '강남구' });
+  // 구만 골랐는데 결과가 없으면 초기화 버튼(구 선택도 푼다)
+  assert.deepEqual(app.emptyState({ ...ALL, district: '중구' }), {
+    title: '지금 조건에 맞는 사업이 없습니다.', conditions: ['중구'], clearQuery: false, reset: true,
+  });
+});
