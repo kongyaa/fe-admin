@@ -17,6 +17,7 @@ import { DATASET_URL, SEOUL_STAGES, collectSeoul, parseSeoulWorkbook } from './s
 export const DEFAULT_NEWTOWNS = fileURLToPath(new URL('../../data/newtowns.yaml', import.meta.url));
 // 공고 연결은 최근 3년. 공공주택지구는 블록 공고 간격이 1년을 넘기도 해서(하남교산 A2 2025-03) 1년으로는 빠진다.
 // 서울 사업에 이어진 오래된 공고는 현재 단계 날짜 뒤의 공고일 때만 announced로 본다(markAnnounced).
+// 사업시행인가 전 서울 사업에는 공고를 잇지 않는다(canLinkNotices).
 export const NOTICE_LOOKBACK_DAYS = 1095;
 
 function publicSources(sources) {
@@ -99,6 +100,7 @@ export function checkSeoulValues({ projects, skipped = {} }) {
 // 규칙·보도 기간을 그대로 둔다. 준공(done)도 그대로 둔다.
 // 3년 조회라 같은 지번의 예전 사업 공고가 이어질 수 있다. 단계가 이주·착공·일반분양이거나, 가장 늦은 공고일이
 // 현재 단계 날짜와 같거나 뒤일 때만 announced로 본다. 아니면 공고는 목록에 두고 기간·상태는 그대로다.
+// 사업시행인가 전 서울 사업은 공고 연결 단계에서 공고가 붙지 않아(canLinkNotices) 여기 오지 않는다.
 export function markAnnounced(project) {
   const notices = project.notices ?? [];
   if (project.region !== '서울' || project.live || notices.length === 0 || project.windowStatus === 'done') return project;

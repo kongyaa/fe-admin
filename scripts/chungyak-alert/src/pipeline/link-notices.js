@@ -1,4 +1,5 @@
 import { safeHttpUrl } from '../util.js';
+import { SEOUL_STAGES } from './seoul-redevelop.js';
 
 // 청약홈 공고를 지도 사업에 잇는다. 같은 구·시가 먼저 맞아야 하고, 그다음 지번 또는 이름으로 본다.
 
@@ -78,7 +79,15 @@ export function noticeSummary(notice) {
 const newestFirst = (a, b) => String(b.announceDate ?? '').localeCompare(String(a.announceDate ?? ''))
   || String(a.key).localeCompare(String(b.key));
 
-// linked: 공고가 하나 이상 이어진 사업 수
+// 서울 사업은 사업시행인가 전(구역지정·추진위·조합설립·건축심의)이면 자기 분양 공고가 있을 수 없다.
+// 이때 맞는 공고는 같은 지번·구역명의 이웃 단지 공고라서 아예 잇지 않는다. 단계를 모르면 잇는다.
+export function canLinkNotices(project) {
+  if (project.region !== '서울') return true;
+  const index = SEOUL_STAGES.indexOf(project.stage);
+  return index < 0 || index >= SEOUL_STAGES.indexOf('사업시행인가');
+}
+
+// linked: 공고가 하나 이상 이어진 사업 수(사업시행인가 전 서울 사업은 세지 않음)
 export function linkNotices(projects, notices, today) {
   // 같은 공고가 여러 번 오면 처음 것만 쓴다.
   const byKey = new Map();
@@ -86,6 +95,7 @@ export function linkNotices(projects, notices, today) {
   const unique = [...byKey.values()];
   let linked = 0;
   const result = projects.map((project) => {
+    if (!canLinkNotices(project)) return { ...project, notices: [], live: false };
     const matched = unique.filter((notice) => matchesProject(project, notice));
     if (matched.length === 0) return project;
     linked += 1;

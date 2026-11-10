@@ -7,6 +7,7 @@ import {
   MAX_VALUE_SKIP_RATIO, NOTICE_LOOKBACK_DAYS, buildMap, checkSeoulValues, markAnnounced, parseArgs, run, summaryLines,
 } from '../src/pipeline/build-map.js';
 import { SEOUL_STAGES, DATASET_URL, DOWNLOAD_URL } from '../src/pipeline/seoul-redevelop.js';
+import { linkNotices } from '../src/pipeline/link-notices.js';
 import { TOWN_STAGES } from '../src/pipeline/newtowns.js';
 import { DATA_ROWS, LISTING_HTML, UNKNOWN_STAGE_ROW, seoulFixture } from './map-fixtures.js';
 
@@ -284,6 +285,41 @@ test('markAnnounced: before 이주, only a notice on or after the current stage 
   for (const stage of ['이주', '착공', '일반분양']) {
     assert.equal(markAnnounced({ ...base, stage, stageDates: { [stage]: '2026-06-01' }, notices: old.notices }).windowStatus, 'announced', stage);
   }
+});
+
+test('linking then markAnnounced: early Seoul stages get nothing, 관리처분인가 needs a newer notice, 착공 is unchanged', () => {
+  const project = (stage, stageDate) => ({
+    id: `seoul-${stage}`, region: '서울', district: '성북구', name: '하월곡1', address: '하월곡동88-1', stage,
+    stageDates: { [stage]: stageDate }, window: { from: '2028-01', to: '2030-12' },
+    windowStatus: 'estimated', windowBasis: `${stage} 뒤`, notices: [], live: false,
+  });
+  const notices = [{
+    key: 'wolgok', name: '브라운스톤 월곡 센트럴', region: '서울', address: '서울특별시 성북구 하월곡동 88-1',
+    announceDate: '2026-03-02', overallEnd: '2026-03-20', url: 'https://www.applyhome.co.kr/notice/1',
+  }];
+  const pipeline = (input) => markAnnounced(linkNotices([input], notices, today).projects[0]);
+
+  // 추진위: 같은 지번 공고가 맞아도 잇지 않고 기간·상태는 그대로
+  const early = pipeline(project('추진위', '2024-05-01'));
+  assert.deepEqual(early.notices, []);
+  assert.equal(early.live, false);
+  assert.equal(early.windowStatus, 'estimated');
+  assert.equal(early.windowBasis, '추진위 뒤');
+
+  // 관리처분인가: 단계 날짜 뒤의 공고는 잇고 announced
+  const approved = pipeline(project('관리처분인가', '2025-09-01'));
+  assert.deepEqual(approved.notices.map((notice) => notice.key), ['wolgok']);
+  assert.equal(approved.windowStatus, 'announced');
+  assert.equal(approved.windowBasis, '청약홈 공고가 이미 있었습니다(2026-03-02)');
+  // 단계 날짜보다 이른 공고는 잇기만 하고 announced는 아니다
+  const stale = pipeline(project('관리처분인가', '2026-06-01'));
+  assert.equal(stale.notices.length, 1);
+  assert.equal(stale.windowStatus, 'estimated');
+
+  // 착공: 날짜와 상관없이 잇고 announced(전과 같음)
+  const started = pipeline(project('착공', '2026-06-01'));
+  assert.deepEqual(started.notices.map((notice) => notice.key), ['wolgok']);
+  assert.equal(started.windowStatus, 'announced');
 });
 
 test('notices are looked up for the last 3 years; an old notice before the Seoul stage date is not announced', async () => {
