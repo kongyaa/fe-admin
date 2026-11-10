@@ -453,7 +453,12 @@ test('windowFactLabel and windowPrefix: 블록별 분양 towns say 다음 블록
 });
 
 test('blockKey matches the pipeline; nameHasBlock needs the whole block name', () => {
-  for (const value of ['A-1', 'a1BL', 'A-2 블록', 'S2', 'B-1', '', null]) assert.equal(app.blockKey(value), pipeline.blockKey(value), String(value));
+  for (const value of ['A-1', 'a1BL', 'A-2 블록', 'S2', 'B-1', 'A2-1', 'A-2-1BL', 'A21', '', null]) assert.equal(app.blockKey(value), pipeline.blockKey(value), String(value));
+  assert.notEqual(app.blockKey('A2-1'), app.blockKey('A21'));
+  assert.equal(app.nameHasBlock('하남교산 A-2-1BL', 'A2-1'), true);
+  assert.equal(app.nameHasBlock('하남교산 A21블록', 'A2-1'), false);
+  assert.equal(app.nameHasBlock('하남교산 A2-1BL', 'A2'), false);
+  assert.equal(app.nameHasBlock('하남교산 A2-1BL', 'A21'), false);
   assert.equal(app.nameHasBlock('교산 푸르지오 더 퍼스트(하남교산 A-2BL)', 'A2'), true);
   assert.equal(app.nameHasBlock('하남교산 A2블록 공공분양', 'A-2'), true);
   assert.equal(app.nameHasBlock('하남교산 A20블록', 'A2'), false);
@@ -511,6 +516,25 @@ test('latestSale skips rentals and 사전청약, and counts linked notices', () 
   assert.equal(app.latestSale({ history: [RENT] }), null);
   assert.equal(app.latestSale({ history: [A2], notices: [notice('구리갈매역세권 신안인스빌 디센트', '2026-10-30')] }), '2026-10');
   assert.equal(app.latestSale({}), null);
+});
+
+test('linked rental and non-apartment notices show in the history but are not the latest sale', () => {
+  const notices = [
+    notice('갈매역세권 공공지원민간임대', '2026-10-20', { typeLabel: '공공지원민간임대' }),
+    notice('갈매역세권 민간임대', '2026-10-21', { typeLabel: '민간임대' }),
+    notice('갈매역세권 오피스텔', '2026-10-22', { typeLabel: '오피스텔' }),
+    notice('갈매역세권 도시형', '2026-10-23', { typeLabel: '도시형생활주택' }),
+    notice('갈매역세권 생숙', '2026-10-24', { typeLabel: '생활숙박시설' }),
+    notice('갈매역세권 민간사전청약', '2026-10-25', { typeLabel: '민간사전청약' }),
+  ];
+  const rows = app.saleHistory({ history: [A2], notices });
+  assert.deepEqual(rows.map((r) => [r.type, r.rental, r.stage]), [
+    ['민간사전청약', false, '사전청약'], ['생활숙박시설', false, null], ['도시형생활주택', false, null], ['오피스텔', false, null],
+    ['민간임대', true, null], ['공공지원민간임대', true, null], ['공공분양', false, '본청약'],
+  ]);
+  assert.equal(app.latestSale({ history: [A2], notices }), '2025-03');
+  // 아파트 분양 공고(APT·무순위 등)는 센다
+  assert.equal(app.latestSale({ history: [A2], notices: [...notices, notice('갈매역세권 무순위', '2026-09-01', { typeLabel: '무순위' })] }), '2026-09');
 });
 
 test('sourceOutlet matches the pipeline rule and never trusts a non-http url', () => {

@@ -207,9 +207,9 @@ export function windowPrefix(project) {
 
 const entriesOf = (list) => (Array.isArray(list) ? list : []).filter((e) => e && typeof e === 'object' && !Array.isArray(e));
 
-/** 'A-1', 'A1BL', 'A1블록' → 'A1' (비교용). 파이프라인 blockKey 와 같게 둔다 */
+/** 'A-1', 'A1BL', 'A1블록' → 'A1' (비교용). 글자와 숫자 사이 '-'만 빼서 'A2-1'과 'A21'은 다르게 둔다. 파이프라인 blockKey 와 같게 둔다 */
 export function blockKey(value) {
-  return String(value ?? '').toUpperCase().replace(/\s+|-|BL$|블록$/g, '');
+  return String(value ?? '').toUpperCase().replace(/\s+/g, '').replace(/(BL|블록)$/, '').replace(/(?<=[A-Z])-(?=\d)/g, '');
 }
 
 /** 출처를 낸 곳: outlet, 없으면 제목 끝 괄호, 없으면 주소의 호스트(파이프라인 sourceOutlet 과 같은 규칙) */
@@ -221,18 +221,25 @@ export function sourceOutlet(source) {
   return url ? new URL(url).hostname.replace(/^(www|m)\./, '') : '출처';
 }
 
-const compactName = (value) => String(value ?? '').toUpperCase().replace(/[\s\-·]/g, '');
+// 비교용 이름: 공백·가운뎃점과 글자-숫자 사이 '-'를 뺀다(blockKey 와 같은 '-' 규칙)
+const compactName = (value) => String(value ?? '').toUpperCase().replace(/[\s·]/g, '').replace(/(?<=[A-Z])-(?=\d)/g, '');
 
-/** 공고명에 블록 이름이 있는지. 'A2'는 '…(A-2BL)'에 맞고 'A20'·'BA2'에는 맞지 않는다 */
+/** 공고명에 블록 이름이 있는지. 'A2'는 '…(A-2BL)'에 맞고 'A20'·'BA2'·'A2-1'에는 맞지 않는다 */
 export function nameHasBlock(name, block) {
   const key = blockKey(block);
   if (key.length < 2) return false;
   const hay = compactName(name);
   for (let i = hay.indexOf(key); i >= 0; i = hay.indexOf(key, i + 1)) {
-    if (!/[0-9A-Z]/.test(hay[i - 1] ?? '') && !/\d/.test(hay[i + key.length] ?? '')) return true;
+    const after = hay.slice(i + key.length);
+    if (!/[0-9A-Z]/.test(hay[i - 1] ?? '') && !/^-?\d/.test(after)) return true;
   }
   return false;
 }
+
+// 연결된 청약홈 공고 중 임대(typeLabel)와 아파트 분양이 아닌 유형. 분양 이력에는 보이지만 최근 분양에는 세지 않는다.
+export const RENTAL_NOTICE_TYPES = ['민간임대', '공공지원민간임대'];
+export const NON_APT_NOTICE_TYPES = ['도시형생활주택', '오피스텔', '생활숙박시설'];
+const NOTICE_PRE_SUBSCRIPTION = '민간사전청약';
 
 /** 같은 공고일인지: 둘 다 일까지 있으면 같은 날, 하나라도 달까지만 있으면 같은 달 */
 function sameNoticeDate(a, b) {
@@ -286,17 +293,31 @@ export function saleHistory(project) {
   notices.forEach((n, i) => {
     if (used.has(i)) return;
     const url = safeHttpUrl(n.url);
+    const type = n.typeLabel ?? null;
     rows.push({
-      date: n.announceDate ?? null, block: null, stage: null, type: n.typeLabel ?? null, title: n.name ?? null, households: null, rental: false,
-      sources: url ? [{ title: n.name || '청약홈 공고', url, date: n.announceDate ?? null, outlet: '청약홈' }] : [], end: n.end ?? null, from: 'notice',
+      date: n.announceDate ?? null,
+      block: null,
+      stage: type === NOTICE_PRE_SUBSCRIPTION ? PRE_SUBSCRIPTION : null,
+      type,
+      title: n.name ?? null,
+      households: null,
+      rental: RENTAL_NOTICE_TYPES.includes(type),
+      sources: url ? [{ title: n.name || '청약홈 공고', url, date: n.announceDate ?? null, outlet: '청약홈' }] : [],
+      end: n.end ?? null,
+      from: 'notice',
     });
   });
   return rows.sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')));
 }
 
-/** 최근 분양 'YYYY-MM': 임대·사전청약을 뺀 분양 이력과 연결된 공고 중 가장 늦은 공고일. 없으면 null */
+/**
+ * 최근 분양 'YYYY-MM': 분양 이력과 연결된 공고 중 가장 늦은 공고일. 없으면 null.
+ * 임대(이력의 rental, 청약홈 민간임대·공공지원민간임대), 사전청약, 아파트가 아닌 공고(도시형생활주택·오피스텔·생활숙박시설)는 세지 않는다.
+ */
 export function latestSale(project) {
-  const months = saleHistory(project).filter((r) => !r.rental && r.stage !== PRE_SUBSCRIPTION).map((r) => toYm(r.date)).filter(Boolean);
+  const months = saleHistory(project)
+    .filter((r) => !r.rental && r.stage !== PRE_SUBSCRIPTION && !(r.from === 'notice' && NON_APT_NOTICE_TYPES.includes(r.type)))
+    .map((r) => toYm(r.date)).filter(Boolean);
   return months.length ? months.sort().at(-1) : null;
 }
 
