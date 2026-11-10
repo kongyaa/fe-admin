@@ -285,6 +285,22 @@ test('the real newtowns.yaml parses', () => {
   assert.equal(gyosan.blockEntries.filter((b) => b.status === '사업승인').length, 16);
   assert.equal(byId['town-guri-galmae-station'].blockTotal, null);
   assert.equal(byId['town-guri-galmae-station'].blockEntries.find((b) => b.block === 'S-1').type, null);
+
+  // 3기 신도시 다섯 곳(2026-11-11 조사). 남양주왕숙은 왕숙·왕숙2 두 항목, 인천계양은 인천 계양구
+  const thirds = ['namyangju-wangsuk', 'namyangju-wangsuk2', 'goyang-changneung', 'incheon-gyeyang', 'bucheon-daejang', 'gwangmyeong-siheung'];
+  for (const id of thirds) {
+    const p = byId[`town-${id}`];
+    assert.ok(p, id);
+    assert.ok(p.sources.length > 0 && p.history.every((e) => e.sources.length > 0), id);
+  }
+  assert.deepEqual([byId['town-incheon-gyeyang'].region, byId['town-incheon-gyeyang'].district], ['인천', '계양구']);
+  assert.equal(byId['town-gwangmyeong-siheung'].stage, '지구계획승인');
+  assert.deepEqual(byId['town-gwangmyeong-siheung'].history, []);
+  assert.deepEqual(byId['town-namyangju-wangsuk2'].noticeMatch, ['왕숙2', '왕숙아테라']);
+  // 관심 지구 칸은 모두 추적 중이고, 이름이 같은 칸은 없다
+  assert.ok(loaded.watchlist.every((w) => w.tracked && byId[w.projectId]), JSON.stringify(loaded.watchlist));
+  assert.deepEqual(loaded.watchlist.filter((w) => w.region === '인천').map((w) => w.projectId), ['town-incheon-gyeyang']);
+  assert.ok(loaded.watchlist.some((w) => w.name === '남양주왕숙2'));
 });
 
 test('towns become map projects', () => {

@@ -500,9 +500,10 @@ test('buildMap with real data files fills notices stages, calendar, feed, news, 
   assert.ok(data.feed.every((i) => i.source.url === null || /^https?:\/\//.test(i.source.url)));
   assert.equal(new Set(data.feed.map((i) => i.id)).size, data.feed.length);
 
-  assert.equal(data.watchlist.length, 8);
+  assert.equal(data.watchlist.length, 9);
+  assert.ok(data.watchlist.every((w) => w.tracked));
   assert.deepEqual(data.sources.curatedNews, {
-    asOf: '2026-11-10', count: data.sources.curatedNews.count, skipped: null, unmatched: 0,
+    asOf: '2026-11-11', count: data.sources.curatedNews.count, skipped: null, unmatched: 0,
   });
   assert.ok(data.sources.curatedNews.count > 0);
   assert.equal(data.sources.previous.skipped, null);

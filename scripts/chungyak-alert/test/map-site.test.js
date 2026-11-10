@@ -65,8 +65,14 @@ test('matchesFilters: region, kind, stage, district', () => {
   const town = { region: '경기', district: '하남시', kind: '공공주택지구', stage: '지구지정', name: '하남교산', address: null, ...win('2029-01') };
   assert.equal(matchesFilters(seoul, ALL, today), true);
   assert.equal(matchesFilters(seoul, { ...ALL, area: '서울' }, today), true);
-  assert.equal(matchesFilters(seoul, { ...ALL, area: '경기' }, today), false);
-  assert.equal(matchesFilters(town, { ...ALL, area: '경기' }, today), true);
+  assert.equal(matchesFilters(seoul, { ...ALL, area: '경기·인천' }, today), false);
+  assert.equal(matchesFilters(town, { ...ALL, area: '경기·인천' }, today), true);
+  // 지역 '경기·인천'은 인천 지구(인천계양)도 함께 본다
+  const incheon = { ...town, region: '인천', district: '계양구', name: '인천계양' };
+  assert.equal(matchesFilters(incheon, { ...ALL, area: '경기·인천' }, today), true);
+  assert.equal(matchesFilters(incheon, { ...ALL, area: '서울' }, today), false);
+  assert.equal(app.TOWN_AREA, '경기·인천');
+  assert.equal(app.inArea(incheon, '인천'), true);
   assert.equal(matchesFilters(seoul, { ...ALL, kind: '재건축' }, today), false);
   assert.equal(matchesFilters(town, { ...ALL, kind: '공공주택지구' }, today), true);
   assert.equal(matchesFilters(seoul, { ...ALL, stage: 'seoul:이주' }, today), true);
@@ -648,10 +654,10 @@ test('tileCount: the big number is the 1년 안 count (same question as the colo
   assert.deepEqual(app.tileCount(undefined), { main: 0, total: 0 });
 });
 
-test('nextFilters: 지역 경기 replaces the duplicate 유형 공공주택지구 and locks 유형', () => {
+test('nextFilters: 지역 경기·인천 replaces the duplicate 유형 공공주택지구 and locks 유형', () => {
   assert.deepEqual(app.DEFAULT_FILTERS, ALL);
-  const gyeonggi = app.nextFilters({ ...ALL, kind: '재개발', district: '종로구' }, 'area', '경기');
-  assert.deepEqual(gyeonggi, { ...ALL, area: '경기' }); // 유형과 서울 구 선택은 풀린다
+  const gyeonggi = app.nextFilters({ ...ALL, kind: '재개발', district: '종로구' }, 'area', '경기·인천');
+  assert.deepEqual(gyeonggi, { ...ALL, area: '경기·인천' }); // 유형과 서울 구 선택은 풀린다
   assert.equal(app.kindLocked(gyeonggi), true);
   assert.equal(app.kindLocked({ ...ALL, area: '서울' }), false);
   assert.deepEqual(app.nextFilters(gyeonggi, 'kind', '재건축'), gyeonggi); // 잠겨 있으면 그대로
@@ -661,7 +667,7 @@ test('nextFilters: 지역 경기 replaces the duplicate 유형 공공주택지�
   assert.deepEqual(app.nextFilters(undefined, 'when', '12'), { ...ALL, when: '12' });
   // 원래 필터는 바꾸지 않는다
   const before = { ...ALL };
-  app.nextFilters(before, 'area', '경기');
+  app.nextFilters(before, 'area', '경기·인천');
   assert.deepEqual(before, ALL);
 
   // 합친 뒤에도 결과 수가 같다: 예전 '유형 공공주택지구'와 '지역 경기 공공주택지구'는 같은 사업만 골랐다
@@ -670,11 +676,12 @@ test('nextFilters: 지역 경기 replaces the duplicate 유형 공공주택지�
     { region: '서울', kind: '재건축', district: '강남구', stage: '착공', ...win('2028-01') },
     { region: '경기', kind: '공공주택지구', district: '하남시', stage: '블록별 분양', ...win('2026-12') },
     { region: '경기', kind: '공공주택지구', district: '구리시', stage: '지구지정', ...win('2029-01') },
+    { region: '인천', kind: '공공주택지구', district: '계양구', stage: '블록별 분양', ...win('2027-01') },
   ];
   const ids = (f) => list.filter((p) => matchesFilters(p, f, today)).map((p) => p.district);
   for (const when of ['all', '12', '36']) {
-    assert.deepEqual(ids({ ...ALL, when, area: '경기' }), ids({ ...ALL, when, kind: '공공주택지구' }), when);
-    assert.deepEqual(ids({ ...ALL, when, area: '경기' }), ids({ ...ALL, when, area: '경기', kind: '공공주택지구' }), when);
+    assert.deepEqual(ids({ ...ALL, when, area: '경기·인천' }), ids({ ...ALL, when, kind: '공공주택지구' }), when);
+    assert.deepEqual(ids({ ...ALL, when, area: '경기·인천' }), ids({ ...ALL, when, area: '경기·인천', kind: '공공주택지구' }), when);
   }
 });
 
@@ -692,8 +699,8 @@ test('emptyState: one message with the active conditions and the right way out',
   assert.deepEqual(app.emptyState({ ...ALL, q: '강남구' }), {
     title: '‘강남구’에 맞는 사업이 없습니다.', conditions: ['검색 ‘강남구’'], clearQuery: true, reset: false,
   });
-  assert.deepEqual(app.emptyState({ ...ALL, area: '경기', when: '12', stage: 'town:준공', district: null }), {
-    title: '지금 조건에 맞는 사업이 없습니다.', conditions: ['경기 공공주택지구', '1년 안', '단계 준공'], clearQuery: false, reset: true,
+  assert.deepEqual(app.emptyState({ ...ALL, area: '경기·인천', when: '12', stage: 'town:준공', district: null }), {
+    title: '지금 조건에 맞는 사업이 없습니다.', conditions: ['경기·인천 공공주택지구', '1년 안', '단계 준공'], clearQuery: false, reset: true,
   });
   const both = app.emptyState({ ...ALL, area: '서울', kind: '재개발', when: '36', district: '중구', q: 'x' });
   assert.deepEqual(both.conditions, ['서울', '재개발', '3년 안', '중구', '검색 ‘x’']);
@@ -759,7 +766,7 @@ test('live projects say 공고 중 (open notice, may be before 접수 starts; bl
 test('index.html: merged 지역/유형 filters, collapsible filter box, skip link', () => {
   const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
   assert.equal(html.includes('data-filter="kind" data-value="공공주택지구"'), false);
-  assert.ok(html.includes('data-filter="area" data-value="경기" aria-pressed="false">경기</button>'));
+  assert.ok(html.includes('data-filter="area" data-value="경기·인천" aria-pressed="false">경기·인천</button>'));
   for (const id of ['filters-box', 'filters-summary', 'kind-group', 'disclaimer', 'towns-title', 'list-title', 'feed-title', 'dash-tiles', 'gu-grid', 'watch-grid', 'region-panel', 'cal', 'agenda', 'refresh', 'refresh-text', 'mark-read', 'main-view', 'view']) assert.ok(html.includes(`id="${id}"`), id);
   assert.ok(html.includes('href="#feed-title"'));
   assert.ok(html.includes('placeholder="구역명·구·동"'));
@@ -1257,4 +1264,62 @@ test('town header basis reads "다음 블록 예상 근거 · 규칙: …" witho
   assert.equal(app.windowBasisNote(null), null);
   const sample = JSON.parse(readFileSync(new URL('../site/sample-projects.json', import.meta.url), 'utf8'));
   for (const p of sample.projects) assert.ok(!String(p.windowBasis ?? '').startsWith(String(p.windowLabel ?? '-')), p.id);
+});
+
+test('sellingTowns: 블록별 분양 지구와 접수 중·14일 안 접수 공고가 있는 지구만, 접수 중 먼저 그다음 다음 블록 예상 순', () => {
+  const day = '2026-11-11';
+  const stage = (name, start, end = start) => ({ name, start, end });
+  const town = (id, extra) => ({ id, name: id, kind: '공공주택지구', region: '경기', notices: [], ...extra });
+  const gyosan = town('하남교산', { stage: '블록별 분양', ...win('2026-12') });
+  const wangsuk = town('남양주왕숙', { stage: '블록별 분양', ...win('2026-11') });
+  const gyeyang = town('인천계양', { region: '인천', stage: '블록별 분양', window: { from: null, to: null } });
+  const galmae = town('구리갈매역세권', {
+    stage: '블록별 분양', ...win('2027-03'),
+    notices: [{ key: 'b1', name: '구리갈매역세권 신안인스빌 디센트', end: '2026-11-11', stages: [stage('특별공급', '2026-11-09'), stage('1순위', '2026-11-10'), stage('2순위', '2026-11-11')] }],
+  });
+  const topyeong = town('구리토평한강', { stage: '지구지정', ...win('2029-01') });
+  // 지구계획승인 단계라도 접수 중인 공고가 이어져 있으면 넣는다
+  const gm = town('광명시흥', {
+    stage: '지구계획승인', ...win('2029-01'),
+    notices: [{ key: 'g1', name: '광명시흥 S1-10BL', end: '2026-11-13', stages: [stage('1순위', '2026-11-11', '2026-11-12'), stage('당첨자 발표', '2026-11-20')] }],
+  });
+  // 접수가 15일 뒤에 시작하면 넣지 않는다(14일 안만)
+  const later = town('먼곳', {
+    stage: '지구계획승인', ...win('2029-01'),
+    notices: [{ key: 'l1', name: '먼곳 A1', end: '2026-11-27', stages: [stage('1순위', '2026-11-26', '2026-11-27')] }],
+  });
+  // 14일 안에 접수가 시작하면 넣는다(접수 중은 아니라 예상 순서에 섞인다)
+  const soon = town('곧', {
+    stage: '지구지정', ...win('2028-01'),
+    notices: [{ key: 's1', name: '곧 A1', end: '2026-11-25', stages: [stage('1순위', '2026-11-25')] }],
+  });
+  const seoul = { id: 's', name: '신영1', kind: '재개발', region: '서울', stage: '이주', notices: [] };
+  const names = app.sellingTowns([topyeong, gyosan, seoul, later, gyeyang, gm, soon, wangsuk, galmae], day).map((p) => p.name);
+  // 접수 중 두 곳(갈매 2027-03, 광명시흥 2029-01)은 예상 시기 순, 그 뒤는 예상 시기 순(없으면 맨 뒤)
+  assert.deepEqual(names, ['구리갈매역세권', '광명시흥', '남양주왕숙', '하남교산', '곧', '인천계양']);
+  assert.ok(!names.includes('구리토평한강'));
+  assert.deepEqual(app.sellingTowns([topyeong, seoul], day), []);
+  assert.deepEqual(app.sellingTowns(undefined, day), []);
+
+  assert.equal(app.noticeReception(galmae.notices[0], day), 'open');
+  assert.equal(app.noticeReception(galmae.notices[0], '2026-11-12'), null);
+  assert.equal(app.noticeReception(soon.notices[0], day), 'soon');
+  assert.equal(app.noticeReception(later.notices[0], day), null);
+  // 접수 단계가 없으면 공고일~마감일
+  assert.equal(app.noticeReception({ announceDate: '2026-11-01', end: '2026-11-12' }, day), 'open');
+  assert.equal(app.noticeReception({ announceDate: '2026-11-01', end: '2026-11-10' }, day), null);
+});
+
+test('isTownView: 블록별 분양 지구와 출처 있는 블록이 있는 공공주택지구', () => {
+  assert.equal(app.isTownView({ kind: '공공주택지구', stage: '블록별 분양', blocks: [] }), true);
+  assert.equal(app.isTownView({ kind: '공공주택지구', stage: '지구계획승인', blocks: [{ block: 'S1-10' }] }), true);
+  assert.equal(app.isTownView({ kind: '공공주택지구', stage: '지구지정', blocks: [] }), false);
+  assert.equal(app.isTownView({ kind: '재개발', stage: '이주', blocks: [{ block: 'A1' }] }), false);
+  assert.equal(app.isTownView(null), false);
+});
+
+test('index.html: 블록별로 분양 중인 신도시 section stays', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('<h2 id="towns-title">블록별로 분양 중인 신도시</h2>'));
+  assert.ok(readFileSync(new URL('../site/app.js', import.meta.url), 'utf8').includes('지금 블록별로 분양 중인 신도시가 없습니다.'));
 });

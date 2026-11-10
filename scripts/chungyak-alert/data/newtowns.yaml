@@ -2,16 +2,17 @@
 # - 모든 날짜·숫자는 같은 지구의 sources 중 하나로 확인한 값만 넣는다. 확인 못 한 값은 비워 둔다(추정 금지).
 # - 어떤 출처가 어떤 사실을 뒷받침하는지는 notes에 적는다.
 # - 날짜는 문자열로 따옴표를 붙인다 (YYYY-MM 또는 YYYY-MM-DD).
-asOf: "2026-11-10"
+asOf: "2026-11-11"
 # 지역 현황(대시보드)에 칸으로 보이는 지구. town은 아래 towns의 id(추적 중)이고, 비우면 '아직 추적하지 않음'으로만 보인다.
 # 추적하지 않는 지구에는 이름·구분·지역 말고 아무 사실도 적지 않는다(출처 없는 단계·일정을 싣지 않게).
 watchlist:
-  - { name: 남양주왕숙, kind: 3기 신도시, region: 경기 }
+  - { name: 남양주왕숙, kind: 3기 신도시, region: 경기, town: namyangju-wangsuk }
+  - { name: 남양주왕숙2, kind: 3기 신도시, region: 경기, town: namyangju-wangsuk2 }
   - { name: 하남교산, kind: 3기 신도시, region: 경기, town: hanam-gyosan }
-  - { name: 고양창릉, kind: 3기 신도시, region: 경기 }
-  - { name: 인천계양, kind: 3기 신도시, region: 인천 }
-  - { name: 부천대장, kind: 3기 신도시, region: 경기 }
-  - { name: 광명시흥, kind: 3기 신도시, region: 경기 }
+  - { name: 고양창릉, kind: 3기 신도시, region: 경기, town: goyang-changneung }
+  - { name: 인천계양, kind: 3기 신도시, region: 인천, town: incheon-gyeyang }
+  - { name: 부천대장, kind: 3기 신도시, region: 경기, town: bucheon-daejang }
+  - { name: 광명시흥, kind: 3기 신도시, region: 경기, town: gwangmyeong-siheung }
   - { name: 구리갈매역세권, kind: 공공주택지구, region: 경기, town: guri-galmae-station }
   - { name: 구리토평한강, kind: 공공주택지구, region: 경기, town: guri-topyeong-hangang }
 towns:
@@ -333,3 +334,1136 @@ towns:
         statusDate: "2026-05-06"
         note: "2026 하반기 우미린 공급 예정(보도). 분양 유형 미확인, 2026-11-10까지 공고 확인 못함"
         sources: { title: "우미, 창릉·고덕·세교 등에 1만가구 공급 (한국경제)", url: "https://www.hankyung.com/article/2026050694481", date: "2026-05-06" }
+
+  - id: namyangju-wangsuk
+    name: 남양주왕숙
+    region: 경기
+    district: 남양주
+    kind: 공공주택지구
+    # 2025-07-24 A-1·A-2블록 본청약 공고가 나와 블록별 분양 단계
+    stage: 블록별 분양
+    stageDates:
+      후보지: "2018-12-19"
+      지구지정: "2019-10-15"
+      지구계획승인: "2021-08-31"
+      부지조성 착공: "2023-10-15"
+      블록별 분양: "2025-07-24"
+    households: 60394
+    noticeMatch: [왕숙A, 왕숙B, 왕숙S, 왕숙지구, 왕숙공공주택지구, 왕숙푸르지오, 왕숙한신더휴]
+    notes: >-
+      3기 신도시. 남양주왕숙2(namyangju-wangsuk2)와 따로 지정된 별개 지구다. 후보지(2018-12-19 수도권 30만호 2차 발표)와 지구지정(2019-10-15자 고시)은
+      뉴시스 2019-10-13 기사, 지정 고시일은 3기 신도시 누리집 고시 목록(2019-10-15 '남양주왕숙 공공주택지구의 지정 및 지형도면 등의 고시')으로도 확인.
+      지구계획승인(2021-08-31)은 3기 신도시 누리집의 국토교통부고시 제2021-1039호(지정변경 1차 및 지구계획 승인). 국토부 발표는 2021-08-26(머니투데이방송).
+      부지조성 착공(2023-10-15)은 서울신문 2023-10-15 기사: 왕숙·왕숙2 착공식을 15일 진건읍 사능양묘장 일대에서 열었다.
+      블록별 분양(2025-07-24)은 LH청약플러스 A-1블록 공공분양 입주자모집공고일(아래 history).
+      가구 수 60,394는 서울경제 2024-12-03 기사의 지구계획 변경(3차) 수치(당초 52,380 → 60,394). 3기 신도시 누리집은 이 3차 변경(국토부고시 제2024-678호)을
+      2024-12-09에 게시했고 서울경제는 '3일 고시'로 적어 날짜가 엇갈린다. 이후 4차 변경(국토부고시 제2025-940호, 누리집 게시 2026-01-05)은
+      한국경제 2026-01-19 기사에 '진건지구 편입으로 기존(6만394가구)보다 3765가구 늘어난다'고만 나오고 변경 후 합계는 기사에 없어 3차 기준으로 둔다.
+      2021-08 지구계획 승인 때는 약 5만4000가구(머니투데이방송 2021-08-26)였다.
+      noticeMatch: '왕숙' 단독은 남양주왕숙2 공고(남양주왕숙2 A-3BL, 왕숙 아테라)까지 잡아 쓰지 않는다. LH 공고명은 '남양주왕숙 A-24블록'·'남양주왕숙지구 A-1블록'
+      꼴이라(공백 제거 뒤 '왕숙A'·'왕숙B'·'왕숙지구') 왕숙2('왕숙2A'·'왕숙2지구')와 갈린다. 주소 '남양주왕숙 공공주택지구'는 '왕숙공공주택지구'로 잡는다.
+      청약홈 민간참여 단지는 주소가 '진접읍 연평리 일원'처럼 지구 이름이 없어 단지 이름('왕숙푸르지오', '왕숙한신더휴')을 따로 넣었다.
+      앞으로 나올 다른 이름의 민간참여·민간분양 단지는 이 목록으로 잡히지 않으니 공고가 나면 이름을 더한다.
+    sources:
+      - title: "[3기신도시]하남·남양주 등 5곳 지구지정…3기 신도시 개발 '본궤도' (뉴시스)"
+        url: https://www.newsis.com/view/NISX20191013_0000796781
+        date: "2019-10-13"
+      - title: "남양주왕숙 공공주택지구 지정변경(1차) 및 지구계획 승인 고시 (3기 신도시 누리집, 국토교통부고시 제2021-1039호)"
+        url: https://www.xn--3-3u6ey6lv7rsa.kr/kor/CMS/Board/Board.do?mCode=MN111&mode=view&mgr_seq=13&board_seq=297
+        date: "2021-08-31"
+      - title: "남양주왕숙·하남교산 3기신도시 지구계획 수립 완료…10.1만가구 공급 (머니투데이방송)"
+        url: https://news.mtn.co.kr/article/2021082609362623524
+        date: "2021-08-26"
+      - title: "3기 신도시 첫 '남양주 왕숙지구' 착공 (서울신문)"
+        url: https://m.go.seoul.co.kr/news/2023/10/15/20231015500115
+        date: "2023-10-15"
+      - title: "대형 줄이고 소형 늘려…남양주 왕숙1지구 8000가구 추가 공급 (서울경제)"
+        url: https://www.sedaily.com/article/13988702
+        date: "2024-12-03"
+      - title: "남양주왕숙 공공주택지구 지구계획 변경(3차) 승인 (3기 신도시 누리집)"
+        url: https://www.xn--3-3u6ey6lv7rsa.kr/kor/CMS/Board/Board.do?mCode=MN111&page=1&mode=view&mgr_seq=13&board_seq=404
+        date: "2024-12-09"
+      - title: "남양주왕숙 공공주택지구 지구지정 변경(4차) 및 지구계획 변경(4차) 승인 (3기 신도시 누리집, 국토교통부고시 제2025-940호)"
+        url: https://www.xn--3-3u6ey6lv7rsa.kr/kor/CMS/Board/Board.do?mCode=MN111&mode=view&mgr_seq=13&board_seq=446
+        date: "2026-01-05"
+      - title: "부지 편입·녹지 축소…왕숙·계양·월암 주택공급 늘린다 (한국경제)"
+        url: https://www.hankyung.com/article/2026011995911
+        date: "2026-01-19"
+      - title: "남양주왕숙지구 A-1블록 공공분양주택 입주자모집공고 (LH청약플러스)"
+        url: https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060926&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027
+        date: "2025-07-24"
+    # 분양 이력·다음 블록 계획 (2026-11-11 조사). 블록 이름은 출처 표기를 따른다(A-1·A1은 같은 블록).
+    # 사전청약: 4차 사전청약 공고일 2021-12-29는 A-1·A-24 본청약 공고문의 '사전청약 입주자모집공고일(2021.12.29.)' 문구로 확인.
+    # B-1·B-2(사전청약 당첨자 846명, 뉴시스·경기신문 2025-08-13)와 B-17(2021년 사전청약 경쟁률 38:1 보도)의 사전청약 공고일·물량은 블록별로 확인하지 못해 넣지 않는다.
+    # 2022-07 사전청약 '남양주왕숙 B2·S11·S12 1,398호'(이코노믹리뷰 2022-07-14)는 블록별 물량이 없고 B2가 2025 푸르지오 B-2와 같은 블록인지 확인 못해 넣지 않는다.
+    history:
+      - block: A-1
+        stage: 사전청약
+        type: 공공분양
+        households: 597
+        noticeDate: "2021-12-29"
+        note: "가구 수는 경향신문 2025-07-24('2022년 1월 사전청약, A-1 597가구'). 본청약 공고문은 사전청약 당첨자 몫을 490세대로 적는다. 공고일은 본청약 공고문의 사전청약 입주자모집공고일"
+        source:
+          - { title: "3기 신도시 남양주왕숙 첫 본청약…59㎡ 분양가 4억원대 (경향신문)", url: "https://www.khan.co.kr/article/202507241053001", date: "2025-07-24" }
+          - { title: "남양주왕숙지구 A-1블록 공공분양주택 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060926&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027", date: "2025-07-24" }
+      - block: A-2
+        stage: 사전청약
+        type: 신혼희망타운
+        households: 380
+        noticeDate: "2022-01"
+        note: "경향신문 2025-07-24는 '2022년 1월 사전청약'이라고만 적는다(4차 사전청약 접수 2022-01-10~, 파이낸셜뉴스 2022-01-10). A-2 공고문의 사전청약 공고일은 확인 못함"
+        source: { title: "3기 신도시 남양주왕숙 첫 본청약…59㎡ 분양가 4억원대 (경향신문)", url: "https://www.khan.co.kr/article/202507241053001", date: "2025-07-24" }
+      - block: A-24
+        stage: 사전청약
+        type: 신혼희망타운
+        noticeDate: "2021-12-29"
+        note: "사전청약 공고일은 A-24 본청약 공고문(2025-11-27)의 '사전청약 입주자모집공고일(2021.12.29.)'. 사전청약 물량은 확인 못함(본청약 390세대 중 사전청약 당첨자 몫 226)"
+        source: { title: "[정정공고]남양주왕숙 A-24블록 신혼희망타운(공공분양) 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000061021&ccrCnntSysDsCd=02&uppAisTpCd=39&aisTpCd=39&mi=1027", date: "2025-11-27" }
+      - block: A20
+        stage: 사전청약
+        type: 신혼희망타운
+        households: 582
+        noticeDate: "2022-03"
+        note: "접수 2022-03-16~23(이투뉴스·비즈워치). 공고일은 기사에 없어 달까지만. 본청약 일정 보도 못 찾음"
+        source:
+          - { title: "3기 신도시 남양주왕숙 신혼희망타운 사전청약 본격 개시 (이투뉴스)", url: "http://www.e2news.com/news/articleView.html?idxno=240019", date: "2022-03-03" }
+          - { title: "남양주왕숙·인천계양 '신희타' 사전청약…이번엔 몰릴까 (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2022/03/11/0027", date: "2022-03-14" }
+      - block: A19
+        stage: 사전청약
+        type: 나눔형 공공분양
+        households: 932
+        noticeDate: "2023-06"
+        note: "뉴:홈 2차 사전청약. 접수 특별 2023-06-26~27, 일반 06-28~29(뉴데일리). 공고일은 기사에 없어 달까지만. 932가구는 데일리안 2026-09-22(총 1,015가구 중 사전청약 932)"
+        source:
+          - { title: "수방사 추정분양가 8억7200만원…뉴홈 1981호 2차 사전청약 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2023/06/07/2023060700030.amp.html", date: "2023-06-07" }
+          - { title: "[단독] 본청약 1년 연기된 남양주 왕숙…'공급 속도전' 무색 (데일리안)", url: "https://www.dailian.co.kr/news/view/1693479/", date: "2026-09-22" }
+      - block: A-1
+        type: 공공분양
+        households: 629
+        noticeDate: "2025-07-24"
+        end: "2025-08-08"
+        title: 남양주왕숙 A-01
+        moveIn: "2028-08"
+        note: "629세대 = 사전청약 490 + 일반 34 + 특별 105(공고문). 사전청약 당첨자 490명 중 287명만 본청약 신청(시사저널e 2025-08-06)"
+        competition:
+          scope: 일반공급
+          households: 237
+          applicants: 6949
+          rate: 29.3
+          source: { title: "3기 신도시 '남양주왕숙' 첫 본청약, 경쟁률 19.8 대 1 (파이낸셜뉴스)", url: "https://www.fnnews.com/news/202508082004064128", date: "2025-08-08" }
+        source:
+          - { title: "[정정공고]남양주왕숙 A-1블록 공공분양주택 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060926&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027", date: "2025-07-24" }
+          - { title: "3기 신도시 남양주왕숙 첫 본청약…1030가구 입주자 모집 (한국경제)", url: "https://www.hankyung.com/article/2025072481836", date: "2025-07-24" }
+      - block: A-2
+        type: 신혼희망타운
+        households: 401
+        noticeDate: "2025-07-24"
+        moveIn: "2028-08"
+        note: "46㎡ 57 + 55㎡ 344(한국경제·경향신문). LH청약플러스 A-2 공고 페이지는 직접 확인 못함"
+        competition:
+          scope: 일반공급
+          households: 266
+          applicants: 3014
+          rate: 11.3
+          source: { title: "3기 신도시 '남양주왕숙' 첫 본청약, 경쟁률 19.8 대 1 (파이낸셜뉴스)", url: "https://www.fnnews.com/news/202508082004064128", date: "2025-08-08" }
+        source:
+          - { title: "3기 신도시 남양주왕숙 첫 본청약…1030가구 입주자 모집 (한국경제)", url: "https://www.hankyung.com/article/2025072481836", date: "2025-07-24" }
+          - { title: "3기 신도시 남양주왕숙 첫 본청약…59㎡ 분양가 4억원대 (경향신문)", url: "https://www.khan.co.kr/article/202507241053001", date: "2025-07-24" }
+      - block: B-1
+        type: 민간참여 공공분양
+        households: 560
+        noticeDate: "2025-07-29"
+        end: "2025-08-14"
+        title: 왕숙 푸르지오 더 퍼스트 1단지
+        moveIn: "2028-05"
+        note: "청약홈 2025000324(1순위 08-08~12, 2순위 08-13~14). 뉴시스 2025-08-13은 B2를 410세대로 적었으나 청약홈·아주경제는 587"
+        competition:
+          scope: 일반공급
+          households: 194
+          applicants: 9871
+          rate: 50.88
+          source: { title: "'왕숙 푸르지오 더 퍼스트' 특별공급 43.92 대 1 이어 일반공급 55.50 대 1 (스트레이트뉴스)", url: "https://www.straightnews.co.kr/news/articleView.html?idxno=278650", date: "2025-08-14" }
+        source:
+          - { title: "청약홈 분양정보 왕숙 푸르지오 더 퍼스트 1단지 (houseManageNo 2025000324)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000324&pblancNo=2025000324", date: "2025-07-29" }
+          - { title: "\"2만명 몰렸다\"...'왕숙 푸르지오 더 퍼스트' 1순위 청약 55.5대 1 기록 (아주경제)", url: "https://www.ajunews.com/view/20250818120553861", date: "2025-08-18" }
+      - block: B-2
+        type: 민간참여 공공분양
+        households: 587
+        noticeDate: "2025-07-29"
+        end: "2025-08-14"
+        title: 왕숙 푸르지오 더 퍼스트 2단지
+        moveIn: "2028-06"
+        note: "청약홈 2025000325(1순위 08-08~12, 2순위 08-13~14)"
+        competition:
+          scope: 일반공급
+          households: 163
+          applicants: 9944
+          rate: 61.01
+          source: { title: "'왕숙 푸르지오 더 퍼스트' 특별공급 43.92 대 1 이어 일반공급 55.50 대 1 (스트레이트뉴스)", url: "https://www.straightnews.co.kr/news/articleView.html?idxno=278650", date: "2025-08-14" }
+        source:
+          - { title: "청약홈 분양정보 왕숙 푸르지오 더 퍼스트 2단지 (houseManageNo 2025000325)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000325&pblancNo=2025000325", date: "2025-07-29" }
+          - { title: "\"2만명 몰렸다\"...'왕숙 푸르지오 더 퍼스트' 1순위 청약 55.5대 1 기록 (아주경제)", url: "https://www.ajunews.com/view/20250818120553861", date: "2025-08-18" }
+      - block: B-17
+        type: 공공분양
+        households: 491
+        noticeDate: "2025-11-27"
+        end: "2025-12-12"
+        moveIn: "2028-12"
+        competition:
+          scope: 일반공급
+          households: 128
+          applicants: 14023
+          rate: 109.6
+          source: { title: "3기 신도시 남양주왕숙 B-17 청약 경쟁률 109.6대 1 (뉴시스)", url: "https://www.newsis.com/view/NISX20251214_0003440298", date: "2025-12-14" }
+        source: { title: "남양주왕숙 B-17블록 공공분양주택 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000061020&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027", date: "2025-11-27" }
+      - block: A-24
+        type: 신혼희망타운
+        households: 390
+        noticeDate: "2025-11-27"
+        end: "2025-12-12"
+        moveIn: "2028-12"
+        note: "A-24 589세대 중 신혼희망타운(공공분양) 390(사전청약 당첨자 226 + 본청약 164). 나머지 199세대 행복주택은 향후 별도 공고(공고문)"
+        competition:
+          scope: 일반공급
+          households: 238
+          applicants: 5924
+          rate: 24.9
+          source: { title: "3기 신도시 남양주왕숙 B-17 청약 경쟁률 109.6대 1 (뉴시스)", url: "https://www.newsis.com/view/NISX20251214_0003440298", date: "2025-12-14" }
+        source: { title: "[정정공고]남양주왕숙 A-24블록 신혼희망타운(공공분양) 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000061021&ccrCnntSysDsCd=02&uppAisTpCd=39&aisTpCd=39&mi=1027", date: "2025-11-27" }
+    # A-17은 2026-11-19 공고 예정(서울시 기관추천 안내). 공고명 '왕숙 한신더휴 센텀'에 블록 이름이 없어 청약홈 공고가 이어져도
+    # 계획이 자동으로 빠지지 않는다(nameHasBlock). 공고가 나면 history에 손으로 옮긴다.
+    plans:
+      - blocks: [A-17]
+        type: 민간참여 공공분양
+        households: 379
+        expected: "2026-11"
+        note: "뉴:홈 나눔형에서 일반 공공분양으로 전환(파이낸셜뉴스). 서울시 안내는 입주자모집공고 11-19 예정, 청약 11-30 예정. 단지명 왕숙 한신더휴 센텀, 입주 2029-07"
+        source:
+          - { title: "'왕숙 한신더휴 센텀' 서울시 장애인 특별공급 기관추천 안내 (서울시)", url: "https://news.seoul.go.kr/welfare/archives/584237", date: "2026-10-29" }
+          - { title: "환매·이익공유 조건 없앤 '왕숙 한신더휴센텀'...11월 공공분양 (파이낸셜뉴스)", url: "https://www.fnnews.com/news/202611020958356622", date: "2026-11-02" }
+      - blocks: [A19]
+        type: 나눔형 공공분양
+        households: 1015
+        expected: "2028-06"
+        note: "LH가 사전청약 당첨자에게 본청약을 2027-06에서 2028-06으로 연기한다고 공지(보도). 1,015는 단지 총 가구(사전청약 932)"
+        source: { title: "[단독] 본청약 1년 연기된 남양주 왕숙…'공급 속도전' 무색 (데일리안)", url: "https://www.dailian.co.kr/news/view/1693479/", date: "2026-09-22" }
+    # 블록별 현황 (2026-11-11 조사). 사업승인 목록·전체 블록 수 보도는 찾지 못해 blockTotal은 넣지 않는다.
+    blocks:
+      - block: A-24
+        type: 행복주택
+        rental: true
+        households: 199
+        status: 미정
+        note: "A-24 589세대 중 행복주택 199세대는 향후 별도 공고 예정(본청약 공고문). 모집 시기 미확인"
+        sources: { title: "[정정공고]남양주왕숙 A-24블록 신혼희망타운(공공분양) 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000061021&ccrCnntSysDsCd=02&uppAisTpCd=39&aisTpCd=39&mi=1027", date: "2025-11-27" }
+      - block: B-11
+        type: 민간분양
+        status: 미정
+        note: "LH 공동주택용지(분양아파트 60~85㎡, 42,835㎡) 1순위 공급(정정공고 2024-12-03). 매수 건설사·세대 수·분양 시기 미확인"
+        sources: { title: "[정정공고] 남양주왕숙 공동주택용지(B-11BL) 공급 공고(1순위) (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=BN-0006604&ccrCnntSysDsCd=01&uppAisTpCd=01&aisTpCd=01&mi=1062", date: "2024-12-03" }
+      - block: B-14
+        type: 민간분양
+        status: 미정
+        note: "LH 공동주택용지(분양아파트 60~85㎡, 38,468㎡) 1순위 공급(원공고 2024-11-20, 정정 2024-12-03). 매수 건설사·세대 수·분양 시기 미확인"
+        sources: { title: "[정정공고] 남양주왕숙 공동주택용지(B-14BL) 공급 공고(1순위) (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=BN-0006549&ccrCnntSysDsCd=01&uppAisTpCd=01&aisTpCd=01&mi=1062", date: "2024-12-03" }
+
+  - id: namyangju-wangsuk2
+    name: 남양주왕숙2
+    region: 경기
+    district: 남양주
+    kind: 공공주택지구
+    # 2026-04-30 A-1(왕숙 아테라)·A-3 본청약 공고가 나와 블록별 분양 단계
+    stage: 블록별 분양
+    stageDates:
+      후보지: "2018-12-19"
+      지구지정: "2019-10-15"
+      지구계획승인: "2021-08-31"
+      부지조성 착공: "2023-10-15"
+      블록별 분양: "2026-04-30"
+    households: 15955
+    noticeMatch: [왕숙2, 왕숙아테라]
+    notes: >-
+      3기 신도시. 남양주왕숙(namyangju-wangsuk)과 따로 지정된 별개 지구(일패동·이패동 일원). 후보지(2018-12-19)와 지구지정(2019-10-15자 고시)은
+      뉴시스 2019-10-13 기사와 3기 신도시 누리집 고시 목록('남양주왕숙2 공공주택지구의 지정 및 지형도면 등의 고시' 2019-10-15).
+      지구계획승인(2021-08-31)은 3기 신도시 누리집 '남양주왕숙2 공공주택지구 지정변경(2차) 및 지구계획 승인 고시'. 국토부 발표는 2021-08-26(머니투데이방송, 약 1만4000가구).
+      부지조성 착공(2023-10-15)은 서울신문 2023-10-15(왕숙·왕숙2 착공식).
+      블록별 분양(2026-04-30)은 LH청약플러스 A-3BL 공공분양 입주자모집공고일. 같은 날 A-1블록 '왕숙 아테라' 공고도 났다(파이낸셜뉴스 2026-05-01).
+      가구 수 15,955는 파이낸셜뉴스 2025-12-14 기사의 지구계획 변경(3차) 수치(14,510 → 15,955, 국토부 12일 승인 발표).
+      3기 신도시 누리집 게시는 2025-12-24(국토교통부고시 제2025-727호). 이후 지정 변경(5차, 국토교통부고시 제2026-520호, 2026-10-16)은 세부 내용을 확인하지 못했다.
+      noticeMatch: LH 공고명 '남양주왕숙2 A-3BL'·주소 '남양주왕숙2 공공주택지구'는 '왕숙2'로, 청약홈 민간참여 단지 '왕숙 아테라'는 이름으로 잡는다.
+      '왕숙' 단독은 왕숙1 공고까지 잡아 쓰지 않는다.
+    sources:
+      - title: "[3기신도시]하남·남양주 등 5곳 지구지정…3기 신도시 개발 '본궤도' (뉴시스)"
+        url: https://www.newsis.com/view/NISX20191013_0000796781
+        date: "2019-10-13"
+      - title: "남양주왕숙·하남교산 3기신도시 지구계획 수립 완료…10.1만가구 공급 (머니투데이방송)"
+        url: https://news.mtn.co.kr/article/2021082609362623524
+        date: "2021-08-26"
+      - title: "3기 신도시 첫 '남양주 왕숙지구' 착공 (서울신문)"
+        url: https://m.go.seoul.co.kr/news/2023/10/15/20231015500115
+        date: "2023-10-15"
+      - title: "'3기 신도시' 남양주왕숙2 공원녹지 줄여 1445가구 더 짓는다 (파이낸셜뉴스)"
+        url: https://www.fnnews.com/news/202512141835516008
+        date: "2025-12-14"
+      - title: "남양주왕숙2 공공주택지구 지구계획 변경(3차) 및 주택지구 밖 사업 승인 (3기 신도시 누리집, 국토교통부고시 제2025-727호)"
+        url: https://www.xn--3-3u6ey6lv7rsa.kr/kor/CMS/Board/Board.do?mCode=MN111&mode=view&mgr_seq=13&board_seq=440
+        date: "2025-12-24"
+      - title: "남양주왕숙2 A-3BL 공공분양주택 입주자모집공고 (LH청약플러스)"
+        url: https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000061082&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027
+        date: "2026-04-30"
+      - title: "'7억 내고 4년 기다려야'... 또 희망고문? 너무 싸다? 3기 신도시 보니 (파이낸셜뉴스)"
+        url: https://www.fnnews.com/news/202605011304590529
+        date: "2026-05-01"
+    history:
+      - block: A-1
+        stage: 사전청약
+        type: 공공분양
+        households: 762
+        noticeDate: "2021-10-15"
+        note: "2차 사전청약. 기사 본문 합계는 1,400호, 블록별 합은 1,412호(A-1 762 + A-3 650)"
+        source: { title: "남양주왕숙2 등 11곳 2차 사전청약…성남신촌, 평당 분양가 최고 (노컷뉴스)", url: "https://www.nocutnews.co.kr/news/5639050", date: "2021-10-14" }
+      - block: A-3
+        stage: 사전청약
+        type: 공공분양
+        households: 650
+        noticeDate: "2021-10-15"
+        source: { title: "남양주왕숙2 등 11곳 2차 사전청약…성남신촌, 평당 분양가 최고 (노컷뉴스)", url: "https://www.nocutnews.co.kr/news/5639050", date: "2021-10-14" }
+      - block: A6
+        stage: 사전청약
+        type: 공공분양
+        households: 429
+        noticeDate: "2022-07-15"
+        note: "공고일은 머니투데이방송 2022-07-13(왕숙2지구 429가구, 7월 15일 공고), 블록 A6는 이코노믹리뷰 2022-07-14"
+        source:
+          - { title: "국토부, 3기신도시 공공분양주택 4763가구 사전청약 실시 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2022071313551728256", date: "2022-07-13" }
+          - { title: "남양주왕숙 84㎡ 5.2억원…3기 신도시 4800호 공공 사전청약 (이코노믹리뷰)", url: "https://www.econovill.com/news/articleView.html?idxno=581753", date: "2022-07-14" }
+      - block: A-1
+        type: 민간참여 공공분양
+        households: 812
+        noticeDate: "2026-04-30"
+        title: 왕숙 아테라
+        moveIn: "2029-02"
+        note: "금호건설 시공, 분양가상한제. 특별공급 05-26, 일반공급 05-27~28(헤럴드경제 2026-05-19). SBS Biz 2026-05-30은 A-1 일반공급이 '전날' 마감됐다고 적어 마감일이 엇갈려 end는 비운다. LH청약플러스 공고 페이지는 직접 확인 못함"
+        competition:
+          scope: 일반공급
+          households: 223
+          applicants: 23525
+          rate: 105.5
+          source: { title: "남양주왕숙2 첫 공공분양 흥행…세자릿수 경쟁률 기록 (SBS Biz)", url: "https://biz.sbs.co.kr/amp/article/20000313541", date: "2026-05-30" }
+        source:
+          - { title: "'7억 내고 4년 기다려야'... 또 희망고문? 너무 싸다? 3기 신도시 보니 (파이낸셜뉴스)", url: "https://www.fnnews.com/news/202605011304590529", date: "2026-05-01" }
+          - { title: "왕숙2 첫 본청약 단지 나온다…금호건설 '왕숙 아테라' 공급 (헤럴드경제)", url: "https://www.heraldk.com/article/2026051922033964823", date: "2026-05-19" }
+      - block: A-3
+        type: 공공분양
+        households: 686
+        noticeDate: "2026-04-30"
+        end: "2026-05-29"
+        title: 남양주왕숙2 A03
+        moveIn: "2030-05"
+        competition:
+          scope: 일반공급
+          households: 163
+          applicants: 20671
+          rate: 126.8
+          source: { title: "남양주왕숙2 첫 공공분양 흥행…세자릿수 경쟁률 기록 (SBS Biz)", url: "https://biz.sbs.co.kr/amp/article/20000313541", date: "2026-05-30" }
+        source: { title: "남양주왕숙2 A-3BL 공공분양주택 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000061082&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027", date: "2026-04-30" }
+    plans:
+      - blocks: [A6]
+        type: 공공분양
+        households: 429
+        expected: "2027-04"
+        note: "LH가 사전청약 당첨자에게 본청약을 2025-12에서 2027-04로 연기한다고 등기 안내(보도). 429는 2022 사전청약 물량. 2026-11-11까지 다른 일정 보도 못 찾음"
+        source:
+          - { title: "3기 신도시 '남양주 왕숙2' 본청약 또 미뤄졌다 (서울경제)", url: "https://www.sedaily.com/article/14029822", date: "2025-02-19" }
+          - { title: "남양주왕숙 84㎡ 5.2억원…3기 신도시 4800호 공공 사전청약 (이코노믹리뷰)", url: "https://www.econovill.com/news/articleView.html?idxno=581753", date: "2022-07-14" }
+
+  - id: goyang-changneung
+    name: 고양창릉
+    region: 경기
+    district: 고양
+    kind: 공공주택지구
+    # 2025-01-31 A4·S5·S6 본청약 공고(한국경제 2025-01-31)로 블록별 분양 단계
+    stage: 블록별 분양
+    stageDates:
+      후보지: "2019-05-07"
+      지구지정: "2020-03-06"
+      지구계획승인: "2021-11-30"
+      부지조성 착공: "2023-06"
+      블록별 분양: "2025-01-31"
+    households: 38334
+    noticeMatch: [창릉]
+    notes: >-
+      3기 신도시. 후보지(2019-05-07)는 국토부 3차 신규택지 발표(머니투데이 2019-05-07, 3만8000가구·813만㎡).
+      지구지정(2020-03-06, 국토부 고시 제2020-245호)과 지구계획승인(2021-11-30, 지정변경(2차) 및 지구계획 승인 고시 제2021-1285호)은
+      LH 3기 신도시 누리집 '고양 창릉' 주요 추진경위(MTN 2020-03-04 '오는 6일 지정 고시', 이투데이 2021-11-30 '30일 밝혔다'도 같은 날짜).
+      부지조성 착공 '2023-06'은 LH 누리집 표기(일 없음). 언론은 2023년 5월로 적는다(이투데이 2026-10-13 '2023년 5월 조성공사 착수',
+      고양신문(지역지) 2024-05-03 '1공구 토목 공사 2023-05-30 시작'). LH 공식 자료를 따른다.
+      이후 지구계획 변경: 1차 2022-11-02, 3차 2024-10-18(고시 제2024-540호), 4차 2025-12-24(LH 누리집. 경기일보 2025-12-26은
+      4차 변경으로 공업지역 15만5182㎡ 지정). 2차 변경 날짜와 각 변경의 가구 수는 확인하지 못했다.
+      가구 수 38,334(공동주택 37,188 + 단독 1,146, 811만㎡)는 고양신문(지역지) 2026-04-29, 더리포트 2026-09-28도 3만8334세대·계획인구 9만1998명.
+      어느 변경 고시의 수치인지는 확인하지 못했다. LH 누리집·국토부·전국지는 '약 3만8000'(2021 지구계획 승인 38,000), MTN 2022-05-19는 37,889.
+      블록별 분양(2025-01-31): LH가 A4·S5·S6 1,792가구 본청약을 31일부터 받는다고 발표(한국경제 2025-01-31).
+      사업시행자: 경기도, LH, 경기주택도시공사, 고양도시관리공사(LH 누리집). 사업 준공 예정 2029-12(LH 누리집).
+      첫마을(A4·S5·S6, 행복주택 포함 2,089세대) 주택공사는 2024-10 착공, 2027-12 첫 입주 목표(이투데이 2026-10-13).
+      noticeMatch '창릉': 블록 공고명이 '고양창릉 S-3블록', '고양 창릉 우미린 그레니티'처럼 '창릉'을 쓴다. 지구 주소는 덕양구 원흥동·도내동·용두동·동산동 등
+      법정동이라 '창릉'이 없을 수 있다. 고양시에 '창릉동'(행정동)과 '창릉천'이 있어 지구 밖 공고가 걸릴 수 있으나, 지구 밖 '창릉' 이름 단지는 찾지 못했다.
+    sources:
+      - title: "고양창릉·부천대장 3기신도시 지정… 5.8만가구 규모 (머니투데이)"
+        url: https://www.mt.co.kr/estate/2019/05/07/2019050710395931397
+        date: "2019-05-07"
+      - title: "고양 창릉신도시 지구지정 완료…사업 본격화 (머니투데이방송)"
+        url: https://news.mtn.co.kr/news-detail/2020030409353283070
+        date: "2020-03-04"
+      - title: "3기 신도시 주택 공급 '파란불'…부천 대장·고양 창릉 지구계획 승인 (이투데이)"
+        url: https://www.etoday.co.kr/news/view/2082694
+        date: "2021-11-30"
+      - title: "첫삽 뜬 지 1년 된 창릉, 공정률은 겨우 3% (고양신문, 지역지)"
+        url: https://www.mygoyang.com/news/articleView.html?idxno=79264
+        date: "2024-05-03"
+      - title: "고양창릉 올해 3기 신도시 본청약 시작…최고 7.7억원 (한국경제)"
+        url: https://www.hankyung.com/article/2025013158426
+        date: "2025-01-31"
+      - title: "고양시 공업지역 2배 확대…32만㎡로 늘어 (경기일보)"
+        url: https://kyeonggi.com/article/20251226580055
+        date: "2025-12-26"
+      - title: "창릉신도시 5~7월 4178가구 본청약 (고양신문, 지역지)"
+        url: https://www.mygoyang.com/news/articleView.html?idxno=88513
+        date: "2026-04-29"
+      - title: "고양 창릉 첫 입주 1년 3개월 앞… 주택은 40%, 신도시는 9% (더리포트)"
+        url: https://www.thereport.co.kr/news/articleView.html?idxno=91807
+        date: "2026-09-28"
+      - title: "이성훈 LH 사장, 고양창릉 현장 점검…첫 입주 맞춰 교통·생활 인프라 갖춰야 (이투데이)"
+        url: https://www.etoday.co.kr/news/view/2635230
+        date: "2026-10-13"
+      - title: "고양 창릉 지구개요·주요 추진경위 (LH 3기 신도시 누리집, 조회 2026-11-11)"
+        url: https://www.xn--3-3u6ey6lv7rsa.kr/kor/CMS/Contents/Contents.do?mCode=MN074
+        date: "2026-11-11"
+    # 분양 이력 (2026-11-11 조사). 사전청약은 stage: 사전청약. 블록 이름은 출처 표기(S-1·S1 등은 같은 블록)를 S1 꼴로 적는다.
+    # 2021-12 사전청약: MTN 2021-12-28은 공공분양 S5·S6 합계 1,125, 신혼희망타운 A4 572로만 적어 S5·S6 블록별 세대는 비운다.
+    #   (사전청약 경쟁률 A4 6:1, S5 43:1, S6 26:1은 뉴시스 2025-02-18 등 본청약 기사 인용으로만 확인)
+    # 2025 본청약 사전청약 당첨자: A4 417, S5 633, 합계 1,401 중 1,028명(73.4%)만 본청약 신청(뉴시스 2025-02-18). S6 당첨자 수는 기사에 없다.
+    # A4 900세대 = 신혼희망타운 603 + 행복주택 297(행복주택은 plans).
+    history:
+      - block: A4
+        stage: 사전청약
+        type: 신혼희망타운
+        households: 572
+        noticeDate: "2021-12-29"
+        note: "MTN 2021-12-28: 모집공고 29일부터, 접수 2022-01-10~14(수도권 거주자 신혼희망타운은 01-21까지), 당첨자 발표 02-17"
+        source: { title: "올해 마지막 수도권 사전청약 1.7만가구 공급…3기신도시 포함 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2021122810341316901", date: "2021-12-28" }
+      - block: S5
+        stage: 사전청약
+        type: 공공분양
+        noticeDate: "2021-12-29"
+        note: "S5·S6 합계 공공분양 1,125가구(블록별 세대 미확인)"
+        source: { title: "올해 마지막 수도권 사전청약 1.7만가구 공급…3기신도시 포함 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2021122810341316901", date: "2021-12-28" }
+      - block: S6
+        stage: 사전청약
+        type: 공공분양
+        noticeDate: "2021-12-29"
+        note: "S5·S6 합계 공공분양 1,125가구(블록별 세대 미확인)"
+        source: { title: "올해 마지막 수도권 사전청약 1.7만가구 공급…3기신도시 포함 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2021122810341316901", date: "2021-12-28" }
+      - block: S1
+        stage: 사전청약
+        type: 공공분양
+        households: 453
+        noticeDate: "2022-07-15"
+        note: "453은 아시아경제 2022-07-13(S1 453·S4 941, 합계 1,394는 MTN 2022-07-13과 같음). 비즈워치 2026-05-15는 'S1 2022년 7월 362가구 사전청약'으로 엇갈림. 접수 2022-07-25~08-01, 당첨자 발표 08-18"
+        source:
+          - { title: "국토부, 3기신도시 공공분양주택 4763가구 사전청약 실시 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2022071313551728256", date: "2022-07-13" }
+          - { title: "4,800 Pre-Sale Housing Units Available in Namyangju Wangsuk, Goyang Changneung, Hwaseong Taean, and More (아시아경제)", url: "https://www.asiae.co.kr/en/article/2022071315012152344", date: "2022-07-13" }
+      - block: S4
+        stage: 사전청약
+        type: 공공분양
+        households: 941
+        noticeDate: "2022-07-15"
+        note: "사전청약 경쟁률 27:1(경기일보 2026-06-30, 고양신문 2026-07-04 인용). 본청약 세대는 1,024"
+        source:
+          - { title: "국토부, 3기신도시 공공분양주택 4763가구 사전청약 실시 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2022071313551728256", date: "2022-07-13" }
+          - { title: "4,800 Pre-Sale Housing Units Available in Namyangju Wangsuk, Goyang Changneung, Hwaseong Taean, and More (아시아경제)", url: "https://www.asiae.co.kr/en/article/2022071315012152344", date: "2022-07-13" }
+      - block: S3
+        stage: 사전청약
+        type: 나눔형 공공분양
+        households: 877
+        noticeDate: "2022-12-30"
+        note: "기사는 블록 이름 없이 '고양창릉 나눔형 877가구(당초 1,322)'. S3로 보는 근거는 고양신문(지역지) 2026-07-04 'S-3블록 사전청약 당첨 세대수 877가구'. 특별공급 2023-02-06, 일반 02-13(MTN)"
+        source:
+          - { title: "고양창릉·고덕강일3 등 공공분양 사전청약 시작…전용 84㎡ '5억' (이투데이)", url: "https://www.etoday.co.kr/news/view/2207048", date: "2022-12-28" }
+          - { title: "국토부, 공공분양 50만가구 공급 본격화…내년 2월 사전청약 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2022122809312640362", date: "2022-12-28" }
+          - { title: "고양창릉 S-3·S-4블록 2306가구 입주자 모집...S-3블록 '전용 대출' 폐지 논란 (고양신문, 지역지)", outlet: 고양신문, url: "https://www.mygoyang.com/news/articleView.html?idxno=89401", date: "2026-07-04" }
+      - block: A4
+        stage: 본청약
+        type: 신혼희망타운
+        households: 603
+        noticeDate: "2025-01-31"
+        end: "2025-02-21"
+        moveIn: "2027-12"
+        note: "일반청약 186가구(공고 기준) → 사전청약 당첨자 417명 중 106명 포기로 292가구(뉴시스 2025-02-18). 접수 2025-02-19~21. 공고일은 한국경제·아시아경제 2025-01-31('31일부터 본청약'), 서울시 안내도 '1.31.(금) 예정'"
+        # 기사(SBS Biz·아주경제·매거진한경)는 A4를 '116가구 공급에 7,290명, 20대 1'로 적는데 S6과 같은 숫자이고 합계(610가구·32,451명)와도 맞지 않아
+        # 오기로 보인다. 경쟁률(20대 1)만 넣고 세대·접수 수는 넣지 않는다.
+        competition:
+          scope: 일반공급
+          rate: 20
+          source: { title: "고양창릉에 3만2400명 몰렸다...일반경쟁률이 무려 (SBS Biz)", url: "https://biz.sbs.co.kr/amp/article/20000219317", date: "2025-02-22" }
+        source:
+          - { title: "고양창릉 올해 3기 신도시 본청약 시작…최고 7.7억원 (한국경제)", url: "https://www.hankyung.com/article/2025013158426", date: "2025-01-31" }
+          - { title: "고양창릉 사전 당첨자 1028명 본청약…일반 물량 764가구로 늘어 (뉴시스)", url: "https://www.newsis.com/view/NISX20250218_0003070163", date: "2025-02-18" }
+      - block: S5
+        stage: 본청약
+        type: 공공분양
+        households: 759
+        noticeDate: "2025-01-31"
+        end: "2025-02-21"
+        moveIn: "2028-01"
+        note: "사전청약 당첨자 633명 중 171명 포기, 일반청약 물량 297가구로 확정(뉴시스 2025-02-18). 특별공급 2025-02-19, 일반 02-20~21. 84㎡ 15가구에 6,147명(410:1)"
+        competition:
+          scope: 일반공급
+          households: 202
+          applicants: 19393
+          rate: 96
+          source: { title: "고양창릉 일반공급 경쟁률 최고 '410대 1' (아주경제)", url: "https://www.ajunews.com/view/20250221194331995", date: "2025-02-21" }
+        source:
+          - { title: "고양창릉 올해 3기 신도시 본청약 시작…최고 7.7억원 (한국경제)", url: "https://www.hankyung.com/article/2025013158426", date: "2025-01-31" }
+          - { title: "고양창릉 사전 당첨자 1028명 본청약…일반 물량 764가구로 늘어 (뉴시스)", url: "https://www.newsis.com/view/NISX20250218_0003070163", date: "2025-02-18" }
+      - block: S6
+        stage: 본청약
+        type: 공공분양
+        households: 430
+        noticeDate: "2025-01-31"
+        end: "2025-02-21"
+        moveIn: "2028-01"
+        note: "일반청약 물량 79 → 175가구(뉴시스 2025-02-18). 특별공급 2025-02-19, 일반 02-20~21"
+        competition:
+          scope: 일반공급
+          households: 116
+          applicants: 7290
+          rate: 63
+          source: { title: "고양창릉 일반공급 경쟁률 최고 '410대 1' (아주경제)", url: "https://www.ajunews.com/view/20250221194331995", date: "2025-02-21" }
+        source:
+          - { title: "고양창릉 올해 3기 신도시 본청약 시작…최고 7.7억원 (한국경제)", url: "https://www.hankyung.com/article/2025013158426", date: "2025-01-31" }
+          - { title: "고양창릉 사전 당첨자 1028명 본청약…일반 물량 764가구로 늘어 (뉴시스)", url: "https://www.newsis.com/view/NISX20250218_0003070163", date: "2025-02-18" }
+      - block: S1
+        stage: 본청약
+        type: 민간참여 공공분양
+        households: 494
+        noticeDate: "2026-04-30"
+        end: "2026-05-28"
+        title: 고양 창릉 우미린 그레니티
+        moveIn: "2029-05"
+        note: "공고일 2026-04-30·입주 2029-05는 위키트리 2026-05-19(입주는 시사저널e 2026-05-02도 같음). 사전청약 당첨자 05-18~19, 특별공급 05-26(96가구), 일반 05-27~28, 당첨자 발표 06-11, 계약 07-27~30(비즈워치·쿠키뉴스 2026-05-15). 민간참여 공공분양(우미건설)"
+        competition:
+          scope: 일반공급
+          households: 182
+          applicants: 11135
+          rate: 61.2
+          source: { title: "3기 신도시 '고양창릉 우미린 그레니티' 본청약 흥행…국평 최고 113대1 (아시아경제)", url: "https://view.asiae.co.kr/article/2026052914074692177", date: "2026-05-29" }
+        source:
+          - { title: "당첨되면 수억 차익 로또?…'고양 창릉 우미 린 그레니티' 분양가는? (위키트리)", url: "https://www.wikitree.co.kr/articles/1137211", date: "2026-05-19" }
+          - { title: "3기 신도시 '고양 창릉 우미린 그레니티' 일반 공급 (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2026/05/15/0013", date: "2026-05-15" }
+      - block: S3
+        stage: 본청약
+        type: 이익공유형 분양주택
+        households: 1282
+        noticeDate: "2026-06-30"
+        end: "2026-07-29"
+        note: "LH 2026-06-30 모집공고(S-3·S-4 합계 2,306, 사전청약 1,659·일반 647). 사전청약자 07-20~21, 특별 07-27, 일반 07-28~29(SBS Biz; 파이낸셜뉴스는 일반 07-27~29), 당첨자 08-18, 계약 11월. 5년 거주의무·LH 환매. 2025-08 보도(SBS Biz)·고양신문 2026-04-29는 1,306세대로 적음. 입주 시기는 기사에 없음. 경쟁률 보도 못 찾음"
+        source:
+          - { title: "LH, 고양창릉 2306가구 본청약…7월 27일 접수 (파이낸셜뉴스)", url: "https://www.fnnews.com/news/202606301654356359", date: "2026-06-30" }
+          - { title: "고양창릉 2천306가구 본청약 공급…6억원대 아파트 나온다 (SBS Biz)", url: "https://biz.sbs.co.kr/amp/article/20000320025", date: "2026-07-01" }
+      - block: S4
+        stage: 본청약
+        type: 공공분양
+        households: 1024
+        noticeDate: "2026-06-30"
+        end: "2026-07-29"
+        note: "59㎡ 769·74㎡ 145·84㎡ 110. 당첨자 08-19, 계약 11월. 전매제한·실거주 의무 각 3년, 분양가상한제(파이낸셜뉴스·경기일보 2026-06-30). 입주 시기는 기사에 없음. 경쟁률 보도 못 찾음"
+        source:
+          - { title: "LH, 고양창릉 2306가구 본청약…7월 27일 접수 (파이낸셜뉴스)", url: "https://www.fnnews.com/news/202606301654356359", date: "2026-06-30" }
+          - { title: "'서울 옆 3기 신도시' 고양창릉…S-3·S-4블록 2,306가구 입주자 모집 (경기일보)", url: "https://kyeonggi.com/article/20260630580495", date: "2026-06-30" }
+    plans:
+      - blocks: [S2]
+        type: 공공분양(지분적립형 284 포함)
+        households: 1057
+        expected: "2026-12"
+        note: "1,057세대 중 284세대를 지분적립형으로 12월 공급(국토부). 나머지 773세대 유형은 출처에 없음(고양신문 2026-04-29는 S2를 나눔형·6월 공급으로 적었으나 6월 공고에는 S2가 없었다). 사전청약 없던 블록. 2026-11-11까지 공고 확인 못함"
+        source:
+          - { title: "처음엔 분양가 25%로 입주, 내 집 지분은 차근차근! (정책브리핑, 국토교통부)", outlet: 정책브리핑, url: "https://www.korea.kr/multi/visualNewsView.do?newsId=148975096", date: "2026-11-06" }
+          - { title: "고양창릉 공공분양도 분양가 25%에 입주한다 (비즈워치)", outlet: 비즈워치, url: "https://news.bizwatch.co.kr/article/real_estate/2026/11/04/0012", date: "2026-11-04" }
+          - { title: "분양가 25% 먼저 내고 내집마련…내달 고양창릉서 첫 분양 (메트로신문)", outlet: 메트로신문, url: "https://www.metroseoul.co.kr/article/20261104500356", date: "2026-11-04" }
+      - blocks: [A4]
+        type: 행복주택
+        rental: true
+        households: 297
+        expected: "2026-07"
+        note: "한국경제 2026-03-11은 LH 2026년 건설임대 공급계획에 포함(월 없음), 7월은 시사저널e 2026-05-02·고양신문 2026-04-29. 2026-11-11까지 공고를 찾지 못함(LH청약플러스 미조회)"
+        source:
+          - { title: "은평·마포 옆 동네가 이 가격?…고양창릉 4000가구 풀린다 (시사저널e)", outlet: 시사저널e, url: "https://www.sisajournal-e.com/news/articleView.html?idxno=420864", date: "2026-05-02" }
+          - { title: "'서울 대방·고양 창릉'…올해 수도권 임대 2만1000가구 공급 (한국경제)", outlet: 한국경제, url: "https://www.hankyung.com/article/202603113989i", date: "2026-03-11" }
+          - { title: "창릉신도시 5~7월 4178가구 본청약 (고양신문, 지역지)", outlet: 고양신문, url: "https://www.mygoyang.com/news/articleView.html?idxno=88513", date: "2026-04-29" }
+    # 블록별 현황 (2026-11-11 조사). 공고가 난 블록(A4·S1·S3·S4·S5·S6)과 계획 블록(S2, A4 행복주택)은 history·plans로 줄이 생긴다.
+    # 그 밖에 출처로 확인한 블록은 S-7(공동주택용지 공급)뿐이다. 사업승인 목록은 찾지 못했다.
+    blockTotal:
+      total: 32
+      date: "2026-04-29"
+      source: { title: "창릉신도시 5~7월 4178가구 본청약 (고양신문, 지역지)", outlet: 고양신문, url: "https://www.mygoyang.com/news/articleView.html?idxno=88513", date: "2026-04-29" }
+    blocks:
+      - block: S7
+        households: 598
+        status: 미정
+        statusDate: "2024-11-08"
+        note: "LH 공동주택용지 추첨 공급(46,023㎡, 598호, 2024-12-09 우선공급 접수·12-23~24 계약 예정). 낙찰·분양 유형·분양 시기 미확인"
+        sources: { title: "LH, 고양창릉 신도시 공동주택용지 S-7블록 공급 (뉴스토마토)", url: "https://newstomato.com/ReadNews.aspx?no=1244664", date: "2024-11-08" }
+
+  - id: incheon-gyeyang
+    name: 인천계양
+    region: 인천
+    # 구 이름 그대로(계양구). '계양'으로 쓰면 townDistrict가 '계양시'로 바꿔 공고 주소와 안 맞는다.
+    # 청약홈 공고 주소는 '인천광역시 계양구 …'라 cityStem('계양구')가 들어 있다.
+    district: 계양구
+    kind: 공공주택지구
+    # 2024-09-20 A3블록 신혼희망타운 본청약 공고(3기 신도시 첫 본청약)로 블록별 분양 단계
+    stage: 블록별 분양
+    stageDates:
+      후보지: "2018-12-19"
+      지구지정: "2019-10-15"
+      지구계획승인: "2021-06-02"
+      부지조성 착공: "2022-11-15"
+      블록별 분양: "2024-09-20"
+    households: 17980
+    noticeMatch: [인천계양, 계양신도시]
+    notes: >-
+      3기 신도시(공식 명칭 인천계양 테크노밸리 공공주택지구). 후보지(2018-12-19, 2차 발표)와 지구지정(2019-10-15자 고시)은
+      뉴시스 2019-10-13 기사("15일자로 공공주택지구 지정을 고시", "지난해 12월19일 2차로 발표", 인천 계양 335만㎡·1만7000호).
+      지구계획승인은 뉴시스 2021-06-02 기사(국토부가 2일 3기 신도시 최초로 승인, 1만7000가구·333만㎡, 공공임대 6066·공공분양 2815).
+      고시일이 6월 3일이라는 검색 결과(smartcity.go.kr 보도자료 재게시)가 있으나 원문은 확인하지 못해 발표일로 둔다.
+      부지조성 착공(2022-11-15)은 머니투데이방송 2022-11-14 기사('오는 15일 … 조성공사 착공식', 계양구 동양동 일원).
+      머니투데이방송 2024-03-28은 '2022년 11월 지구 조성사업에 착수', 위치 계양구 귤현동·동양동·박촌동 일원으로 적는다.
+      블록별 분양(2024-09-20)은 비즈워치 2024-09-20 기사('LH는 20일 인천계양 A3블록 신혼희망타운(공공분양) 입주자모집공고').
+      가구 수 17,980은 국토교통부 고시 제2025-937호(2025-12-30, 지구지정 변경(4차)·지구계획 변경(3차)) 원문 수치:
+      주택 17,076세대(단독 170, 공동 16,906) → 17,980세대(단독 204, 공동 17,776), 904세대 증가, 계획인구 41,666 → 43,869명,
+      면적 3,333,409㎡ → 3,350,904㎡(서울 강서구 오곡동·계양구 박촌동 편입). 이후 지구계획 변경(4차)이 2026-09-09 고시(제2026-473호)됐으나
+      변경 후 가구 수는 확인하지 못해 3차 기준으로 둔다. 경인일보 2026-03-03(지역지)은 '계양지구 전체 1만 8,000가구'로 적는다.
+      청약홈 LH 공고 주소는 '계양구 귤현동, 동양동, 박촌동, 병방동, 상야동, 경기도 부천시 대장동, 서울특별시 강서구 오곡동 일원'.
+      A2·A3블록(1,285가구) 첫 입주 2026-12 예정(데일리안 2026-07-28, 파이낸셜뉴스 2026-10-05).
+      noticeMatch: '계양' 단독은 계양구의 다른 단지까지 잡으므로 '인천계양'(LH 공고명 '인천계양 A9블록…', '인천계양지구 A6블록…'과
+      청약홈 주소 '인천계양 테크노밸리 공공주택지구')과 '계양신도시'(민간 단지명 '계양신도시 카이브 유보라')로 한정한다.
+      '인천계양'이 지구 밖의 옛 LH 계양구 단지 공고명에도 쓰이는지는 확인하지 못했다.
+    sources:
+      - title: "[3기신도시]하남·남양주 등 5곳 지구지정…3기 신도시 개발 '본궤도' (뉴시스)"
+        url: https://www.newsis.com/view/NISX20191013_0000796781
+        date: "2019-10-13"
+      - title: "7월 사전청약 앞둔 인천 계양, 3기 신도시 첫 지구계획 확정 (뉴시스)"
+        url: https://www.newsis.com/view/NISX20210602_0001461784
+        date: "2021-06-02"
+      - title: "3기신도시 인천계양 첫 삽 뜬다…2026년 상반기 입주 (머니투데이방송)"
+        url: https://news.mtn.co.kr/news-detail/2022111409434163439
+        date: "2022-11-14"
+      - title: "인천 계양신도시, 입주민 맞이 본격화… 아파트 착공 돌입 (머니투데이방송)"
+        url: https://news.mtn.co.kr/news-detail/2024032810274782502
+        date: "2024-03-28"
+      - title: "'인천계양 A3' 이달 본청약…전용 55㎡ 평균 3.9억원 (비즈워치)"
+        url: https://news.bizwatch.co.kr/article/real_estate/2024/09/20/0021
+        date: "2024-09-20"
+      - title: "국토교통부 고시 제2025-937호 인천계양 테크노밸리 공공주택지구 지구지정 변경(4차) 및 지구계획 변경(3차) 승인 (서울시 도시계획 고시 사본)"
+        url: https://urban.seoul.go.kr/UpisArchive/DATA/PM/pdf/11500TTC202604160001/%EA%B5%AD%ED%86%A0%EA%B5%90%ED%86%B5%EB%B6%80_%EC%A0%9C2025-937%ED%98%B8_%EA%B3%A0%EC%8B%9C.pdf
+        date: "2025-12-30"
+      - title: "국토교통부 고시 제2026-473호 인천계양테크노밸리 공공주택지구 지구계획 변경(4차) 승인 (토지이음)"
+        url: https://eum.go.kr/web/gs/gv/gvGosiDet.jsp?pageNo=73&seq=641646
+        date: "2026-09-09"
+      - title: "3기 신도시 첫 입주 앞둔 계양TV…인천시 지원체계 본격화 (데일리안)"
+        url: https://www.dailian.co.kr/news/view/1671902/
+        date: "2026-07-28"
+    # 분양 이력 (2026-11-11 조사). 블록 이름은 출처 표기(A2, AC3 등)를 따른다. 사전청약은 stage: 사전청약.
+    # 사전청약 공고일: 1차(2021-07-16)는 비즈워치 2021-07-16 '16일 입주자모집공고를 시작으로 1차 사전청약'.
+    # 4차(2021-12-29)는 국토부 2021-12-28 보도자료 PDF(2021-12-29 모집공고) 기준, 인천계양 302호는 뉴데일리 2021-12-28.
+    # A9 블록 표기는 보도자료 표('인천계양 A9 55 302 79 339,130')에서만 확인(PDF 사본 best.or.kr, 원본 국토부 페이지는 못 찾음).
+    # 4차 사전청약의 인천계양 302호가 공공분양인지 신혼희망타운인지는 기사에 없어 유형을 비운다(본청약 A9는 신혼희망타운 55㎡).
+    # A6 사전청약 시기는 출처가 엇갈린다: 인천시 누리집(2023-09-19)·메트로신문(2023-09-20)·딜사이트(2023-10-16)는 2023-09 뉴:홈 일반형 614가구,
+    # 머니투데이방송 2026-09-08은 '2021년 사전청약 당시 제시됐던 추정가'라고 적는다. 인천시 공지에 블록(A-6)이 명시돼 있어 2023-09로 둔다.
+    history:
+      - block: A2
+        stage: 사전청약
+        type: 공공분양
+        households: 709
+        noticeDate: "2021-07-16"
+        note: "1차 사전청약. 경쟁률 52.54:1(아주경제 2024-10-20)"
+        source:
+          - { title: "[사전청약] 인천 계양 등 5개 지구서 4333가구 공급…28일부터 접수·9월 1일 당첨자 발표 (이투데이)", url: "https://www.etoday.co.kr/news/view/2044849", date: "2021-07-15" }
+          - { title: "복잡한 사전청약, 인천계양과 성남복정이 다르다? (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2021/07/16/0018", date: "2021-07-16" }
+      - block: A3
+        stage: 사전청약
+        type: 신혼희망타운
+        households: 341
+        noticeDate: "2021-07-16"
+        note: "1차 사전청약. 경쟁률 12.8:1(뉴시스 2022-03-09, 아시아경제 2022-02-27)"
+        source:
+          - { title: "[사전청약] 인천 계양 등 5개 지구서 4333가구 공급…28일부터 접수·9월 1일 당첨자 발표 (이투데이)", url: "https://www.etoday.co.kr/news/view/2044849", date: "2021-07-15" }
+          - { title: "복잡한 사전청약, 인천계양과 성남복정이 다르다? (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2021/07/16/0018", date: "2021-07-16" }
+      - block: A9
+        stage: 사전청약
+        households: 302
+        noticeDate: "2021-12-29"
+        note: "4차 사전청약. 전용 55㎡, 추정분양가 3억3,913만 원(국토부 보도자료 표). 유형(공공분양/신혼희망타운)은 출처에 없음"
+        source:
+          - { title: "공공사전청약 1만3552가구, 민간청약 3324가구 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2021/12/28/2021122800114.html", date: "2021-12-28" }
+          - { title: "3기 신도시 등 수도권에 1만 7천호 사전청약 (국토교통부 보도자료 PDF 사본)", url: "https://best.or.kr/File/82b807c31f530f9fb751f9b22f5ebf25", date: "2021-12-28" }
+      - block: A17
+        stage: 사전청약
+        type: 신혼희망타운
+        households: 284
+        noticeDate: "2022-02-28"
+        note: "5차 공공 사전청약(신혼희망타운 전용 55㎡). 공고일은 아시아경제 2022-02-27 '오는 28일 모집공고를 시작으로'"
+        source:
+          - { title: "분양가 3억~6억원선…남양주왕숙·인천계양·아산탕정 등 6100호 사전청약 (아시아경제)", url: "https://view.asiae.co.kr/article/2022022623564459667", date: "2022-02-27" }
+          - { title: "민간·공공 사전청약 10일부터 접수…84㎡ 의왕 6.3억·검단 4.6억 (뉴시스)", url: "https://www.newsis.com/view/NISX20220308_0001785953", date: "2022-03-09" }
+      - block: A6
+        stage: 사전청약
+        type: 공공분양(일반형)
+        households: 614
+        noticeDate: "2023-09-22"
+        note: "뉴:홈 3차 사전청약 일반형. 공고일은 메트로신문 2023-09-20 '일반형 공고 22일'(블록·가구 표기 없음). 블록 A-6은 인천시 공지, 614가구는 딜사이트 2023-10-16. 머니투데이방송 2026-09-08은 사전청약을 2021년으로 적어 엇갈림"
+        source:
+          - { title: "사전청약 인천계양 A-6블록 공공분양(일반형) 다문화가족 기관추천 특별공급 신청 안내 (인천광역시)", url: "https://www.incheon.go.kr/welfare/WE020521/2148318", date: "2023-09-19" }
+          - { title: "국토부, '뉴:홈' 3300가구 사전청약 실시 (메트로신문)", url: "https://www.metroseoul.co.kr/article/20230920500364", date: "2023-09-20" }
+          - { title: "LH, 공공분양주택 '뉴홈' 3035가구 사전청약 (딜사이트)", url: "https://dealsite.co.kr/articles/111285", date: "2023-10-16" }
+      - block: A3
+        type: 신혼희망타운
+        households: 359
+        noticeDate: "2024-09-20"
+        end: "2024-10-04"  # 일반 청약 10-02~04 (비즈워치 2024-09-20)
+        moveIn: "2026-12"
+        note: "3기 신도시 첫 본청약. 359가구 중 일반 청약 123가구, 전용 55㎡ 단일, 평균 분양가 약 3억9000만 원. A3블록 전체는 538호(분양+행복주택, 메트로신문 2024-03-28)"
+        competition:
+          scope: 본청약 접수(기사 표현)
+          households: 229
+          applicants: 721
+          rate: 3.14
+          source: { title: "\"공공분양을 그 가격에?\" 인천계양 본청약 경쟁률 부진…3기 신도시 흥행 '빨간불' (뉴스핌)", url: "https://www.newspim.com/news/view/20241008000928", date: "2024-10-09" }
+        source:
+          - { title: "'인천계양 A3' 이달 본청약…전용 55㎡ 평균 3.9억원 (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2024/09/20/0021", date: "2024-09-20" }
+          - { title: "인천계양에서 3기신도시 첫 본청약 공급 시작…견본주택도 개관 (머니투데이방송)", url: "https://news.mtn.co.kr/news-detail/2024092016311025700", date: "2024-09-20" }
+      - block: A2
+        type: 공공분양
+        households: 747
+        noticeDate: "2024-09-30"
+        end: "2024-10-18"  # 일반공급 10-17~18 (비즈워치 2024-09-20), 아주경제 2024-10-20 '지난 18일 진행한 … 일반공급'
+        moveIn: "2026-12"
+        note: "공고일은 예정 보도(비즈워치·이투데이 2024-09-20 'A2는 이달 30일 모집공고')와 아주경제 2024-10-20 '지난달 말 정해진 확정 분양가'. 공고문 원문 날짜는 직접 확인 못함. 84㎡ 최고 5억8411만 원. 사전청약 당첨자 562명 중 235명 포기로 일반공급 48→283가구"
+        competition:
+          scope: 일반공급
+          households: 283
+          applicants: 2299
+          rate: 8.12
+          source: { title: "3기 신도시 인천계양 A2블록도 청약 경쟁률 저조 (아주경제)", url: "https://www.ajunews.com/view/20241020132434414", date: "2024-10-20" }
+        source:
+          - { title: "'인천계양 A3' 이달 본청약…전용 55㎡ 평균 3.9억원 (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2024/09/20/0021", date: "2024-09-20" }
+          - { title: "LH, 인천계양 3기 신도시 본청약 공급 닻 올렸다 (이투데이)", url: "https://www.etoday.co.kr/news/view/2402336", date: "2024-09-20" }
+      - block: A9
+        type: 신혼희망타운
+        households: 317
+        noticeDate: "2026-04-30"
+        end: "2026-05-28"  # 청약홈 2순위 2026-05-28
+        title: 인천계양 A9블록 신혼희망타운(공공분양)(본청약)
+        moveIn: "2029-02"
+        note: "블록 전체 475호 중 행복주택 158호 제외 317호, 전용 55㎡ 단일, 평균 분양가 약 4억9000만 원, 사전청약 151가구 타입 선택(경기신문·경기일보 2026-05-19, 지역지). 청약홈 공급대상 표 합계는 166세대"
+        source:
+          - { title: "인천계양 A9블록 신혼희망타운(공공분양)(본청약) (청약홈)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026820003&pblancNo=2026820003", date: "2026-04-30" }
+          - { title: "LH, 인천계양 A9블록 신혼희망타운 청약 시작 (경기신문, 지역지)", outlet: 경기신문, url: "https://www.kgnews.co.kr/news/article.html?no=896392", date: "2026-05-19" }
+      - block: A6
+        type: 공공분양
+        households: 663
+        noticeDate: "2026-08-31"
+        end: "2026-10-02"  # 일반공급 9/30~10/2 (SBS Biz)
+        moveIn: "2029-06"
+        note: "59㎡ 529, 69㎡ 5, 74㎡ 69, 77㎡ 18, 84㎡ 42. 평균 분양가 59㎡ 약 5억3천만 원, 84㎡ 약 7억1천만 원. 사전청약 당첨자 9/17~18 우선, 당첨자 발표 10/21"
+        source:
+          - { title: "계양 신도시 663가구 본청약…전용 59㎡ 5억 대 나왔다 (SBS Biz)", url: "https://biz.sbs.co.kr/amp/article/20000331752", date: "2026-08-31" }
+      - block: A17
+        type: 신혼희망타운
+        households: 309
+        noticeDate: "2026-09-30"
+        end: "2026-10-27"  # 청약홈 2순위 2026-10-23~27
+        title: 인천계양 A17블록 신혼희망타운(공공분양)(본청약)
+        moveIn: "2029-11"
+        note: "블록 전체 463가구 중 행복주택 154가구 제외 309가구, 전용 55㎡ 단일, 평균 분양가 5억400만 원대, 사전청약 물량 빼고 일반공급 176가구(뉴스1). 당첨자 발표 2026-11-05"
+        source:
+          - { title: "인천계양 A17블록 신혼희망타운(공공분양)(본청약) (청약홈)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026820010&pblancNo=2026820010", date: "2026-09-30" }
+          - { title: "인천계양 A17블록 본청약…신혼희망타운 309가구 (경제타임스)", url: "https://www.ket.kr/news/article.html?no=41107", date: "2026-09-30" }
+      - block: AC3
+        type: 민간분양
+        households: 614
+        noticeDate: "2026-10-23"
+        end: "2026-11-04"  # 청약홈 2순위
+        title: 계양신도시 카이브 유보라(AC3BL)
+        moveIn: "2029-08"
+        note: "반도건설, 3기 신도시 첫 민간분양, 분양가상한제. 특별공급 11-02, 1순위 11-03, 2순위 11-04, 당첨자 발표 11-10. 84㎡ 최고 8억2600만 원(이투데이 2026-11-05)"
+        competition:
+          scope: 1·2순위
+          households: 474
+          applicants: 436
+          rate: 0.92
+          source: { title: "'카이브 유보라' 청약 고전에⋯3기 신도시 후속 민간분양 긴장 (이투데이)", url: "https://www.etoday.co.kr/news/view/2644642", date: "2026-11-05" }
+        source:
+          - { title: "계양신도시 카이브 유보라(AC3BL) (청약홈)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000530&pblancNo=2026000530", date: "2026-10-23" }
+      - block: AC4
+        type: 민간분양
+        households: 496
+        noticeDate: "2026-10-23"
+        end: "2026-11-04"  # 청약홈 2순위
+        title: 계양신도시 카이브 유보라(AC4BL)
+        moveIn: "2029-08"
+        note: "특별공급 11-02, 1순위 11-03, 2순위 11-04, 당첨자 발표 11-11. 84㎡ 최고 8억2200만 원. 경쟁률 범위는 기사가 AC3에만 '1·2순위'라고 쓰고 AC4는 '역시'로 이어 적음"
+        competition:
+          scope: 1·2순위
+          households: 392
+          applicants: 381
+          rate: 0.97
+          source: { title: "'카이브 유보라' 청약 고전에⋯3기 신도시 후속 민간분양 긴장 (이투데이)", url: "https://www.etoday.co.kr/news/view/2644642", date: "2026-11-05" }
+        source:
+          - { title: "계양신도시 카이브 유보라(AC4BL) (청약홈)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000532&pblancNo=2026000532", date: "2026-10-23" }
+    # 다음 블록 계획: 이투데이 2026-11-05가 '지난 8월 공개된 공급 계획'을 인용. 8월 계획 원자료(LH·국토부)는 찾지 못했다.
+    # 기사의 블록별 사업자: A7 한림건설, A21 대방산업개발, A4 금강주택, A15 신해공영·우리건설, A5 호반산업.
+    plans:
+      - blocks: [A4, A5, A7, A15, A21]
+        type: 민간분양
+        households: { A4: 379, A5: 691, A7: 662, A15: 546, A21: 536 }
+        expected: "2027-상반기"
+        note: "이투데이 2026-11-05가 '지난 8월 공개된 공급 계획'을 인용(5개 블록 2,814가구). 원 계획 자료 미확인"
+        source:
+          - { title: "'카이브 유보라' 청약 고전에⋯3기 신도시 후속 민간분양 긴장 (이투데이)", outlet: 이투데이, url: "https://www.etoday.co.kr/news/view/2644642", date: "2026-11-05" }
+    # 블록별 현황 (2026-11-11 조사). 분양 블록(A2·A3·A6·A9·A17·AC3·AC4)은 history로 줄이 생긴다.
+    # 지구계획 고시 PDF에 블록별 세대 표가 있으나 한글이 깨져 블록 유형을 읽을 수 없어 넣지 않는다.
+    blocks:
+      - block: A3
+        type: 행복주택
+        rental: true
+        status: 착공
+        statusDate: "2024-03-29"
+        note: "A3블록 538호는 신혼희망타운 분양+행복주택(메트로신문). 분양 359호를 빼면 179호지만 행복주택 수가 기사에 직접 나오지는 않아 세대 수를 비운다. 행복주택 모집공고는 확인 못함"
+        sources:
+          - { title: "3기 신도시 주택 29일 첫 착공… 인천계양 1285호 (메트로신문)", url: "https://www.metroseoul.co.kr/article/20240328500526", date: "2024-03-28" }
+      - block: A9
+        type: 행복주택
+        rental: true
+        households: 158
+        status: 미정
+        note: "A9블록 475호 중 행복주택 158호(분양 317호와 별도). 모집 시기 미확인"
+        sources:
+          - { title: "LH, 인천계양 A9블록 신혼희망타운 청약 시작 (경기신문, 지역지)", outlet: 경기신문, url: "https://www.kgnews.co.kr/news/article.html?no=896392", date: "2026-05-19" }
+          - { title: "'3기 신도시' 인천계양 A9블록, '내 집 마련' 신혼부부 관심 (경기일보, 지역지)", outlet: 경기일보, url: "https://www.kyeonggi.com/article/20260519580073", date: "2026-05-19" }
+      - block: A17
+        type: 행복주택
+        rental: true
+        households: 154
+        status: 미정
+        note: "A17블록 463가구 중 행복주택 154가구(분양 309가구와 별도). 모집 시기 미확인"
+        sources:
+          - { title: "인천계양 A17블록 본청약…신혼희망타운 309가구 (경제타임스)", url: "https://www.ket.kr/news/article.html?no=41107", date: "2026-09-30" }
+      - block: AC2-1
+        type: 보편형 공공임대
+        rental: true
+        households: 793
+        status: 계획 보도
+        statusDate: "2026-08-15"
+        note: "원래 주상복합(오피스텔 373실 민간분양) 용지를 8·13 대책으로 주택용지 전환, 전용 60~85㎡. LH '내년 중' 착공 목표(보도)"
+        sources:
+          - { title: "계양테크노밸리 '알짜 역세권'에 공공임대 793가구 들어선다 (경인일보, 지역지)", outlet: 경인일보, url: "https://www.kyeongin.com/article/1769069", date: "2026-08-15" }
+
+  - id: bucheon-daejang
+    name: 부천대장
+    region: 경기
+    district: 부천
+    kind: 공공주택지구
+    # 2025-04-30 A5·A6(e편한세상 대장 퍼스티움)·A7·A8 본청약 공고가 나왔으므로 블록별 분양 단계
+    stage: 블록별 분양
+    stageDates:
+      후보지: "2019-05"
+      지구지정: "2020-05-27"
+      지구계획승인: "2021-11-30"
+      부지조성 착공: "2023-05-17"
+      블록별 분양: "2025-04-30"
+    households: 20318
+    noticeMatch: [부천대장]
+    notes: >-
+      3기 신도시. 위치는 부천시 오정구 대장동·오정동·원종동·삼정동 일원에 인천 계양구 동양동·박촌동·병방동 일부가 들어간다(LH 3기신도시 누리집).
+      사업시행자는 경기도·LH·부천도시공사. 후보지(2019-05)는 부천시 누리집 추진실적('수도권 3기 신도시, 부천 대장지구 선정').
+      지구지정(2020-05-27 고시)은 LH 3기신도시 누리집 추진경위와 국토교통부고시 제2021-1284호 본문('2020-400(2020.05.27.)')으로 확인.
+      국토부 발표는 2020-05-25(이투데이·머니투데이방송, 당시 '2만호').
+      지구계획승인(2021-11-30)은 국토교통부고시 제2021-1284호(지구지정 변경(1차) 및 지구계획 승인, 고시일 2021-11-30)와 이투데이 2021-11-30 기사(1만9,500가구, 342만㎡).
+      지구계획 변경: 1차 2022-11-07(고시 제2022-630호, 19,500호 → 19,066호), 2차 2023-11-24(고시 제2023-659호), 3차 2024-09-12(고시 제2024-459호,
+      19,355호 → 19,046호, 인구 44,518 → 43,806명), 4차 2025-11-24(LH 3기신도시 누리집, 고시 원문은 확인 못 함).
+      가구 수 20,318은 부천시 누리집 사업개요(2025-12-29 수정, 4차 변경 뒤)의 '20,318세대'이고, 확인한 마지막 고시 원문은 3차 19,046호다. LH 누리집은 '주택 20천 호'로 적는다.
+      부지조성 착공은 출처마다 다르다: LH 3기신도시 누리집 '2023. 05. 17. 조성공사 착공', 부천시 누리집 '2023. 7. 조성공사 착공',
+      부천도시공사 추진일정(안, 2023-12-20 게시) '2023.6 조성공사 착공'. 시행자인 LH 누리집 날짜를 따른다.
+      첫 공동주택 착공은 2024-12(SBS Biz 2026-09-22, A5~A8 4개 블록 2,505가구는 이투데이 2024-09-09 계획 보도).
+      블록별 분양(2025-04-30)은 청약홈 A-5BL·A-6BL 신혼희망타운 모집공고일과 아시아경제 2025-04-30(A7·A8 본청약 시작).
+      첫 입주 2027-11 예정(부천시 누리집, SBS Biz 2026-09-22 'A5·A6블록 1천600가구 내년 11월').
+      noticeMatch: 청약홈 공고명·주소가 'e편한세상 대장 퍼스티움(부천대장 A-5BL)', '부천대장 택지개발사업지구 내 A-5블록', '부천대장 하우스토리 디센트' 꼴이라
+      '부천대장'만 쓴다. '대장' 단독은 성남 대장지구 등과 겹치고, '부천'은 부천역곡·부천원종 공고까지 잡고,
+      '하우스토리'는 부천역곡 A-2BL '역곡지구 하우스토리'(파이낸셜뉴스 2026-07-09)와 겹쳐 쓰지 않는다.
+    sources:
+      - title: "'부천 대장'도 지구 지정… 3기 신도시 5곳 모두 지구지정 완료 (이투데이)"
+        url: https://www.etoday.co.kr/news/view/1898261
+        date: "2020-05-25"
+      - title: "부천대장 지구 지정…5개 3기 신도시 공급계획 박차 (머니투데이방송)"
+        url: https://news.mtn.co.kr/news-detail/2020052509090614776
+        date: "2020-05-25"
+      - title: "국토교통부고시 제2021-1284호 부천대장 공공주택지구 지정변경(1차) 및 지구계획 승인 (부천도시공사 게시 PDF)"
+        url: https://best.or.kr/File/94e81ca9336114e9d260edf5bb2625fc
+        date: "2021-11-30"
+      - title: "3기 신도시 주택 공급 '파란불'…부천 대장·고양 창릉 지구계획 승인 (이투데이)"
+        url: https://www.etoday.co.kr/news/view/2082694
+        date: "2021-11-30"
+      - title: "국토교통부고시 제2022-630호 부천대장 공공주택지구 지구계획 변경(1차) 승인 (부천도시공사 게시 PDF)"
+        url: https://best.or.kr/File/2ee1e2ae199b699733c9135fbe3bf3e1
+        date: "2022-11-07"
+      - title: "국토교통부고시 제2024-459호 부천대장 공공주택지구 지구계획 변경(3차) 승인 (부천도시공사 게시 PDF)"
+        url: https://best.or.kr/File/77ea3b7d1384427b5b5e7b7cb9cb75d9
+        date: "2024-09-12"
+      - title: "부천 대장지구(3기 신도시) 개요·추진일정(안) (부천도시공사 누리집)"
+        url: https://www.best.or.kr/fmcs/644?action=read&action-value=3404e0a067f46509a52333d8e5cfe030
+        date: "2023-12-20"
+      - title: "부천대장신도시(공공주택지구) 건설 사업개요·추진실적 (부천시 누리집)"
+        url: https://www.bucheon.go.kr/site/homepage/menu/viewMenu?menuid=148006005009006
+        date: "2025-12-29"
+      - title: "부천 대장 지구개요·주요 추진경위 (LH 3기신도시 누리집, 2026-11-11 조회)"
+        url: https://www.xn--3-3u6ey6lv7rsa.kr/kor/CMS/Contents/Contents.do?mCode=MN068
+        date: "2026-11-11"
+      - title: "국토장관, 취임 첫 현장으로 부천대장…'주택공급 계획보다 실행 중요' (SBS Biz)"
+        url: https://biz.sbs.co.kr/amp/article/20000336340
+        date: "2026-09-22"
+    # 분양 이력 (2026-11-11 조사). 사전청약은 2021-12(4차 공공 사전청약, A5·A6·A7·A8)와 2024-01(뉴:홈 선택형, A9).
+    # 본청약은 2025-04-30 A5·A6(신혼희망타운, DL이앤씨 컨소시엄 민간참여)·A7·A8(LH 공공분양) 동시 공고.
+    # A5·A6 본청약 경쟁률은 두 블록 합산으로만 보도: 670가구(사전청약 당첨자 잔여 포함) 모집에 1만4,951명, 평균 22.3대 1,
+    # 최고 39.5대 1(A6 55㎡ 177가구에 6,986건) (스마트투데이 2025-05-16). 블록별 수치가 없어 competition에 넣지 않는다.
+    # A7·A8 일반공급은 합산 2만6,081명, 평균 128대 1(뉴시스 2025-07-02). 일반분양 192가구(아시아경제 2025-04-30)로 나누면 135.8이라
+    # 기사 128과 맞지 않고 블록별 수치도 없어 competition에 넣지 않는다.
+    history:
+      - block: A5
+        stage: 사전청약
+        type: 신혼희망타운
+        households: 605
+        noticeDate: "2021-12-29"
+        note: "46㎡ 96호, 55㎡ 509호. 공고일은 기사 '오는 29일'(2021-12-28)과 A-5 본청약 공고문 본문의 사전청약 공고일(2021.12.29.)"
+        source: { title: "올해 마지막 사전청약…서울 대방은 7억 넘고 고양창릉은 4~6억대 (노컷뉴스)", url: "https://nocutnews.co.kr/news/5680225", date: "2021-12-28" }
+      - block: A6
+        stage: 사전청약
+        type: 신혼희망타운
+        households: 437
+        noticeDate: "2021-12-29"
+        note: "46㎡ 119호, 55㎡ 318호"
+        source: { title: "올해 마지막 사전청약…서울 대방은 7억 넘고 고양창릉은 4~6억대 (노컷뉴스)", url: "https://nocutnews.co.kr/news/5680225", date: "2021-12-28" }
+      - block: A7
+        stage: 사전청약
+        type: 공공분양
+        households: 449
+        noticeDate: "2021-12-29"
+        note: "전용 59㎡ 449호. 사전청약 경쟁률 23대 1(아시아경제 2025-04-30)"
+        source:
+          - { title: "올해 마지막 사전청약…서울 대방은 7억 넘고 고양창릉은 4~6억대 (노컷뉴스)", url: "https://nocutnews.co.kr/news/5680225", date: "2021-12-28" }
+          - { title: "LH, 부천대장서 첫 본청약 (아시아경제)", url: "https://www.asiae.co.kr/article/2025043008580403301", date: "2025-04-30" }
+      - block: A8
+        stage: 사전청약
+        type: 공공분양
+        households: 372
+        noticeDate: "2021-12-29"
+        note: "전용 59㎡ 372호, 추정 분양가 4억2,886만 원. 사전청약 경쟁률 9대 1(아시아경제 2025-04-30)"
+        source:
+          - { title: "올해 마지막 사전청약…서울 대방은 7억 넘고 고양창릉은 4~6억대 (노컷뉴스)", url: "https://nocutnews.co.kr/news/5680225", date: "2021-12-28" }
+          - { title: "LH, 부천대장서 첫 본청약 (아시아경제)", url: "https://www.asiae.co.kr/article/2025043008580403301", date: "2025-04-30" }
+      - block: A9
+        stage: 사전청약
+        type: 선택형(6년 임대 후 분양 선택)
+        households: 522
+        noticeDate: "2024-01"
+        note: "가구 수는 아주경제 2024-01-21. 메트로신문 2023-12-27은 화성동탄2·고양창릉·부천대장 선택형을 '2024년 1월 4일 공고 예정'으로 적음(실제 공고일 미확인). 접수 2024-01-22~23(서울시 장애인 특별공급 안내)"
+        source:
+          - { title: "[1월 4주 분양동향] 대방동 군부지 '뉴홈' 사전청약 뜬다...전국 5206가구 분양 (아주경제)", url: "https://www.ajunews.com/view/20240121151341629", date: "2024-01-21" }
+          - { title: "'뉴홈' 올해 마지막 사전청약…대방·마곡 등 4734가구 (메트로신문)", url: "https://www.metroseoul.co.kr/article/20231227500359", date: "2023-12-27" }
+          - { title: "'부천대장 A9 선택형 사전청약' 장애인 공동주택 특별공급 기관추천 명단 (서울시 복지 누리집)", url: "https://news.seoul.go.kr/welfare/?p=559041", date: "2024-01-16" }
+      - block: A5
+        stage: 본청약
+        type: 신혼희망타운(공공분양)
+        households: 638
+        noticeDate: "2025-04-30"
+        end: "2025-05-15"
+        title: e편한세상 대장 퍼스티움
+        moveIn: "2027-11"
+        note: "A-5BL 전체 952세대 중 신혼희망타운 공공분양 638(46㎡ 103·55㎡ 535), 나머지 314는 행복주택으로 추후 공급(공고문). 한국경제 2025-05-07은 A5 683가구로 적어 엇갈림(청약홈·뉴데일리·비즈니스워치는 638). 청약홈 관리번호 2025820002, 2순위 접수 마감 05-15"
+        source:
+          - { title: "e편한세상 대장 퍼스티움(부천대장 A-5BL) 신혼희망타운(공공분양) (청약홈)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025820002&pblancNo=2025820002", date: "2025-04-30" }
+          - { title: "부천대장 첫타자 'e편한세상 대장 퍼스티움' 내달 선봬 (비즈니스워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2025/04/29/0044", date: "2025-04-30" }
+          - { title: "[르포] e편한세상 대장 퍼스티움, 개발호재에 가성비는 덤 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2025/05/09/2025050900199.html", date: "2025-05-09" }
+      - block: A6
+        stage: 본청약
+        type: 신혼희망타운(공공분양)
+        households: 461
+        noticeDate: "2025-04-30"
+        end: "2025-05-15"
+        title: e편한세상 대장 퍼스티움
+        moveIn: "2027-11"
+        note: "A-6BL 전체 688세대 중 신혼희망타운 공공분양 461, 행복주택 227은 2026-07-23 별도 공고. 청약홈 관리번호 2025820003, 청약홈 공급대상 표 합계는 222세대(사전청약 당첨자 몫 제외로 보이나 확인 못 함)"
+        source:
+          - { title: "e편한세상 대장 퍼스티움(부천대장 A-6BL) 신혼희망타운(공공분양) (청약홈)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025820003&pblancNo=2025820003", date: "2025-04-30" }
+          - { title: "[르포] e편한세상 대장 퍼스티움, 개발호재에 가성비는 덤 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2025/05/09/2025050900199.html", date: "2025-05-09" }
+      - block: A7
+        stage: 본청약
+        type: 공공분양
+        households: 473
+        noticeDate: "2025-04-30"
+        moveIn: "2028-01"
+        note: "전용 59㎡ 단일. A7·A8 합계 865가구 중 사전청약 당첨자 673, 일반 192(아시아경제). 블록별 가구 수 473·392는 경기일보(지역지). 단지 이름 없음. 일반공급 A7·A8 합산 2만6,081명·평균 128대 1(뉴시스 2025-07-02)"
+        source:
+          - { title: "LH, 부천대장서 첫 본청약 (아시아경제)", url: "https://www.asiae.co.kr/article/2025043008580403301", date: "2025-04-30" }
+          - { title: "LH, 3기 신도시 부천대장 A7·A8 본청약 시작 (경기일보, 지역지)", outlet: 경기일보, url: "https://www.kyeonggi.com/article/20250429580478", date: "2025-04-30" }
+      - block: A8
+        stage: 본청약
+        type: 공공분양
+        households: 392
+        noticeDate: "2025-04-30"
+        moveIn: "2028-01"
+        note: "전용 59㎡ 단일. 블록별 가구 수는 경기일보(지역지). 일반공급 A7·A8 합산 2만6,081명·평균 128대 1(뉴시스 2025-07-02)"
+        source:
+          - { title: "LH, 부천대장서 첫 본청약 (아시아경제)", url: "https://www.asiae.co.kr/article/2025043008580403301", date: "2025-04-30" }
+          - { title: "LH, 3기 신도시 부천대장 A7·A8 본청약 시작 (경기일보, 지역지)", outlet: 경기일보, url: "https://www.kyeonggi.com/article/20250429580478", date: "2025-04-30" }
+      - block: A6
+        type: 신혼희망타운 행복주택
+        rental: true
+        households: 227
+        noticeDate: "2026-07-23"
+        end: "2026-08-13"
+        title: 부천대장 A6블록 신혼희망타운 행복주택
+        moveIn: "2027-11"
+        note: "A6BL 688호 중 행복주택 227호. 접수 2026-08-11~13, 당첨자 발표 2026-12-17, 계약 2026-12-29~31(공고문 PDF, 한글 본문은 추출 안 되고 숫자만 읽음)"
+        source: { title: "부천대장 A6블록 신혼희망타운 행복주택 입주자모집공고 (부천도시공사 게시 PDF)", url: "https://best.or.kr/File/bdff21e07cc1b14ffbb11b6f8978fbee", date: "2026-07-23" }
+    plans:
+      - blocks: [A2]
+        type: 민간참여 공공분양
+        households: 548
+        expected: "2026-11"
+        note: "부천대장 하우스토리 디센트(LH·남광토건 컨소시엄), 전용 59·74·84㎡, 분양가상한제 적용 예정. 견본주택 2026-11-13 개관(파이낸셜뉴스 2026-11-06). 앞선 보도는 10월 공급(스마트투데이 2026-09-23). 2026-11-11까지 모집공고 확인 못함"
+        source:
+          - { title: "부천대장 A-2블록 '하우스토리 디센트' 11월 분양…대장역·학교·공원 인접 (이코노미스트)", url: "https://economist.co.kr/article/view/ecn202611050002", date: "2026-11-05" }
+          - { title: "부천대장지구 '부천대장 하우스토리 디센트' 11월 분양 (뉴스핌)", url: "https://www.newspim.com/news/view/20261104000897", date: "2026-11-04" }
+          - { title: "11월 둘째 주 전국 12곳서 5215가구 청약…경기에 79% 집중 (파이낸셜뉴스)", url: "https://www.fnnews.com/news/202611061659481516", date: "2026-11-06" }
+      - blocks: [A9]
+        type: 선택형(6년 임대 후 분양 선택)
+        expected: "2027-09"
+        note: "부천도시공사 추진일정(안, 2023-12-20 게시) '2027.9 공공주택(선택형) 본청약'. 변경될 수 있다고 적혀 있고 이후 보도는 찾지 못함"
+        source: { title: "부천 대장지구(3기 신도시) 개요·추진일정(안) (부천도시공사 누리집)", url: "https://www.best.or.kr/fmcs/644?action=read&action-value=3404e0a067f46509a52333d8e5cfe030", date: "2023-12-20" }
+    # 블록별 현황 (2026-11-11 조사). 지구 전체 블록·사업승인 목록은 찾지 못했다(고시 PDF의 블록 표는 한글이 추출되지 않아 유형을 읽을 수 없음).
+    # A2·A5~A9는 history·plans로 줄이 생긴다.
+    blocks:
+      - block: A1
+        type: 통합공공임대
+        rental: true
+        status: 사업승인
+        statusDate: "2026-04-22"
+        note: "국토부가 사업계획 변경승인 고시: 16개 동 1,002가구 계획에서 1개 동 축소(변경 후 가구 수 미확인), 사업비 2,831억 → 3,239억 원, 사업기간 2030-03 → 2029-01. 본문 한 곳은 'A12블록'으로 적음. 승인일 미확인(보도일 기준)"
+        sources: { title: "[단독]3기신도시 부천대장도 사업비 408억 증액…공공주도 140만 공급 늦춰지나 (헤럴드경제)", url: "https://www.heraldk.com/article/2026042217103952995", date: "2026-04-22" }
+      - block: A5
+        type: 신혼희망타운 행복주택
+        rental: true
+        households: 314
+        status: 미정
+        note: "A-5 본청약 공고문(2025-04-30)에 952세대 중 314세대는 행복주택으로 추후 공급한다고 적힘. 2026-07-23 A5 행복주택 314호 모집공고(접수 08-11~13)는 공고 모음 사이트에서만 보여 LH 원문을 확인하지 못함"
+        sources: { title: "A-5블록 e편한세상 대장 퍼스티움 입주자모집공고 (공고문 PDF 게시본)", url: "https://files-scs.pstatic.net/2025/05/01/JixJL9Rzav/A-5블록%20e편한세상대장퍼스티움%20입주자모집공고.pdf", date: "2025-04-30" }
+
+  - id: gwangmyeong-siheung
+    name: 광명시흥
+    region: 경기
+    # 지구가 광명시와 시흥시에 걸쳐 있다. district는 한 시만 받으므로 면적·사업본부 기준 대표인 광명으로 둔다(notes 참고).
+    district: 광명
+    kind: 공공주택지구
+    # 2024-12-30 지구계획 승인. 2026-07 협의보상 착수, 부지조성 착공은 2027년 말 목표라 아직 지구계획승인 단계
+    stage: 지구계획승인
+    stageDates:
+      후보지: "2021-02-24"
+      지구지정: "2022-11-29"
+      지구계획승인: "2024-12-30"
+    households: 67000
+    noticeMatch: [광명시흥]
+    expected:
+      from: "2029-01"
+      to: "2029-12"
+      basis: "국토부 지구계획 승인 발표(2024-12-30)와 디지털타임스 2026-05-24 보도: 2029년 첫 분양 목표(2027년 말 택지 착공, 2031년 최초 입주)"
+    notes: >-
+      3기 신도시. 2021-02-24 국토부가 2·4대책 후속 신규 공공택지 1차로 발표했고 6번째 3기 신도시로 추가됐다(뉴시스 2021-02-24, 1,271만㎡·7만 가구).
+      지구지정은 2022-11-29 고시(머니투데이방송 2022-11-28 '29일 지정·고시', SBS Biz 2022-11-28). 위치는 광명시 광명동·옥길동·노온사동·가학동,
+      시흥시 과림동·무지내동·금이동 일원(머니투데이방송 2022-11-28). 2010년 보금자리주택지구로 지정됐다가 2015년 해제된 땅이다.
+      지구계획 승인 2024-12-30: 경기일보 2025-01-09 '지난해 12월30일 국토교통부가 지구계획을 승인', 서울경제 2024-12-30 '승인했다고 30일 밝혔다',
+      광명시 보도자료 2024-12-31도 같은 날로 적는다. 가구 수 67,000은 이 지구계획 승인 수치(공공주택 3만7천: 공공분양 1만3천·공공임대 2만4천, 서울경제 2024-12-30).
+      이후 지구계획 변경으로 가구 수가 바뀌었다는 보도·고시는 찾지 못했다. 시행자는 LH·GH(광명시 보도자료 2024-12-31).
+      사전청약: 2021년 발표 때는 2023년 사전청약·2025년 분양 시작 계획이었으나(뉴시스 2021-02-24) 진행되지 않았다
+      (아주경제 2025-01 '지난해 정부가 사전청약제도를 폐지하면서 진행되지 않았다').
+      일정 목표: 2025년 보상 공고 → 2027년 택지 착공 → 2029년 첫 분양 → 2031년 최초 입주(국토부 발표, 서울경제 2024-12-30).
+      광명시 보도자료(2024-12-31)는 2031년을 '준공'으로 적어 국토부(최초 입주)와 다르다. 보상은 감정평가 2026-05-19 마무리(디지털타임스 2026-05-24),
+      LH가 2026-07-09 협의보상 안내문 발송, 2026-07-31부터 연말까지 협의(당초 11월에서 앞당김, 파이낸셜뉴스·뉴시스 2026-07-14), 착공 목표 2027년 말.
+      noticeMatch '광명시흥'은 블록 공고명(예: 광명시흥 S1-10BL)에 쓰일 지구 이름이다. '광명'·'시흥'·'옥길' 단독은 기존 단지·다른 지구(광명학온, 시흥목감 등)와 겹쳐 쓰지 않는다.
+      주의: GH의 '광명시흥 도시첨단산업단지'(광명시흥테크노밸리) 통합공공임대 공고도 '광명시흥'을 포함할 수 있다.
+    sources:
+      - title: "여의도 4배 '광명 시흥' 3기 신도시로 개발…'부산 대저·광주 산정'도 지정(종합) (뉴시스)"
+        url: https://www.newsis.com/view/NISX20210224_0001349798
+        date: "2021-02-24"
+      - title: "국토부, 광명시흥 공공주택지구 지정…27년부터 7만가구 공급 (머니투데이방송)"
+        url: https://news.mtn.co.kr/news-detail/2022112808260291201
+        date: "2022-11-28"
+      - title: "광명시흥 공공주택지구 지정…여의도 4.3배 7만가구 공급 (SBS Biz)"
+        url: https://biz.sbs.co.kr/amp/article/20000091209
+        date: "2022-11-28"
+      - title: "3기 신도시 '광명시흥' 6.7만 가구 본격 공급… \"내년 보상공고·2029년 첫 분양\" (서울경제)"
+        url: https://www.sedaily.com/article/14001411
+        date: "2024-12-30"
+      - title: "광명시흥 신도시 지구계획 국토부 승인 (광명시 보도자료)"
+        url: https://news.gm.go.kr/bbs/view.html?idxno=5554&sc_category=
+        date: "2024-12-31"
+      - title: "박승원 광명시장, 언론브리핑... 광명시흥지구, 주도적 조성 (경기일보, 지역지)"
+        url: https://kyeonggi.com/article/20250109580143
+        date: "2025-01-09"
+      - title: "서울 턱밑에 6.7만 가구 공급… \"광명·시흥 청약, 지금부터 준비해야\" (아주경제)"
+        url: https://www.ajunews.com/view/20250103172857736
+        date: "2025-01-06"
+      - title: "광명시흥 3기 신도시 내년 착공… 16년만에 보상평가 완료 (디지털타임스)"
+        url: https://www.dt.co.kr/article/12063975
+        date: "2026-05-24"
+      - title: "LH, 광명시흥 공공주택지구 보상 착수…계획보다 4개월 앞당겨 (파이낸셜뉴스, 뉴시스 제공)"
+        url: https://www.fnnews.com/news/202607140859105377
+        date: "2026-07-14"
+    # 분양 이력: 2026-11-11까지 사전청약·본청약 공고 모두 없음(사전청약은 제도 폐지로 미실시, 아주경제 2025-01). history는 비워 둔다.
+    history: []
+    # 다음 블록 계획: 블록을 지목한 분양 시기 보도는 찾지 못했다(지구 전체 '2029년 첫 분양'만 있어 위 expected로 둔다).
+    # 블록별 현황 (2026-11-11 조사). 민간참여 공공주택사업 우선협상대상자 선정(2025-07) 보도만 있고 사업승인·착공은 확인하지 못해 status는 미정.
+    # 대우건설 컨소시엄 A2-5·A1-1·B1-7블록(3,618세대, 9,059억원) 선정은 블로그에서만 보여 넣지 않는다.
+    blocks:
+      - block: S1-10
+        type: 뉴:홈 일반형 공공분양
+        households: 1568
+        status: 미정
+        note: "2025-07 DL이앤씨 컨소시엄(계룡건설 등) 민간참여 공공주택 우선협상대상자. S1-10·B1-3 합계 2,716가구, 사업비 8,120억원(서울경제 제목은 8,210억), 공사기간 착공일부터 36개월. 분양 시기 미확인"
+        sources:
+          - { title: "DL이앤씨, 8210억 규모 광명시흥 민간참여 공공주택 수주 (서울경제)", url: "https://www.sedaily.com/article/14096538", date: "2025-07-25" }
+          - { title: "DL이앤씨, '광명시흥 민간참여 공공주택사업' 우선협상대상자 선정 (이투데이)", url: "https://www.etoday.co.kr/news/view/2491171", date: "2025-07-25" }
+      - block: B1-3
+        type: 뉴:홈 나눔형 공공분양
+        households: 1148
+        status: 미정
+        note: "2025-07 DL이앤씨 컨소시엄 민간참여 공공주택 우선협상대상자(S1-10과 한 사업). 분양 시기 미확인"
+        sources:
+          - { title: "DL이앤씨, 8210억 규모 광명시흥 민간참여 공공주택 수주 (서울경제)", url: "https://www.sedaily.com/article/14096538", date: "2025-07-25" }
+          - { title: "DL이앤씨, '광명시흥 민간참여 공공주택사업' 우선협상대상자 선정 (이투데이)", url: "https://www.etoday.co.kr/news/view/2491171", date: "2025-07-25" }
+      - block: S2-4
+        type: 뉴:홈 선택형 공공분양
+        households: 708
+        status: 미정
+        note: "선택형은 6년 거주 후 분양 전환을 고르는 유형(서울경제). 2025-07 DL건설 컨소시엄(중흥토건·KR산업·풍창건설) 우선협상대상자, S2-4·S2-6 사업비 5,329억원, 2031-12 착공·2034-10 준공 예정(보도). 분양 시기 미확인"
+        sources:
+          - { title: "DL건설, 광명시흥 민간참여 공공주택 짓는다…사업비 5329억원 (서울경제)", url: "https://www.sedaily.com/article/14093060", date: "2025-07-17" }
+          - { title: "DL건설, 광명시흥서 4년만에 공공주택 수주 (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2025/07/17/0016", date: "2025-07-17" }
+      - block: S2-6
+        type: 뉴:홈 일반형 공공분양
+        households: 1231
+        status: 미정
+        note: "2025-07 DL건설 컨소시엄 우선협상대상자(S2-4와 한 사업), 2031-12 착공·2034-10 준공 예정(보도). 분양 시기 미확인"
+        sources:
+          - { title: "DL건설, 광명시흥 민간참여 공공주택 짓는다…사업비 5329억원 (서울경제)", url: "https://www.sedaily.com/article/14093060", date: "2025-07-17" }
+          - { title: "DL건설, 광명시흥서 4년만에 공공주택 수주 (비즈워치)", url: "https://news.bizwatch.co.kr/article/real_estate/2025/07/17/0016", date: "2025-07-17" }

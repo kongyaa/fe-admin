@@ -222,6 +222,20 @@ function townKeys(project) {
   return [project.name, ...(project.noticeMatch ?? [])].map(compact).filter((key) => key.length >= 2);
 }
 
+// 다른 지구의 더 긴 이름(key) 중 이 지구 key를 품은 것. 제목에서 이것을 먼저 지우고 이 지구 key를 찾는다
+// (가장 긴 지구 이름을 먼저 본다: '남양주왕숙2' 제목은 '남양주왕숙' 기사가 아니다). 긴 것부터.
+export function shadowKeys(project, towns) {
+  const own = townKeys(project);
+  const longer = new Set();
+  for (const other of towns ?? []) {
+    if (!other || other === project || other.id === project.id || other.kind !== '공공주택지구') continue;
+    for (const key of townKeys(other)) {
+      if (own.some((mine) => key.length > mine.length && key.includes(mine))) longer.add(key);
+    }
+  }
+  return [...longer].sort((a, b) => b.length - a.length);
+}
+
 // 서울 구 25개
 export const SEOUL_DISTRICTS = [
   '종로구', '중구', '용산구', '성동구', '광진구', '동대문구', '중랑구', '성북구', '강북구', '도봉구', '노원구', '은평구', '서대문구',
@@ -259,14 +273,16 @@ function seoulRelevant(rawTitle, project) {
   return hit && !(project.district && namesOtherDistrict(rawTitle, project.district));
 }
 
-// 제목(공백 제거)에 사업 이름이 있어야 남긴다. 숫자로 끝나는 이름 뒤에 숫자·차·단지·동·가가 이어지면 다른 것으로 본다
+// 제목(공백 제거)에 사업 이름이 있어야 남긴다. 공공주택지구는 다른 지구의 더 긴 이름(shadows, shadowKeys)을 먼저 지우고 본다
+// ('남양주왕숙2 A-3 본청약'은 남양주왕숙이 아니라 남양주왕숙2 기사). 숫자로 끝나는 이름 뒤에 숫자·차·단지·동·가가 이어지면 다른 것으로 본다
 // (신당1 ≠ 신당10, 신길2 ≠ 신길2차). 서울은 seoulNewsName의 keys로 보고, 숫자로 끝나지 않는 key는 정비 문맥 낱말이 있어야 하며,
 // 제목이 다른 서울 구만 말하면 뺀다('성동구 신당1구역'은 중구 신당1이 아니다).
-export function relevant(item, project) {
+export function relevant(item, project, { shadows = [] } = {}) {
   const rawTitle = cleanTitle(item?.title);
   if (!rawTitle || !project) return false;
   if (project.kind !== '공공주택지구') return seoulRelevant(rawTitle, project);
-  const title = compact(rawTitle);
+  // 지운 자리는 '|'로 남겨 앞뒤 글자가 이어져 새 key가 생기지 않게 한다
+  const title = shadows.reduce((rest, key) => rest.split(key).join('|'), compact(rawTitle));
   return townKeys(project).some((key) => containsToken(title, key));
 }
 
@@ -365,6 +381,7 @@ export async function collectNews({
   let matched = 0;
   let stopped = null;
   let networkStreak = 0;
+  const towns = (projects ?? []).filter((project) => project?.kind === '공공주택지구');
   for (const project of projects ?? []) {
     const query = newsQuery(project);
     if (!project?.id || !query) continue;
@@ -393,8 +410,9 @@ export async function collectNews({
       continue;
     }
     networkStreak = 0;
+    const shadows = project.kind === '공공주택지구' ? shadowKeys(project, towns) : [];
     const kept = dedupe(keepRecent(
-      items.map(normalizeItem).filter((item) => item && relevant(item, project)),
+      items.map(normalizeItem).filter((item) => item && relevant(item, project, { shadows })),
       today,
       maxAgeDays,
     )).sort(newestFirst).slice(0, limitPerProject);

@@ -98,6 +98,23 @@ test('town notices need the 시 and a noticeMatch substring', () => {
   assert.equal(matchesProject(town(), notice({ region: '서울', address: '서울특별시 하남시 교산동' })), false);
 });
 
+test('인천 town notices: region 인천 and 구 district (인천계양, 계양구)', () => {
+  const gyeyang = town({
+    id: 'town-incheon-gyeyang', region: '인천', district: '계양구', name: '인천계양', noticeMatch: ['인천계양', '계양신도시'],
+  });
+  const address = '인천광역시 계양구 귤현동, 동양동, 박촌동, 병방동, 상야동, 경기도 부천시 대장동, 서울특별시 강서구 오곡동 일원';
+  assert.equal(matchesProject(gyeyang, notice({ region: '인천', address, name: '인천계양 A17블록 신혼희망타운(공공분양)(본청약)' })), true);
+  assert.equal(matchesProject(gyeyang, notice({ region: '인천', address: '인천광역시 계양구 박촌동 일원', name: '계양신도시 카이브 유보라(AC3BL)' })), true);
+  // 계양구의 다른 단지, 경기 지역 공고는 잇지 않는다
+  assert.equal(matchesProject(gyeyang, notice({ region: '인천', address: '인천광역시 계양구 작전동', name: '계양 더샵' })), false);
+  assert.equal(matchesProject(gyeyang, notice({ region: '경기', address: '경기도 부천시 대장동', name: '인천계양 A17블록' })), false);
+  const { projects, linked } = linkNotices([gyeyang], [notice({
+    key: 'k1', region: '인천', address, name: '인천계양 A17블록 신혼희망타운(공공분양)(본청약)', overallEnd: '2026-11-20',
+  })], today);
+  assert.equal(linked, 1);
+  assert.equal(projects[0].live, true);
+});
+
 test('linkNotices attaches sorted, deduped notices and marks live', () => {
   const notices = [
     notice({ key: 'old', address: '서울특별시 종로구 신영동 158-2', announceDate: '2026-01-05', overallEnd: '2026-01-20' }),

@@ -39,16 +39,17 @@ test('watchlist errors', () => {
   assert.deepEqual(parseNewtowns('towns: []').watchlist, []);
 });
 
-test('the real watchlist: six 3기 신도시 and the two tracked 구리 공공주택지구', () => {
+test('the real watchlist: seven 3기 신도시 rows (왕숙·왕숙2 split) and the two 구리 공공주택지구, all tracked', () => {
   const { watchlist, projects } = loadNewtowns(new URL('../data/newtowns.yaml', import.meta.url));
   assert.deepEqual(WATCH_KINDS, ['3기 신도시', '공공주택지구']);
   assert.deepEqual(watchlist.map((w) => [w.name, w.kind, w.tracked, w.projectId]), [
-    ['남양주왕숙', '3기 신도시', false, null],
+    ['남양주왕숙', '3기 신도시', true, 'town-namyangju-wangsuk'],
+    ['남양주왕숙2', '3기 신도시', true, 'town-namyangju-wangsuk2'],
     ['하남교산', '3기 신도시', true, 'town-hanam-gyosan'],
-    ['고양창릉', '3기 신도시', false, null],
-    ['인천계양', '3기 신도시', false, null],
-    ['부천대장', '3기 신도시', false, null],
-    ['광명시흥', '3기 신도시', false, null],
+    ['고양창릉', '3기 신도시', true, 'town-goyang-changneung'],
+    ['인천계양', '3기 신도시', true, 'town-incheon-gyeyang'],
+    ['부천대장', '3기 신도시', true, 'town-bucheon-daejang'],
+    ['광명시흥', '3기 신도시', true, 'town-gwangmyeong-siheung'],
     ['구리갈매역세권', '공공주택지구', true, 'town-guri-galmae-station'],
     ['구리토평한강', '공공주택지구', true, 'town-guri-topyeong-hangang'],
   ]);

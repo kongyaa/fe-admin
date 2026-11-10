@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="서울·경기 재개발과 신도시 블록의 진행 상황, 새로 나온 청약 공고와 뉴스를 한곳에서 보는 지도">
+  <meta name="description" content="서울 재개발과 경기·인천 신도시 블록의 진행 상황, 새로 나온 청약 공고와 뉴스를 한곳에서 보는 지도">
   <title>분양 예정 지도</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2318262b'/%3E%3Crect x='3' y='3' width='4' height='4' fill='%23e9c23a'/%3E%3Crect x='9' y='3' width='4' height='4' fill='%23c63a2f'/%3E%3Crect x='3' y='9' width='4' height='4' fill='%232f7344'/%3E%3Crect x='9' y='9' width='4' height='4' fill='%231d5fa6'/%3E%3C/svg%3E">
   <script src="theme-init.js"></script>
@@ -21,7 +21,7 @@
   <header class="top">
     <div class="top-main">
       <h1>분양 예정 지도</h1>
-      <p class="sub">서울·경기 재개발과 신도시 블록의 진행 상황, 새로 나온 공고와 뉴스를 한곳에서 봅니다.</p>
+      <p class="sub">서울 재개발과 경기·인천 신도시 블록의 진행 상황, 새로 나온 공고와 뉴스를 한곳에서 봅니다.</p>
     </div>
     <div class="top-side">
       <div class="seg theme-seg" id="theme" role="group" aria-label="화면 테마">
@@ -132,10 +132,10 @@
           <div class="seg" role="group" aria-label="지역">
             <button type="button" data-filter="area" data-value="all" aria-pressed="true">전체</button>
             <button type="button" data-filter="area" data-value="서울" aria-pressed="false">서울</button>
-            <button type="button" data-filter="area" data-value="경기" aria-pressed="false">경기</button>
+            <button type="button" data-filter="area" data-value="경기·인천" aria-pressed="false">경기·인천</button>
           </div>
           <div class="seg" role="group" aria-label="유형" id="kind-group">
-            <span class="visually-hidden" id="kind-locked-note">경기는 공공주택지구만 있어 유형을 고를 수 없습니다.</span>
+            <span class="visually-hidden" id="kind-locked-note">경기·인천은 공공주택지구만 있어 유형을 고를 수 없습니다.</span>
             <button type="button" data-filter="kind" data-value="all" aria-pressed="true">전체</button>
             <button type="button" data-filter="kind" data-value="재개발" aria-pressed="false">재개발</button>
             <button type="button" data-filter="kind" data-value="재건축" aria-pressed="false">재건축</button>

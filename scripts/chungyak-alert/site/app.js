@@ -109,7 +109,7 @@ export function searchText(project) {
  */
 export function matchesFilters(project, filters, todayYm, bucket = bucketOf(project, todayYm), hay = null) {
   const f = filters ?? {};
-  if (f.area && f.area !== 'all' && project.region !== f.area) return false;
+  if (f.area && f.area !== 'all' && !inArea(project, f.area)) return false;
   if (f.kind && f.kind !== 'all' && project.kind !== f.kind) return false;
   if (f.district && project.district !== f.district) return false;
   if (f.stage) {
@@ -127,17 +127,25 @@ export function matchesFilters(project, filters, todayYm, bucket = bucketOf(proj
 export const DEFAULT_FILTERS = Object.freeze({ area: 'all', kind: 'all', stage: '', when: 'all', district: null, q: '' });
 // 폭에 따라 저절로 접고 펴는 <details class="fold auto"> 의 id(index.html). 휴대폰 폭에서만 접는다(initFolds)
 export const AUTO_FOLD_IDS = Object.freeze(['disclaimer', 'filters-box']);
-// 경기는 공공주택지구뿐이라 지역이 경기면 유형(재개발·재건축) 필터는 쓸 수 없다
-export const TOWN_AREA = '경기';
+// 경기·인천은 공공주택지구뿐이라 지역이 경기·인천이면 유형(재개발·재건축) 필터는 쓸 수 없다
+export const TOWN_AREA = '경기·인천';
+// 지역 '경기·인천'에 드는 사업 지역(region) 값
+export const TOWN_REGIONS = Object.freeze(['경기', '인천']);
+export const TOWN_AREA_LABEL = '경기·인천 공공주택지구';
 
-/** 유형 필터를 쓸 수 없는지(지역이 경기) */
+/** 사업이 지역 필터 값에 드는지. '경기·인천'은 두 지역을 함께 본다 */
+export function inArea(project, area) {
+  return area === TOWN_AREA ? TOWN_REGIONS.includes(project?.region) : project?.region === area;
+}
+
+/** 유형 필터를 쓸 수 없는지(지역이 경기·인천) */
 export function kindLocked(filters) {
   return filters?.area === TOWN_AREA;
 }
 
 /**
- * 필터 하나를 바꾼 새 필터. 지역을 경기로 바꾸면 서울 구 선택과 유형을 풀고,
- * 경기만 보는 중에 서울 구를 고르면 지역을 전체로 되돌린다. 유형이 잠겨 있으면 유형은 바꾸지 않는다.
+ * 필터 하나를 바꾼 새 필터. 지역을 경기·인천으로 바꾸면 서울 구 선택과 유형을 풀고,
+ * 경기·인천만 보는 중에 서울 구를 고르면 지역을 전체로 되돌린다. 유형이 잠겨 있으면 유형은 바꾸지 않는다.
  */
 export function nextFilters(filters, key, value) {
   const next = { ...DEFAULT_FILTERS, ...filters };
@@ -169,7 +177,7 @@ export function filterSummary(filters) {
 export function filterConditions(filters) {
   const f = { ...DEFAULT_FILTERS, ...filters };
   const out = [];
-  if (f.area !== 'all') out.push(f.area === TOWN_AREA ? '경기 공공주택지구' : f.area);
+  if (f.area !== 'all') out.push(f.area === TOWN_AREA ? TOWN_AREA_LABEL : f.area);
   if (f.kind !== 'all') out.push(f.kind);
   if (f.when === '12') out.push('1년 안');
   else if (f.when === '36') out.push('3년 안');
@@ -1236,6 +1244,40 @@ export function receivingNow(projects, today) {
   return out.sort((a, b) => a.end.localeCompare(b.end));
 }
 
+// 이 날수 안에 접수가 시작하는 공고가 있으면 블록별 분양 단계가 아니어도 '분양 중인 신도시'에 넣는다
+export const SELLING_SOON_DAYS = 14;
+
+/**
+ * 공고의 접수 상태: 'open'(오늘 접수 중) | 'soon'(limit 날까지 접수 시작) | null.
+ * 접수 단계가 없으면 공고일~마감일(파이프라인 live 와 같은 기준)을 접수 기간으로 본다.
+ */
+export function noticeReception(notice, today, limit = addDays(today, SELLING_SOON_DAYS)) {
+  let stages = receptionStages(notice);
+  if (!stages.length && isYmd(notice?.end)) stages = [{ start: isYmd(notice.announceDate) ? notice.announceDate : notice.end, end: notice.end }];
+  if (stages.some((st) => st.start <= today && today <= st.end)) return 'open';
+  if (stages.some((st) => st.start > today && st.start <= limit)) return 'soon';
+  return null;
+}
+
+/**
+ * '블록별로 분양 중인 신도시'에 보일 공공주택지구: 블록별 분양 단계이거나, 이어진 공고의 접수가 열려 있거나 14일 안에 시작하는 곳.
+ * 순서: 접수 중인 지구 먼저, 그다음 다음 블록 예상 시기(window.from)가 이른 순(없으면 뒤), 이름순.
+ */
+export function sellingTowns(projects, today) {
+  const limit = addDays(today, SELLING_SOON_DAYS);
+  return (Array.isArray(projects) ? projects : [])
+    .filter((p) => p?.kind === '공공주택지구')
+    .map((p) => {
+      const states = entriesOf(p.notices).map((n) => noticeReception(n, today, limit));
+      return { p, open: states.includes('open'), soon: states.includes('soon') };
+    })
+    .filter((x) => x.p.stage === '블록별 분양' || x.open || x.soon)
+    .sort((a, b) => Number(b.open) - Number(a.open)
+      || (toYm(a.p.window?.from) ?? '9999-99').localeCompare(toYm(b.p.window?.from) ?? '9999-99')
+      || String(a.p.name ?? '').localeCompare(String(b.p.name ?? ''), 'ko'))
+    .map((x) => x.p);
+}
+
 /** 접수 중 한 줄: '구리갈매역세권 B-1 1순위, 11-11 마감' (임대면 끝에 '(임대)') */
 export function receivingText(r, name = r?.project?.name) {
   const who = [name, r?.block].filter(Boolean).join(' ');
@@ -1390,7 +1432,9 @@ export function blockSteps(row) {
 }
 
 /** 블록별 분양 지구로 보여 줄 사업인지(지구 화면) */
-export const isTownView = (project) => isBlockTownProject(project);
+/** 지구 화면(#t=)으로 볼 사업: 블록별 분양 지구, 또는 출처가 있는 블록이 있는 공공주택지구(광명시흥처럼 분양 전이어도 블록이 정해진 곳) */
+export const isTownView = (project) => isBlockTownProject(project)
+  || (project?.kind === '공공주택지구' && entriesOf(project?.blocks).length > 0);
 
 /**
  * 지구의 지금 상태 한 줄 { tone: 'live' | 'win' | 'plan' | 'muted', label, text }.
@@ -2063,11 +2107,11 @@ function markAllRead() {
   announce('모든 소식을 읽음으로 표시했습니다');
 }
 
+/** 블록별로 분양 중인 신도시(sellingTowns): 접수 중인 지구 먼저, 그다음 다음 블록 예상 시기 순 */
 function renderTownCards() {
-  const towns = state.projects.filter((p) => p.region !== '서울' && p.kind === '공공주택지구')
-    .sort((a, b) => Number(isTownView(b)) - Number(isTownView(a)));
+  const towns = sellingTowns(state.projects, state.today);
   if (!towns.length) {
-    $('town-cards').replaceChildren(h('p', { class: 'note' }, '이 자료에는 신도시·공공주택지구가 없습니다.'));
+    $('town-cards').replaceChildren(h('p', { class: 'note' }, '지금 블록별로 분양 중인 신도시가 없습니다.'));
     return;
   }
   $('town-cards').replaceChildren(...towns.map((p) => {
@@ -2164,7 +2208,7 @@ function syncFilterControls() {
   for (const btn of document.querySelectorAll('[data-filter]')) {
     btn.setAttribute('aria-pressed', String(state.filters[btn.dataset.filter] === btn.dataset.value));
   }
-  // 경기는 공공주택지구뿐이라 유형(재개발·재건축)을 고를 수 없다
+  // 경기·인천은 공공주택지구뿐이라 유형(재개발·재건축)을 고를 수 없다
   const locked = kindLocked(state.filters);
   // disabled 대신 aria-disabled: 포커스가 남고 화면 읽기 프로그램이 이유(kind-locked-note)를 읽는다. 누르면 nextFilters 가 무시한다
   for (const btn of document.querySelectorAll('[data-filter="kind"]')) {
@@ -2236,7 +2280,7 @@ function renderList() {
   const f = state.filters;
   const total = state.visible.length;
   const shown = state.visible.slice(0, state.shown);
-  const areaLabel = f.area === '서울' ? '서울 사업' : f.area === TOWN_AREA ? '경기 공공주택지구' : '전체 사업';
+  const areaLabel = f.area === '서울' ? '서울 사업' : f.area === TOWN_AREA ? TOWN_AREA_LABEL : '전체 사업';
   $('list-title').textContent = f.district ? `${f.district} 사업` : areaLabel;
   $('list-count').textContent = `${total.toLocaleString('ko-KR')}곳`;
   $('clear-district').hidden = !f.district;
