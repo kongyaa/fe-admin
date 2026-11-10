@@ -468,8 +468,10 @@ export function blockPlanLabel(plan, todayYm) {
 
 // --- 분양 성과(공고 난 블록의 분양가·경쟁률·주변 시세 비교) ------------------------
 
-/** 시세 비교 문구에 늘 붙이는 안내 */
+/** 시세 숫자를 하나라도 보일 때 붙이는 안내 */
 export const MARKET_CAVEAT = '주변 단지 실거래로 추정한 값이며 이 단지의 시세가 아닙니다 (전매제한·미입주)';
+/** 공고 당시 값은 오늘 받은 실거래(늦은 신고·취소 반영)로 다시 계산한 것이라는 표시 */
+export const AT_NOTICE_NOTE = '(현재 집계 기준)';
 /** 청약홈 경쟁률 API 값의 안내(실시간 집계) */
 export const LIVE_COMPETITION_NOTE = '청약홈 실시간 집계, 최종 발표와 다를 수 있음';
 
@@ -598,6 +600,21 @@ export function marketPointText(point, label) {
     point.period,
   ].filter(Boolean);
   return `${head} (${parts.join(', ')})`;
+}
+
+/**
+ * 주변 시세 비교 칸: 공고 당시·현재 기준 줄과 안내. 공고 당시 숫자 줄에는 AT_NOTICE_NOTE 를 붙인다.
+ * 안내(MARKET_CAVEAT)는 숫자를 보인 줄이 하나라도 있을 때만(사유만 있으면 null).
+ * { points: [{ shown, text }], caveat }
+ */
+export function marketLines(perf) {
+  const points = [];
+  if (perf?.atNotice) {
+    const text = marketPointText(perf.atNotice, '공고 당시');
+    points.push({ shown: perf.atNotice.shown, text: perf.atNotice.shown ? `${text} ${AT_NOTICE_NOTE}` : text });
+  }
+  if (perf?.now) points.push({ shown: perf.now.shown, text: marketPointText(perf.now, '현재 기준') });
+  return { points, caveat: points.some((p) => p.shown) ? MARKET_CAVEAT : null };
 }
 
 /** from~to(달)가 startYm 부터 months 칸 안에서 차지하는 칸. 걸치지 않으면 null */
@@ -1112,10 +1129,8 @@ function performanceBox(block, perf) {
   const compSource = !c ? null
     : c.api ? muted(` · ${LIVE_COMPETITION_NOTE}`)
       : [' · ', c.ref ? sourceLink(c.ref) : muted('보도')];
-  const points = [
-    perf.atNotice ? h('li', { class: perf.atNotice.shown ? null : 'muted' }, marketPointText(perf.atNotice, '공고 당시')) : null,
-    perf.now ? h('li', { class: perf.now.shown ? null : 'muted' }, marketPointText(perf.now, '현재 기준')) : null,
-  ].filter(Boolean);
+  const market = marketLines(perf);
+  const points = market.points.map((p) => h('li', { class: p.shown ? null : 'muted' }, p.text));
   const head = [perf.noticeDate ? `공고 ${perf.noticeDate}` : null, perf.name].filter(Boolean).join(' · ');
   return h('div', { class: 'perf', role: 'group', 'aria-label': `${block} 분양 성과` },
     h('p', { class: 'perf-head' },
@@ -1132,7 +1147,7 @@ function performanceBox(block, perf) {
       h('dt', {}, '주변 시세 비교'),
       h('dd', {},
         points.length ? h('ul', { class: 'perf-points' }, points) : muted(perf.marketReason ?? '시세 비교 없음'),
-        h('small', { class: 'perf-caveat' }, MARKET_CAVEAT))));
+        market.caveat ? h('small', { class: 'perf-caveat' }, market.caveat) : null)));
 }
 
 /**

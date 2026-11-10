@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import {
-  COMPETITION_BASE_URL, createCompetitionClient, parseRate, summarizeCompetition,
+  COMPETITION_BASE_URL, createCompetitionClient, fetchCompetitionRows, parseRate, summarizeCompetition,
 } from '../src/pipeline/applyhome-competition.js';
 import {
-  REASONS, attachPerformance, blockPerformance, buildPerformance, chooseCompetition, discountRate, loadConfig, marketPoint,
-  monthsPeriod, performanceTargets, pickRepresentative, priceRows, restrictedReason,
+  REASONS, attachPerformance, blockPerformance, buildPerformance, chooseCompetition, competitionMismatches, competitionMissingReason,
+  discountRate, loadConfig, marketPoint, monthsPeriod, performanceTargets, pickRepresentative, priceRows, restrictedReason,
 } from '../src/pipeline/block-performance.js';
+import { createMolitClient } from '../src/sources/molit.js';
 import { buildMap, performanceLine, summaryLines } from '../src/pipeline/build-map.js';
 import { competitionEntry, parseNewtowns } from '../src/pipeline/newtowns.js';
 import { CONFIDENCE } from '../src/market-estimate.js';
@@ -59,10 +60,17 @@ test('summarizeCompetition sums rank-1 applicants over residence rows and divide
       { houseType: '059.9900A', households: 101, applicants: 44920, rate: 444.75, shortfall: false },
       { houseType: '084.9800A', households: 100, applicants: 8000, rate: 80, shortfall: false },
     ],
+    dropped: [],
+    conflicts: [],
   });
 });
 
 test('summarizeCompetition handles 미달 strings, CMPET_RATE fallback and empty data', () => {
+  const full = summarizeCompetition([
+    row({ HOUSE_TY: '046.0000A', SUPLY_HSHLDCO: 50, REQ_CNT: '20', CMPET_RATE: '미달' }),
+    row({ HOUSE_TY: '055.0000A', SUPLY_HSHLDCO: 10, REQ_CNT: '-', CMPET_RATE: '3.5' }),
+  ]);
+  assert.deepEqual([full.households, full.applicants, full.rate, full.shortfall, full.dropped], [60, 55, 0.92, true, []]);
   const summary = summarizeCompetition([
     // 접수건수가 숫자면 CMPET_RATE의 '미달'과 상관없이 다시 계산한다
     row({ HOUSE_TY: '046.0000A', SUPLY_HSHLDCO: 50, REQ_CNT: '20', CMPET_RATE: '미달' }),
@@ -77,9 +85,9 @@ test('summarizeCompetition handles 미달 strings, CMPET_RATE fallback and empty
     ['046.0000A', 20, 0.4, true],
     ['055.0000A', 35, 3.5, false],
   ]);
-  assert.equal(summary.households, 60);
-  assert.equal(summary.applicants, 55);
-  assert.equal(summary.shortfall, true);
+  // 빠진 주택형이 있으면 단지 합계를 내지 않는다(일부 주택형만 더한 경쟁률 금지)
+  assert.deepEqual(summary.dropped, ['074.0000A', '084.0000A']);
+  assert.deepEqual([summary.households, summary.applicants, summary.rate, summary.shortfall], [null, null, null, null]);
   assert.equal(summarizeCompetition([]), null);
   assert.equal(summarizeCompetition([row({ SUBSCRPT_RANK_CODE: 2, SUPLY_HSHLDCO: 1, REQ_CNT: '3' })]), null);
   assert.equal(summarizeCompetition(null), null);
@@ -259,7 +267,7 @@ towns:
 `;
 
 test('newtowns.yaml history competition is validated', () => {
-  const { towns } = parseNewtowns(townYaml(`{ scope: 일반공급, households: 201, applicants: "52,920", rank1Rate: 263.3, source: { title: 기사, url: "https://example.com/c", date: "2025-05-09" } }`));
+  const { towns } = parseNewtowns(townYaml(`{ scope: 일반공급, households: 201, applicants: "52,920", rate: 263.3, source: { title: 기사, url: "https://example.com/c", date: "2025-05-09" } }`));
   assert.deepEqual(towns[0].history[0].competition, {
     rate: 263.3, applicants: 52920, households: 201, scope: '일반공급', source: { title: '기사', url: 'https://example.com/c', date: '2025-05-09' },
   });
@@ -267,14 +275,16 @@ test('newtowns.yaml history competition is validated', () => {
   assert.equal(competitionEntry({ applicants: 1000, households: 3, source: { url: 'https://example.com/c' } }).rate, 333.33);
   assert.equal(competitionEntry(null), null);
   const fails = (yaml, kind) => assert.throws(() => parseNewtowns(yaml), (error) => error.kind === kind);
-  fails(townYaml('{ rank1Rate: 3 }'), 'newtowns_source');
-  fails(townYaml('{ rank1Rate: 3, source: { url: "javascript:alert(1)" } }'), 'newtowns_source');
+  fails(townYaml('{ rate: 3 }'), 'newtowns_source');
+  fails(townYaml('{ rate: 3, source: { url: "javascript:alert(1)" } }'), 'newtowns_source');
   fails(townYaml('{ applicants: 10, source: { url: "https://example.com/c" } }'), 'newtowns_field');
-  fails(townYaml('{ rank1Rate: -1, source: { url: "https://example.com/c" } }'), 'newtowns_field');
-  fails(townYaml('{ rank1Rate: 많음, source: { url: "https://example.com/c" } }'), 'newtowns_field');
+  fails(townYaml('{ rate: -1, source: { url: "https://example.com/c" } }'), 'newtowns_field');
+  fails(townYaml('{ rate: 많음, source: { url: "https://example.com/c" } }'), 'newtowns_field');
   fails(townYaml('[1, 2]'), 'newtowns_field');
-  fails(townYaml('{ rank1Rate: 3, source: { url: "https://example.com/c" } }', 'stage: 사전청약'), 'newtowns_field');
-  fails(townYaml('{ rank1Rate: 3, source: { url: "https://example.com/c" } }', 'rental: true'), 'newtowns_field');
+  fails(townYaml('{ rate: 3, source: { url: "https://example.com/c" } }', 'stage: 사전청약'), 'newtowns_field');
+  fails(townYaml('{ rate: 3, source: { url: "https://example.com/c" } }', 'rental: true'), 'newtowns_field');
+  // 예전 이름 rank1Rate는 1순위로 읽혀 받지 않는다
+  fails(townYaml('{ rank1Rate: 3, source: { url: "https://example.com/c" } }'), 'newtowns_field');
   // competition이 없는 이력에는 키가 생기지 않는다
   const plain = parseNewtowns(townYaml('').replace('        competition: \n', ''));
   assert.equal('competition' in plain.towns[0].history[0], false);
@@ -381,7 +391,7 @@ test('blockPerformance hides a market point without enough comparables and repor
   });
   const noModels = await blockPerformance({ id: 'x', notice: apt(), history: null }, { ...failing.deps, errors });
   assert.equal(noModels.pricesReason, REASONS.modelsFailed);
-  assert.equal(noModels.competitionReason, REASONS.noCompetition);
+  assert.equal(noModels.competitionReason, REASONS.competitionMissing);
 
   const unmapped = await blockPerformance({ id: 'x', notice: apt({ address: '어딘가', region: null }), history: null }, fakeDeps().deps);
   assert.equal(unmapped.marketReason, REASONS.unmapped);
@@ -496,7 +506,7 @@ towns:
         noticeDate: "2025-03-31"
         title: 교산 푸르지오 더 퍼스트
         source: { title: 공고, url: "https://example.com/a2" }
-        competition: { scope: 일반공급, households: 201, applicants: 52920, rank1Rate: 263.3, source: { title: "기사 (뉴시스)", url: "https://example.com/c", date: "2025-05-09" } }
+        competition: { scope: 일반공급, households: 201, applicants: 52920, rate: 263.3, source: { title: "기사 (뉴시스)", url: "https://example.com/c", date: "2025-05-09" } }
     blocks:
       - { block: A9, type: 공공분양, status: 사업승인, sources: { title: 기사, url: "https://example.com/a9" } }
   - id: guri-galmae-station
@@ -556,13 +566,13 @@ const COMPETITION = {
 const xml = (items) => `<response><header><resultCode>000</resultCode></header><body><items>${items
   .map((item) => `<item>${item}</item>`).join('')}</items><totalCount>${items.length}</totalCount></body></response>`;
 
-// 하남시 다른 동의 비교 단지 3곳(2020년 준공, 84㎡, 10층). 달마다 단지당 3건.
-function tradesXml(ym) {
+// 하남시 다른 동의 비교 단지 3곳(2020년 준공, 84㎡, 10층). 달마다 단지당 3건. priceOf(달, 기준가)로 달마다 값을 바꿀 수 있다.
+function tradesXml(ym, priceOf = (_, amount) => amount) {
   const year = ym.slice(0, 4);
   const month = String(Number(ym.slice(4)));
   const complexes = [['미사강변 가', '망월동', 100000], ['미사강변 나', '풍산동', 104000], ['감일 다', '감일동', 108000]];
   const items = complexes.flatMap(([name, umd, amount], i) => [0, 1, 2].map((k) => `<aptNm>${name}</aptNm>`
-    + `<dealAmount>${(amount + k * 500).toLocaleString('en-US')}</dealAmount><excluUseAr>84.9</excluUseAr><floor>10</floor>`
+    + `<dealAmount>${(priceOf(ym, amount) + k * 500).toLocaleString('en-US')}</dealAmount><excluUseAr>84.9</excluUseAr><floor>10</floor>`
     + `<umdNm>${umd}</umdNm><jibun>${100 + i}</jibun><buildYear>2020</buildYear><dealingGbn>중개거래</dealingGbn>`
     + `<aptSeq>41450-${i}</aptSeq><dealYear>${year}</dealYear><dealMonth>${month}</dealMonth><dealDay>${10 + k}</dealDay>`));
   return xml(items);
@@ -632,7 +642,8 @@ test('buildMap attaches 분양 성과 to announced sale blocks, caches MOLIT mon
   const a9 = perfOf(data, 'town-hanam-gyosan', 'A9');
   assert.equal(a9.representative.topPrice, 70000);
   assert.equal(a9.competition, null);
-  assert.equal(a9.competitionReason, REASONS.noCompetition);
+  // A9는 1순위 접수(2026-10-21)가 끝났는데 경쟁률 API에 행이 없다
+  assert.equal(a9.competitionReason, REASONS.competitionMissing);
   assert.equal(a9.market.atNotice.period, '2026-04~2026-09');
 
   // 신혼희망타운: 분양가와 경쟁률은 보이고 시세 비교는 하지 않는다
@@ -677,7 +688,8 @@ test('buildMap keeps going when the competition API is not approved and a model 
     ['보도', '일반공급', 263.3, '뉴시스']);
   const a9 = perfOf(data, 'town-hanam-gyosan', 'A9');
   assert.equal(a9.pricesReason, REASONS.modelsFailed);
-  assert.equal(a9.competitionReason, REASONS.competitionUnavailable);
+  // 403 뒤에 건너뛴 블록도 'API를 쓸 수 없음'
+  assert.equal(a9.competitionReason, REASONS.competitionDisabled);
   assert.deepEqual(data.sources.performance.errors, ['competition_http_403', 'applyhome_http_500']);
   assert.match(summaryLines(data).at(-1), /errors=2$/);
 });
@@ -788,4 +800,298 @@ test('site formats 분양 성과: money, discount, competition source and market
     ],
   }, today);
   assert.deepEqual(rows.map((r) => r.performance?.name ?? null), ['x', null]);
+});
+
+// --- 리뷰 보완: 주택형 장애, 경쟁률 분모·누락, 사유, 대상, 공고 당시 누수 ---------------------------
+
+test('competition paging: stops on a short page when the count is missing or not a number, else hits competition_page_limit', async () => {
+  const fullPage = () => Array.from({ length: 500 }, (_, i) => row({ HOUSE_TY: `t${i}`, SUPLY_HSHLDCO: 1, REQ_CNT: '1' }));
+  const pages = (bodies) => {
+    const urls = [];
+    return {
+      urls,
+      fetch: async (url) => {
+        urls.push(url);
+        return Response.json(bodies(Number(new URL(url).searchParams.get('page'))));
+      },
+    };
+  };
+  // 건수 없음(NaN): 짧은 페이지에서 멈춘다
+  const short = pages(() => ({ data: [row({ HOUSE_TY: 'a', SUPLY_HSHLDCO: 1, REQ_CNT: '1' })] }));
+  const rows1 = await fetchCompetitionRows({
+    fetch: short.fetch, key: 'K', houseManageNo: '1', pblancNo: '1', sleep: noSleep,
+  });
+  assert.deepEqual([rows1.length, short.urls.length], [1, 1]);
+  // 건수가 숫자가 아님(NaN): 꽉 찬 페이지면 다음 페이지를 보고, 짧은 페이지에서 멈춘다
+  const nan = pages((page) => ({
+    matchCount: '알수없음', data: page === 1 ? fullPage() : [row({ HOUSE_TY: 'z', SUPLY_HSHLDCO: 1, REQ_CNT: '1' })],
+  }));
+  const rows2 = await fetchCompetitionRows({
+    fetch: nan.fetch, key: 'K', houseManageNo: '1', pblancNo: '1', sleep: noSleep,
+  });
+  assert.deepEqual([rows2.length, nan.urls.length], [501, 2]);
+  // 건수가 커서 끝나지 않으면 20페이지에서 competition_page_limit
+  const endless = pages(() => ({ matchCount: 999999, data: fullPage() }));
+  const client = createCompetitionClient({ fetch: endless.fetch, key: 'K', sleep: noSleep });
+  const got = await client.get({ houseManageNo: '1', pblancNo: '1' });
+  assert.deepEqual([got.result, got.error, got.rows, endless.urls.length], [null, 'competition_page_limit', null, 20]);
+  // page_limit은 장애가 아니라 다음 블록은 다시 부른다
+  assert.equal(client.stopped(), null);
+  // 받은 행 수를 함께 돌려준다(빈 결과와 읽지 못한 결과를 가리려고)
+  const empty = createCompetitionClient({ fetch: async () => Response.json({ totalCount: 0, data: [] }), key: 'K', sleep: noSleep });
+  assert.deepEqual(await empty.get({ houseManageNo: '1', pblancNo: '1' }), { result: null, error: null, rows: 0 });
+});
+
+test('buildPerformance stops model lookups after a 청약홈 timeout (createModelLookup)', async () => {
+  const log = [];
+  const fetch = async (url) => {
+    log.push(url);
+    const op = new URL(url).pathname.split('/').at(-1);
+    if (op === 'getAPTLttotPblancMdl') throw Object.assign(new Error('slow'), { name: 'TimeoutError' });
+    if (op === 'getAPTLttotPblancCmpet') return Response.json({ totalCount: 0, data: [] });
+    return new Response(xml([]));
+  };
+  const targets = [
+    { id: 'a', notice: apt(), history: null },
+    { id: 'b', notice: apt({ key: '2025000009-2025000009', houseManageNo: '2025000009', pblancNo: '2025000009' }), history: null },
+  ];
+  const { results, stats } = await buildPerformance(targets, {
+    fetch, key: 'K', today, config, sleep: noSleep,
+  });
+  const models = log.filter((url) => kindOf(url) === 'getAPTLttotPblancMdl');
+  // 첫 블록에서 재시도까지 3번, 두 번째 블록은 부르지 않는다
+  assert.equal(models.length, 3);
+  assert.ok(models.every((url) => new URL(url).searchParams.get('cond[HOUSE_MANAGE_NO::EQ]') === '2025000001'));
+  assert.deepEqual([results.get('a').pricesReason, results.get('b').pricesReason], [REASONS.modelsFailed, REASONS.modelsFailed]);
+  assert.deepEqual(stats.errors, ['applyhome_timeout']);
+  // 경쟁률은 블록마다 따로 부른다
+  assert.equal(log.filter((url) => kindOf(url) === 'getAPTLttotPblancCmpet').length, 2);
+});
+
+test('competitionMismatches checks region rows and the model households for the same HOUSE_TY', () => {
+  const models = [
+    { houseType: '059.9900A', area: 59.99, price: 48000, households: 300 },
+    { houseType: '084.9800A', area: 84.98, price: 64000, households: 250 },
+    { houseType: '101.0000A', area: 101, price: 80000, households: null },
+  ];
+  // 일반공급 세대수는 주택형 정보의 세대수(일반+특별)를 넘지 않으면 맞다. 세대수를 모르는 주택형은 건너뛴다.
+  const ok = summarizeCompetition([
+    row({ HOUSE_TY: '059.9900A', SUPLY_HSHLDCO: 101, REQ_CNT: '1000' }),
+    row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 250, REQ_CNT: '10', RESIDE_SECD: '01' }),
+    row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 250, REQ_CNT: '20', RESIDE_SECD: '02' }),
+    row({ HOUSE_TY: '101.0000A', SUPLY_HSHLDCO: 9999, REQ_CNT: '1' }),
+  ]);
+  assert.deepEqual(competitionMismatches(ok, models), []);
+  // 거주지역 행마다 공급세대수가 다르면(지역별 배정) 어긋남. 주택형 정보가 없어도 이 검사는 한다.
+  const regional = summarizeCompetition([
+    row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 75, REQ_CNT: '10', RESIDE_SECD: '01' }),
+    row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 175, REQ_CNT: '20', RESIDE_SECD: '03' }),
+  ]);
+  assert.deepEqual(regional.conflicts, ['084.9800A']);
+  assert.deepEqual(competitionMismatches(regional, models), ['084.9800A']);
+  assert.deepEqual(competitionMismatches(regional, null), ['084.9800A']);
+  // 주택형 정보보다 크면, 또는 같은 HOUSE_TY가 없으면 어긋남
+  const bigger = summarizeCompetition([row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 251, REQ_CNT: '10' })]);
+  assert.deepEqual(competitionMismatches(bigger, models), ['084.9800A']);
+  const unknown = summarizeCompetition([row({ HOUSE_TY: '074.0000A', SUPLY_HSHLDCO: 10, REQ_CNT: '10' })]);
+  assert.deepEqual(competitionMismatches(unknown, models), ['074.0000A']);
+  assert.deepEqual(competitionMismatches(unknown, null), []);
+  assert.deepEqual(competitionMismatches(null, models), []);
+});
+
+const withCompetition = (rows, models = [{
+  houseType: '084.9800A', area: 84.98, price: 64000, households: 250,
+}]) => fakeDeps({
+  getModels: async () => models,
+  competition: { get: async () => ({ result: summarizeCompetition(rows), error: null, rows: rows.length }) },
+});
+
+test('blockPerformance drops an API rate whose denominator disagrees and falls back to the cited value', async () => {
+  const rows = [
+    row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 80, REQ_CNT: '4000', RESIDE_SECD: '01' }),
+    row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 120, REQ_CNT: '6000', RESIDE_SECD: '02' }),
+  ];
+  const errors = [];
+  const cited = await blockPerformance({ id: 'x', notice: apt(), history: { competition: reported } }, { ...withCompetition(rows).deps, errors });
+  assert.deepEqual([cited.competition.source, cited.competition.rate, cited.competitionReason], ['보도', 263.3, null]);
+  assert.deepEqual(errors, ['competition_households_mismatch']);
+
+  const bare = await blockPerformance({ id: 'x', notice: apt(), history: null }, withCompetition(rows).deps);
+  assert.deepEqual([bare.competition, bare.competitionReason], [null, REASONS.competitionMismatch]);
+
+  // 주택형 정보보다 큰 세대수도 같다
+  const over = await blockPerformance({ id: 'x', notice: apt(), history: null },
+    withCompetition([row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 300, REQ_CNT: '600' })]).deps);
+  assert.equal(over.competitionReason, REASONS.competitionMismatch);
+
+  // 맞으면 API 값을 쓴다
+  const good = await blockPerformance({ id: 'x', notice: apt(), history: { competition: reported } },
+    withCompetition([row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 200, REQ_CNT: '600' })]).deps);
+  assert.deepEqual([good.competition.source, good.competition.rate, good.competition.households], ['청약홈', 3, 200]);
+});
+
+test('blockPerformance does not publish a complex total when a type was dropped', async () => {
+  const rows = [
+    row({ HOUSE_TY: '084.9800A', SUPLY_HSHLDCO: 200, REQ_CNT: '600' }),
+    // 접수건수를 못 읽는 주택형(행이 둘이라 CMPET_RATE로도 거꾸로 잡지 않는다)
+    row({ HOUSE_TY: '059.9900A', SUPLY_HSHLDCO: 100, REQ_CNT: '-', CMPET_RATE: '50', RESIDE_SECD: '01' }),
+    row({ HOUSE_TY: '059.9900A', SUPLY_HSHLDCO: 100, REQ_CNT: '미달', CMPET_RATE: '-', RESIDE_SECD: '02' }),
+  ];
+  const models = [
+    { houseType: '059.9900A', area: 59.99, price: 48000, households: 150 },
+    { houseType: '084.9800A', area: 84.98, price: 64000, households: 250 },
+  ];
+  const summary = summarizeCompetition(rows);
+  assert.deepEqual([summary.rate, summary.dropped, summary.byType.length], [null, ['059.9900A'], 1]);
+  assert.equal(chooseCompetition(summary, null), null);
+
+  const errors = [];
+  const cited = await blockPerformance({ id: 'x', notice: apt(), history: { competition: reported } },
+    { ...withCompetition(rows, models).deps, errors });
+  assert.deepEqual([cited.competition.source, cited.competition.rate], ['보도', 263.3]);
+  assert.deepEqual(errors, ['competition_partial']);
+  const bare = await blockPerformance({ id: 'x', notice: apt(), history: null }, withCompetition(rows, models).deps);
+  assert.deepEqual([bare.competition, bare.competitionReason], [null, REASONS.competitionPartial]);
+});
+
+test('competitionReason says why there is no rate, case by case', async () => {
+  const ended = apt({ overallStart: '2025-05-07', overallEnd: '2025-05-09' });
+  const empty = { result: null, error: null, rows: 0 };
+  // 접수가 끝났는데 행이 없음 → 청약홈 경쟁률에 이 공고가 없음
+  assert.equal(competitionMissingReason(empty, ended, today), REASONS.competitionMissing);
+  assert.equal(REASONS.competitionMissing, '청약홈 경쟁률 자료에 이 공고가 없습니다(LH 청약플러스 접수 공고는 빠질 수 있음)');
+  // 접수일을 몰라도 같은 사유
+  assert.equal(competitionMissingReason(empty, apt(), today), REASONS.competitionMissing);
+  // 접수 중(마감일이 오늘이거나 뒤)
+  const open = apt({ overallStart: '2026-11-05', overallEnd: '2026-11-12' });
+  assert.equal(competitionMissingReason(empty, open, today), REASONS.competitionPending);
+  assert.equal(REASONS.competitionPending, '접수 중이라 아직 집계 전입니다');
+  assert.equal(competitionMissingReason(empty, apt({ overallStart: '2026-11-03', overallEnd: today }), today), REASONS.competitionPending);
+  // 접수 중에는 1순위 행을 못 읽어도 '집계 전'
+  assert.equal(competitionMissingReason({ result: null, error: null, rows: 3 }, open, today), REASONS.competitionPending);
+  // 접수 시작 전
+  assert.equal(competitionMissingReason(empty, apt({ overallStart: '2026-11-20', overallEnd: '2026-11-25' }), today),
+    REASONS.competitionBeforeReceipt);
+  // 401·403, 그 뒤 건너뛴 블록 → API를 쓸 수 없음
+  for (const got of [
+    { result: null, error: 'competition_http_401', rows: null },
+    { result: null, error: 'competition_http_403', rows: null },
+    { result: null, error: null, skipped: 'competition_unauthorized' },
+  ]) {
+    assert.equal(competitionMissingReason(got, open, today), REASONS.competitionDisabled, JSON.stringify(got));
+  }
+  assert.equal(REASONS.competitionDisabled, '경쟁률 API를 쓸 수 없습니다');
+  // 그 밖의 실패·시간 초과 뒤 건너뜀·클라이언트 없음 → 조회 실패
+  for (const got of [
+    { result: null, error: 'competition_http_500', rows: null },
+    { result: null, error: null, skipped: 'competition_timeout' },
+    null,
+  ]) {
+    assert.equal(competitionMissingReason(got, ended, today), REASONS.competitionUnavailable, JSON.stringify(got));
+  }
+  // 접수가 끝났고 행은 있는데 1순위 값을 못 읽음
+  assert.equal(competitionMissingReason({ result: null, error: null, rows: 4 }, ended, today), REASONS.competitionUnreadable);
+
+  // blockPerformance에서도 같은 사유. 키가 없으면 키 없음, 공고가 없으면 공고 없음
+  const pending = await blockPerformance({ id: 'x', notice: open, history: null }, fakeDeps().deps);
+  assert.equal(pending.competitionReason, REASONS.competitionPending);
+  const disabled = await blockPerformance({ id: 'x', notice: ended, history: null }, fakeDeps({
+    competition: { get: async () => ({ result: null, error: 'competition_http_403', rows: null }) },
+  }).deps);
+  assert.equal(disabled.competitionReason, REASONS.competitionDisabled);
+  const noKey = await blockPerformance({ id: 'x', notice: null, history: null }, { ...fakeDeps().deps, hasKey: false });
+  assert.equal(noKey.competitionReason, REASONS.noKey);
+  const noNotice = await blockPerformance({ id: 'x', notice: null, history: null }, fakeDeps().deps);
+  assert.equal(noNotice.competitionReason, REASONS.noNotice);
+});
+
+test('performanceTargets prefers the APT 본청약 notice over a later 무순위 one, and the latest APT among several', () => {
+  const project = {
+    id: 'town-x',
+    kind: '공공주택지구',
+    stage: '블록별 분양',
+    district: '하남시',
+    history: [],
+    plans: [],
+    blockEntries: [{ block: 'A9', rental: false, status: '사업승인' }, { block: 'A11', rental: false, status: '사업승인' }],
+    notices: [
+      { key: 'a9-apt', name: '하남교산 A9블록 공공분양', announceDate: '2026-03-01', typeLabel: 'APT' },
+      { key: 'a9-remain', name: '하남교산 A9블록 공공분양', announceDate: '2026-11-01', typeLabel: '무순위' },
+      { key: 'a11-old', name: '하남교산 A11블록 공공분양', announceDate: '2026-02-01', typeLabel: 'APT' },
+      { key: 'a11-new', name: '하남교산 A11블록 공공분양', announceDate: '2026-09-01', typeLabel: 'APT' },
+    ],
+    blocks: [{ block: 'A9', rental: false, type: '공공분양' }, { block: 'A11', rental: false, type: '공공분양' }],
+  };
+  const fullByKey = new Map([
+    ['a9-apt', apt({ key: 'a9-apt', announceDate: '2026-03-01' })],
+    ['a9-remain', apt({
+      key: 'a9-remain', kind: 'remainder', houseSecd: '04', typeLabel: '무순위', announceDate: '2026-11-01',
+    })],
+    ['a11-old', apt({ key: 'a11-old', announceDate: '2026-02-01' })],
+    ['a11-new', apt({ key: 'a11-new', announceDate: '2026-09-01' })],
+  ]);
+  const targets = performanceTargets(project, { fullByKey, today });
+  assert.deepEqual(targets.map((t) => [t.id, t.notice.key]), [['town-x|A9|sale', 'a9-apt'], ['town-x|A11|sale', 'a11-new']]);
+  // 요약의 유형 표시가 APT여도 원래 공고가 무순위(remainder)면 고르지 않는다
+  const mislabeled = {
+    ...project,
+    notices: project.notices.map((n) => (n.key === 'a9-remain' ? { ...n, typeLabel: 'APT' } : n)),
+  };
+  assert.equal(performanceTargets(mislabeled, { fullByKey, today })[0].notice.key, 'a9-apt');
+});
+
+// 공고 당시 값에 오늘 자료가 섞이지 않는지: 달마다 값이 오르는 실거래. 공고 뒤 달을 3배로 바꿔도 공고 당시 값은 그대로다.
+test('market at notice uses only trades before the notice, dated at the notice (no today leak)', async () => {
+  const monthIndex = (ym) => (Number(ym.slice(0, 4)) - 2024) * 12 + Number(ym.slice(4)) - 1;
+  const growth = (ym, amount) => Math.round(amount * (1 + 0.01 * monthIndex(ym)));
+  const spike = (ym, amount) => (ym <= '202502' ? growth(ym, amount) : amount * 3);
+  const run = async (priceOf) => {
+    const fetch = async (url) => {
+      const u = new URL(url);
+      return new Response(u.searchParams.get('LAWD_CD') === '41450' ? tradesXml(u.searchParams.get('DEAL_YMD'), priceOf) : xml([]));
+    };
+    const { deps } = fakeDeps({ molit: createMolitClient({ fetch, key: 'k', sleep: noSleep }) });
+    return (await blockPerformance({
+      id: 'x', district: '하남시', notice: apt(), history: null,
+    }, deps)).market;
+  };
+  const market = await run(growth);
+  assert.deepEqual([market.atNotice.period, market.atNotice.estimate, market.atNotice.discountRate, market.atNotice.samples],
+    ['2024-09~2025-02', 124976, 0.488, 54]);
+  assert.deepEqual([market.now.period, market.now.estimate, market.now.discountRate, market.now.samples],
+    ['2026-05~2026-10', 148157, 0.568, 54]);
+  assert.notEqual(market.atNotice.estimate, market.now.estimate);
+  const spiked = await run(spike);
+  assert.equal(spiked.atNotice.estimate, 124976);
+  assert.equal(spiked.now.estimate, 338592);
+});
+
+test('site shows the 시세 caveat only with a shown number and marks the 공고 당시 number as 현재 집계 기준', () => {
+  const shownPoint = {
+    asOf: '2025-03-31',
+    period: '2024-09~2025-02',
+    estimate: 90000,
+    unit: 1059.1,
+    discountRate: 0.289,
+    confidence: '중',
+    scope: '시군구',
+    scopeLabel: '하남시',
+    comparables: ['가'],
+    comparableCount: 1,
+    samples: 9,
+  };
+  const hidden = { asOf: today, period: '2026-05~2026-10', estimate: null, reason: REASONS.lowConfidence };
+  const both = app.marketLines(app.cleanPerformance({ market: { atNotice: shownPoint, now: hidden } }));
+  assert.equal(both.caveat, app.MARKET_CAVEAT);
+  assert.deepEqual(both.points.map((p) => p.shown), [true, false]);
+  assert.equal(both.points[0].text,
+    '공고 당시 주변 신축 환산 시세 9억 원 대비 분양가 29% 낮음 (신뢰도 중, 하남시 비교 1개 단지: 가, 실거래 9건, 2024-09~2025-02) (현재 집계 기준)');
+  assert.equal(both.points[1].text, `현재 기준: ${REASONS.lowConfidence} (2026-05~2026-10)`);
+  // 숫자가 하나도 없으면 안내를 붙이지 않는다(공고 당시 사유 줄에도 표시 없음)
+  const none = app.marketLines(app.cleanPerformance({ market: { atNotice: { ...hidden, asOf: '2025-03-31' }, now: hidden } }));
+  assert.equal(none.caveat, null);
+  assert.ok(!none.points[0].text.includes(app.AT_NOTICE_NOTE));
+  assert.deepEqual(app.marketLines(app.cleanPerformance({ marketReason: '신혼희망타운은 …' })), { points: [], caveat: null });
+  // 현재 기준 숫자만 있어도 안내는 붙는다
+  assert.equal(app.marketLines(app.cleanPerformance({ market: { atNotice: null, now: { ...shownPoint, asOf: today } } })).caveat, app.MARKET_CAVEAT);
 });

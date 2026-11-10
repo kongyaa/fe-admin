@@ -3,7 +3,7 @@ import {
   CONFIDENCE, buildSubject, cleanTrades, estimateBestMargin, restrictedType,
 } from '../market-estimate.js';
 import { resolveAddress } from '../sgg-codes.js';
-import { fetchModels } from '../sources/applyhome.js';
+import { createModelLookup } from '../sources/applyhome.js';
 import { createMolitClient, createPresaleClient } from '../sources/molit.js';
 import { completeMonths, safeError, safeHttpUrl } from '../util.js';
 import { createCompetitionClient } from './applyhome-competition.js';
@@ -21,6 +21,8 @@ import {
 //   안전 마진(옵션·취득세 차감)이나 로또 판정은 쓰지 않고 할인율(1 − 분양가/추정 시세)만 낸다. 신뢰도 하나 추정 없음은 숫자를 숨긴다.
 //   제한 유형(신혼희망타운, 나눔형, 토지임대부, 지분적립형)은 시세 차익을 그대로 갖지 못해 시세 비교를 하지 않는다.
 // - 경쟁률: 청약홈 경쟁률 API(15098905), 없으면 newtowns.yaml 이력의 competition(보도 출처).
+//   API 값은 주택형 공급세대수가 거주지역 행마다 같고 주택형 정보(fetchModels)의 세대수와 어긋나지 않을 때,
+//   그리고 모든 주택형의 접수건수를 읽었을 때만 쓴다. 아니면 버리고 보도 값으로 넘어간다.
 // 블록마다 따로 try/catch하고, 실패해도 지도 빌드는 계속한다.
 
 export const REPRESENTATIVE_AREA = 84;
@@ -92,9 +94,19 @@ export const REASONS = {
   tradesFailed: '국토부 실거래 조회에 실패했습니다',
   noEstimate: '주변 비교 단지가 부족해 시세를 추정하지 않았습니다',
   lowConfidence: '추정 신뢰도가 하(비교 단지·표본 부족, 넓은 범위 등)라 숫자를 숨깁니다',
-  noCompetition: '경쟁률 자료가 없습니다(접수 전이거나 아직 집계 전)',
+  // 경쟁률: 경우마다 사실대로
+  competitionMissing: '청약홈 경쟁률 자료에 이 공고가 없습니다(LH 청약플러스 접수 공고는 빠질 수 있음)',
+  competitionPending: '접수 중이라 아직 집계 전입니다',
+  competitionBeforeReceipt: '접수 전이라 아직 집계 전입니다',
+  competitionDisabled: '경쟁률 API를 쓸 수 없습니다',
   competitionUnavailable: '청약홈 경쟁률을 조회하지 못했습니다',
+  competitionUnreadable: '청약홈 경쟁률 자료에서 1순위 값을 읽지 못했습니다',
+  competitionPartial: '청약홈 경쟁률에서 일부 주택형을 읽지 못해 단지 경쟁률을 내지 않았습니다',
+  competitionMismatch: '청약홈 경쟁률의 공급세대수가 주택형 정보와 맞지 않아 쓰지 않았습니다',
 };
+
+export const COMPETITION_MISMATCH = 'competition_households_mismatch';
+export const COMPETITION_PARTIAL = 'competition_partial';
 
 // 비교 범위 이름: 시군구는 시 이름(하남시), 법정동·리·읍면은 그 이름
 function scopeLabel(scope, { district, umd, village }) {
@@ -131,9 +143,36 @@ export function marketPoint(best, {
   };
 }
 
-// 청약홈 경쟁률 요약 → 출력. 1순위 합계와 주택형별 값.
+/**
+ * 경쟁률 API의 분모(주택형별 공급세대수)를 믿을 수 있는지 본다. 어긋난 주택형 목록(없으면 빈 배열).
+ * - 한 주택형의 SUPLY_HSHLDCO가 거주지역 행마다 다르면(summary.conflicts) 어긋남
+ * - 주택형 정보(models, 이미 조회한 것)가 있으면 같은 HOUSE_TY를 찾는다. 없으면 어긋남.
+ *   주택형 정보의 households는 일반공급+특별공급 합계라, 경쟁률 쪽 일반공급 세대수(특별공급 잔여가 넘어와도)는
+ *   이 값을 넘을 수 없다. 넘으면 어긋남. 같은 값이어야 한다고 보지는 않는다(특별공급이 있으면 늘 다르다).
+ *   households를 모르는 주택형은 이 검사를 건너뛴다.
+ * - models가 없으면(조회 실패) 거주지역 검사만 한다.
+ */
+export function competitionMismatches(summary, models) {
+  if (!summary) return [];
+  const bad = new Set(summary.conflicts ?? []);
+  if (Array.isArray(models)) {
+    const byType = new Map();
+    for (const model of models) {
+      const type = String(model?.houseType ?? '').trim();
+      if (type && !byType.has(type)) byType.set(type, model);
+    }
+    for (const item of summary.byType) {
+      const model = byType.get(item.houseType);
+      if (!model) bad.add(item.houseType);
+      else if (Number.isFinite(model.households) && item.households > model.households) bad.add(item.houseType);
+    }
+  }
+  return [...bad].sort();
+}
+
+// 청약홈 경쟁률 요약 → 출력. 1순위 합계와 주택형별 값. 합계가 없으면(일부 주택형을 못 읽음) null.
 export function apiCompetition(summary) {
-  if (!summary) return null;
+  if (!summary || typeof summary.rate !== 'number') return null;
   return {
     source: API_SOURCE,
     scope: '1순위',
@@ -215,6 +254,51 @@ function restrictedOf(target, market) {
   }, market);
 }
 
+const DISABLED = /^competition_http_(401|403)$/;
+
+/**
+ * 경쟁률 API에 쓸 값이 없을 때의 사유(공고가 있을 때). 경우마다 사실대로:
+ * - 경쟁률 클라이언트 없음, 시간 초과·네트워크·5xx 등 → 조회 실패
+ * - 401·403(이번 실행에서 막힌 뒤 건너뛴 블록 포함) → API를 쓸 수 없음
+ * - 접수 시작 전(overallStart > 오늘) → 접수 전, 접수 마감 전(overallEnd ≥ 오늘) → 접수 중이라 집계 전
+ * - 행은 받았는데 1순위 값을 못 읽음 → 읽지 못함
+ * - 접수가 끝났는데(또는 접수일을 모름) 행이 없음 → 청약홈 경쟁률 자료에 이 공고가 없음
+ */
+export function competitionMissingReason(got, notice, today) {
+  if (!got) return REASONS.competitionUnavailable;
+  if (DISABLED.test(got.error ?? '') || got.skipped === 'competition_unauthorized') return REASONS.competitionDisabled;
+  if (got.error || got.skipped) return REASONS.competitionUnavailable;
+  if (notice?.overallStart && today < notice.overallStart) return REASONS.competitionBeforeReceipt;
+  if (notice?.overallEnd && notice.overallEnd >= today) return REASONS.competitionPending;
+  if (got.rows > 0) return REASONS.competitionUnreadable;
+  return REASONS.competitionMissing;
+}
+
+/**
+ * 경쟁률 고르기와 사유. 청약홈 API 값은 단지 합계가 있고(일부 주택형 누락이면 competition_partial)
+ * 공급세대수 검사(competitionMismatches)를 지나야 쓴다(어긋나면 competition_households_mismatch).
+ * 못 쓰면 보도 값, 그것도 없으면 사유.
+ */
+function decideCompetition({
+  notice, got, models, reported, missing, today, errors,
+}) {
+  let summary = got?.result ?? null;
+  let rejected = null;
+  if (summary && typeof summary.rate !== 'number') {
+    errors.push(COMPETITION_PARTIAL);
+    rejected = REASONS.competitionPartial;
+    summary = null;
+  } else if (summary && competitionMismatches(summary, models).length) {
+    errors.push(COMPETITION_MISMATCH);
+    rejected = REASONS.competitionMismatch;
+    summary = null;
+  }
+  const competition = chooseCompetition(summary, reported);
+  if (competition) return { competition, reason: null };
+  if (!notice) return { competition: null, reason: missing };
+  return { competition: null, reason: rejected ?? competitionMissingReason(got, notice, today) };
+}
+
 /**
  * 블록 하나의 분양 성과. 외부 호출은 deps(getModels, molit, presale, competition)로만 한다. 실패는 errors에 종류만 넣는다.
  */
@@ -238,34 +322,33 @@ export async function blockPerformance(target, {
   };
   const missing = hasKey ? REASONS.noNotice : REASONS.noKey;
 
-  // 경쟁률
-  let api = null;
-  let apiFailed = false;
+  // 경쟁률 조회
+  let got = null;
   if (notice && competition) {
-    const got = await competition.get(notice);
-    api = got.result;
-    if (got.error) {
-      errors.push(got.error);
-      apiFailed = true;
-    }
-    if (got.skipped) apiFailed = true;
-  }
-  result.competition = chooseCompetition(api, history?.competition ?? null);
-  if (!result.competition) {
-    result.competitionReason = !notice ? missing : apiFailed ? REASONS.competitionUnavailable : REASONS.noCompetition;
+    got = await competition.get(notice);
+    if (got.error) errors.push(got.error);
   }
 
-  // 분양가
+  // 분양가(주택형). 경쟁률 분모 검사에도 쓴다.
+  let models = null;
+  if (notice) {
+    try {
+      models = await getModels(notice);
+    } catch (error) {
+      errors.push(safeError(error));
+    }
+  }
+
+  const chosen = decideCompetition({
+    notice, got, models: Array.isArray(models) ? models : null, reported: history?.competition ?? null, missing, today, errors,
+  });
+  result.competition = chosen.competition;
+  result.competitionReason = chosen.reason;
+
   if (!notice) {
     result.pricesReason = missing;
     result.marketReason = missing;
     return result;
-  }
-  let models = null;
-  try {
-    models = await getModels(notice);
-  } catch (error) {
-    errors.push(safeError(error));
   }
   if (!models) {
     result.pricesReason = REASONS.modelsFailed;
@@ -344,7 +427,8 @@ export async function buildPerformance(targets, {
   if (hasKey && targets.some((target) => target.notice)) {
     const f = counted(fetch, counter);
     deps = clients ?? {
-      getModels: (notice) => fetchModels(notice, { fetch: f, key, sleep }),
+      // 첫 시간 초과·네트워크 실패 뒤에는 남은 블록의 주택형을 부르지 않는다(잡 시간 보호)
+      getModels: createModelLookup({ fetch: f, key, sleep }),
       molit: createMolitClient({ fetch: f, key, sleep }),
       presale: createPresaleClient({
         fetch: f, key, sleep, budgetMs: config.market?.presale?.budgetMs ?? 120000, onSoft: (kind) => errors.push(kind),

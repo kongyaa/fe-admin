@@ -88,7 +88,7 @@ towns:
           scope: 일반공급
           households: 201
           applicants: 52920
-          rank1Rate: 263.3
+          rate: 263.3
           source: { title: "하남교산 A2 387가구 모집에 7.8만명 몰려…경쟁률 최대 366대 1 (뉴시스)", url: "https://mobile.newsis.com/view/NISX20250509_0003170095", date: "2025-05-09" }
     # 다음 블록 계획은 모두 지역지(하남Times·하남일보) 보도뿐이고 LH·국토부 자료는 찾지 못했다. 출처 제목에 '지역지'를 붙인다.
     plans:

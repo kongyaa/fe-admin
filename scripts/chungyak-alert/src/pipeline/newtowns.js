@@ -101,17 +101,19 @@ function ratio(value) {
 
 /**
  * 보도로 확인한 경쟁률(선택, 본청약 분양 이력에만). 청약홈 경쟁률 API에 자료가 없을 때만 지도에 쓴다.
- * { rank1Rate, applicants, households, scope, source: { title, url, date } }
- * - rank1Rate가 없으면 applicants/households로 계산한다. 둘 다 없으면 newtowns_field.
+ * { rate, applicants, households, scope, source: { title, url, date } }
+ * - rate가 없으면 applicants/households로 계산한다. 둘 다 없으면 newtowns_field.
+ * - rate는 출처가 말한 범위(scope)의 경쟁률이다. 예전 이름 rank1Rate는 1순위로 읽힐 수 있어 받지 않는다(newtowns_field).
  * - scope는 출처가 말한 범위(예: 일반공급). 출처가 1순위라고 하지 않았으면 1순위라고 적지 않는다.
  * - source(http(s) 주소)가 없으면 newtowns_source. 사전청약·임대 이력에 적으면 newtowns_field.
  */
 export function competitionEntry(raw) {
   if (isEmpty(raw)) return null;
   const entry = entryObject(raw);
+  if ('rank1Rate' in entry) throw new AppError('newtowns_field');
   const applicants = count(entry.applicants);
   const households = count(entry.households);
-  let rate = ratio(entry.rank1Rate);
+  let rate = ratio(entry.rate);
   if (rate === null && applicants !== null && households !== null) rate = Math.round((applicants / households) * 100) / 100;
   if (rate === null) throw new AppError('newtowns_field');
   return {
