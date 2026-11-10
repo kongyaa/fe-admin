@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  DEFAULT_PREVIOUS_URL, buildChanges, checkPrevious, diffStages, loadPrevious,
+  DEFAULT_PREVIOUS_URL, MAX_PREVIOUS_BYTES, buildChanges, checkPrevious, diffStages, loadPrevious,
 } from '../src/pipeline/previous.js';
-import { previousSource } from '../src/pipeline/build-map.js';
+import { previousSource, summaryLines } from '../src/pipeline/build-map.js';
 
 const noSleep = async () => {};
 const published = {
@@ -71,4 +71,49 @@ test('previousSource: --previous file, then MAP_PREVIOUS_URL, then the published
   assert.deepEqual(previousSource({ previousFile: 'p.json' }, { MAP_PREVIOUS_URL: 'https://x.example/p.json' }), { file: 'p.json' });
   assert.deepEqual(previousSource({ previousFile: null }, { MAP_PREVIOUS_URL: 'https://x.example/p.json' }), { url: 'https://x.example/p.json' });
   assert.deepEqual(previousSource({ previousFile: null }, {}), { url: DEFAULT_PREVIOUS_URL });
+});
+
+test('loadPrevious retries once, then gives up with a kind', async () => {
+  let calls = 0;
+  const flaky = async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError('fetch failed');
+    return Response.json(published);
+  };
+  assert.equal((await loadPrevious({ fetch: flaky, url: DEFAULT_PREVIOUS_URL, sleep: noSleep })).skipped, null);
+  assert.equal(calls, 2);
+  calls = 0;
+  const down = async () => {
+    calls += 1;
+    return new Response('', { status: 503 });
+  };
+  assert.deepEqual(await loadPrevious({ fetch: down, url: DEFAULT_PREVIOUS_URL, sleep: noSleep }), { data: null, skipped: 'previous_http_503' });
+  assert.equal(calls, 2);
+});
+
+test('loadPrevious refuses snapshots over 10 MB', async () => {
+  assert.equal(MAX_PREVIOUS_BYTES, 10 * 1024 * 1024);
+  const declared = async () => new Response('{}', { headers: { 'content-length': String(MAX_PREVIOUS_BYTES + 1) } });
+  assert.deepEqual(await loadPrevious({ fetch: declared, url: DEFAULT_PREVIOUS_URL, sleep: noSleep }), { data: null, skipped: 'previous_too_large' });
+  const big = `{"projects":[],"pad":"${'x'.repeat(MAX_PREVIOUS_BYTES)}"}`;
+  const undeclared = async () => new Response(big);
+  assert.deepEqual(await loadPrevious({ fetch: undeclared, url: DEFAULT_PREVIOUS_URL, sleep: noSleep }), { data: null, skipped: 'previous_too_large' });
+  assert.deepEqual(await loadPrevious({ file: 'big.json', readFile: () => Buffer.from(big) }), { data: null, skipped: 'previous_too_large' });
+});
+
+test('a failed previous snapshot is logged by kind; changes.since is null', () => {
+  const data = (skipped) => ({
+    sources: {
+      seoul: { count: 1, asOf: '2026-06', skipped: {} }, newtowns: { count: 0, skipped: null }, notices: { skipped: 'no_key' }, news: { count: 0, skipped: null }, previous: { skipped },
+    },
+    feed: [],
+    calendar: [],
+    changes: buildChanges(null, []),
+    projects: [],
+  });
+  const failed = summaryLines(data('previous_network'));
+  assert.ok(failed[0].endsWith('changes=skipped:previous_network news=0'));
+  assert.ok(failed.includes('previous skipped=previous_network'));
+  assert.equal(data('previous_network').changes.since, null);
+  assert.ok(!summaryLines(data('no_previous')).some((line) => line.startsWith('previous skipped')));
 });

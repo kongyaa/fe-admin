@@ -14,6 +14,10 @@ export const BLOCK_JOIN = '·';
 // 서울 사업 소식의 건수·기간 제한(공공주택지구 소식에는 적용하지 않는다)
 export const FEED_MAX = 200;
 export const FEED_DAYS = 400;
+// 단계 소식: 이전 배포에서 이어 두는 기간(일)과 서울 사업 단계 소식의 최대 건수. 분기마다 서울 자료가 바뀌면 수십 건이 한꺼번에 생겨
+// 다른 소식을 밀어내지 않게 FEED_MAX보다 먼저 자른다.
+export const STAGE_CARRY_DAYS = 90;
+export const STAGE_MAX = 50;
 export const RECEPTION_SOON_DAYS = 14;
 export const CALENDAR_DAYS = 45;
 // 달력 라벨. 1순위 해당·경기·기타는 1순위로, 무순위·임의·재공급·일반공급 접수는 접수로 묶는다.
@@ -106,20 +110,40 @@ function receptionRange(notice) {
   return { start, end };
 }
 
+const stageEnd = (stage) => (isDay(stage.end) && stage.end >= stage.start ? stage.end : stage.start);
+
+// 단계 묶음의 이름: 특별공급·1순위·2순위, 그 밖은 단계 이름에서 '접수'를 뺀 것('무순위 접수' -> '무순위'), 비면 '청약'
+function groupName(label, stage) {
+  if (label !== '접수') return label;
+  return String(stage.name).replace(/\s*접수$/, '') || '청약';
+}
+
+// 라벨(특별공급·1순위·2순위·접수)별 단계 묶음 { label, name, start, end }, 시작순
+function stageGroups(stages) {
+  const groups = new Map();
+  for (const stage of [...stages].sort((a, b) => a.start.localeCompare(b.start))) {
+    const label = stageLabel(stage.name);
+    const group = groups.get(label);
+    if (!group) groups.set(label, { label, name: groupName(label, stage), start: stage.start, end: stageEnd(stage) });
+    else if (stageEnd(stage) > group.end) group.end = stageEnd(stage);
+  }
+  return [...groups.values()].sort((a, b) => a.start.localeCompare(b.start));
+}
+
 /**
  * 접수 소식 한 건: 접수 중(첫 단계 시작 <= 오늘 <= 마감)이거나 14일 안에 시작하는 공고만.
- * 날짜는 1순위 시작일(1순위가 없으면 첫 '접수' 단계, 그것도 없으면 첫 단계), 제목은 '<라벨> 접수 (<그 라벨의 마지막 날> 마감)'.
+ * 날짜는 1순위 시작일(1순위가 없으면 첫 '접수' 단계, 그것도 없으면 첫 단계)로 빌드마다 같다.
+ * 제목은 오늘이 든 단계, 없으면 다음 단계(모두 지났으면 마지막 단계): '<단계> 접수, 전체 마감 <공고 마감일>'.
+ * 제목이 날마다 바뀌므로 접수 소식의 id는 제목 대신 공고 key로 만든다(noticeItems).
  */
 export function receptionItem(notice, today) {
   const range = receptionRange(notice);
   if (!range || range.end < today || range.start > addDays(today, RECEPTION_SOON_DAYS)) return null;
-  const stages = validStages(notice);
-  const pick = (label) => stages.filter((stage) => stageLabel(stage.name) === label);
-  const group = [pick('1순위'), pick('접수'), stages].find((list) => list.length > 0);
-  const first = [...group].sort((a, b) => a.start.localeCompare(b.start))[0];
-  const end = group.map((stage) => (isDay(stage.end) ? stage.end : stage.start)).sort().at(-1);
-  const label = stageLabel(first.name) === '1순위' ? '1순위' : String(first.name).replace(/\s*접수$/, '') || '청약';
-  return { date: first.start, title: `${label} 접수 (${end} 마감)` };
+  const groups = stageGroups(validStages(notice));
+  const main = groups.find((group) => group.label === '1순위') ?? groups.find((group) => group.label === '접수') ?? groups[0];
+  const current = groups.find((group) => group.start <= today && today <= group.end)
+    ?? groups.find((group) => group.start > today) ?? groups.at(-1);
+  return { date: main.start, title: `${current.name} 접수, 전체 마감 ${range.end}` };
 }
 
 // 사업 하나의 달력 일정(연결된 공고의 단계별 날짜와 당첨자 발표일). 기간 거르기는 buildCalendar가 한다.
@@ -178,12 +202,13 @@ function feedSource(source) {
   };
 }
 
+// idTitle: id에 제목 대신 쓸 값(제목이 날마다 바뀌는 접수 소식)
 function item({
-  kind, date, projectId, block = null, title, source, rental = false,
+  kind, date, projectId, block = null, title, source, rental = false, idTitle = title,
 }) {
   return {
     id: feedId({
-      kind, projectId, block, date, title,
+      kind, projectId, block, date, title: idTitle,
     }),
     date,
     kind,
@@ -212,7 +237,14 @@ export function noticeItems(project, today) {
     const reception = receptionItem(notice, today);
     if (reception) {
       items.push(item({
-        kind: '접수', date: reception.date, projectId: project.id, block, title: reception.title, source, rental,
+        kind: '접수',
+        date: reception.date,
+        projectId: project.id,
+        block,
+        title: reception.title,
+        source,
+        rental,
+        idTitle: `접수:${notice.key ?? notice.name ?? ''}`,
       }));
     }
     return items;
@@ -305,11 +337,12 @@ export function changeItems(changes, projects, today, sourceFor = () => null) {
   });
 }
 
-// 이전 배포의 단계 소식을 이어 둔다(단계 변경은 그 빌드에서만 보이므로). 지금도 있는 사업의 것만, 필드는 다시 검사한다.
+// 이전 배포의 단계 소식을 이어 둔다(단계 변경은 그 빌드에서만 보이므로). 최근 90일, 지금도 있는 사업의 것만, 필드는 다시 검사한다.
 export function carriedStageItems(previousFeed, projects, today) {
   const ids = new Set(projects.map((project) => project.id));
+  const from = addDays(today, -STAGE_CARRY_DAYS);
   return (Array.isArray(previousFeed) ? previousFeed : []).flatMap((entry) => {
-    if (entry?.kind !== '단계' || !ids.has(entry.projectId) || !isDay(entry.date) || entry.date > today) return [];
+    if (entry?.kind !== '단계' || !ids.has(entry.projectId) || !isDay(entry.date) || entry.date > today || entry.date < from) return [];
     const title = String(entry.title ?? '');
     if (!title.startsWith('단계 변경: ')) return [];
     return [item({
@@ -338,7 +371,7 @@ export function dropCoveredSchedules(items) {
 
 /**
  * 새 소식. 최신순. 오늘 뒤 날짜는 접수 소식만(곧 시작하는 접수).
- * 서울 사업 소식은 최근 400일(오늘 포함), 최대 200건. 공공주택지구 소식은 블록별 경과를 지구 화면에 다 보이도록 날짜·건수 제한 없이 둔다(지구는 몇 곳뿐).
+ * 서울 사업 소식은 최근 400일(오늘 포함), 최대 200건(그중 단계 소식은 최신 50건까지). 공공주택지구 소식은 블록별 경과를 지구 화면에 다 보이도록 날짜·건수 제한 없이 둔다(지구는 몇 곳뿐).
  * 같은 id는 한 번만, 기사와 같은 출처를 쓰는 일정 소식은 뺀다(dropCoveredSchedules).
  * projects는 공고 연결·블록별 현황 뒤의 내부 사업(계획·이력 출처가 남아 있는 것).
  */
@@ -354,11 +387,14 @@ export function buildFeed({
     ...newsItems(news).map((entry) => ({ ...entry, fromNews: true })),
   ];
   const seen = new Set();
+  let seoulStages = 0;
   let seoul = 0;
   return dropCoveredSchedules(all)
     .map(({ fromNews, ...entry }) => entry)
     .filter((entry) => (entry.date <= today || entry.kind === '접수') && (towns.has(entry.projectId) || entry.date >= from))
     .filter((entry) => (seen.has(entry.id) ? false : seen.add(entry.id)))
     .sort(byFeed)
+    // 서울 단계 소식은 최신 50건까지 먼저 자르고, 남은 서울 소식 전체를 200건으로 자른다
+    .filter((entry) => towns.has(entry.projectId) || entry.kind !== '단계' || (seoulStages += 1) <= STAGE_MAX)
     .filter((entry) => towns.has(entry.projectId) || (seoul += 1) <= FEED_MAX);
 }

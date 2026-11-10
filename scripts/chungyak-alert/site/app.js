@@ -321,6 +321,14 @@ export function nameHasBlock(name, block) {
 
 // 연결된 청약홈 공고 중 임대(typeLabel)와 아파트 분양이 아닌 유형. 분양 이력에는 보이지만 최근 분양에는 세지 않는다.
 export const RENTAL_NOTICE_TYPES = ['민간임대', '공공지원민간임대'];
+
+/**
+ * 임대 공고인지(사이트 어디서나 이 규칙 하나): 청약홈 임대 유형이거나, 유형·공고명에 '임대'·'행복주택'이 있는 공고.
+ * 파이프라인 expected-window.js isRentalNotice 와 같은 규칙
+ */
+export function isRentalNotice(notice) {
+  return RENTAL_NOTICE_TYPES.includes(notice?.typeLabel) || /임대|행복주택/.test(`${notice?.typeLabel ?? ''} ${notice?.name ?? ''}`);
+}
 export const NON_APT_NOTICE_TYPES = ['도시형생활주택', '오피스텔', '생활숙박시설'];
 const NOTICE_PRE_SUBSCRIPTION = '민간사전청약';
 
@@ -385,7 +393,7 @@ export function saleHistory(project) {
       type,
       title: n.name ?? null,
       households: null,
-      rental: RENTAL_NOTICE_TYPES.includes(type),
+      rental: isRentalNotice(n),
       sources: url ? [{ title: n.name || '청약홈 공고', url, date: n.announceDate ?? null, outlet: '청약홈' }] : [],
       end: n.end ?? null,
       from: 'notice',
@@ -946,15 +954,14 @@ export function feedSourceLabel(source) {
 
 // --- 공고 단계·접수 중 ---------------------------------------------------------
 
-/** 공고명에서 블록 이름: '구리갈매역세권 B-1블록 …' → 'B-1', '(A-2BL)' → 'A-2'. 없으면 null */
+/**
+ * 공고명에서 블록 이름: '구리갈매역세권 B-1블록 …' → 'B-1', '(A-2BL)' → 'A-2', '하남교산 A2 푸르지오' → 'A2'. 없으면 null.
+ * 영문 1~2자 + 숫자(가운데 '-' 허용) 뒤가 BL·블록·영숫자 아닌 글자·끝일 때만(파이프라인 feed.js parseBlock 과 같은 규칙)
+ */
 export function noticeBlock(name) {
-  const m = /(?:^|[^0-9A-Za-z])([A-Za-z]{1,2}-?\d{1,2}(?:-\d{1,2})?)\s*(?:블록|BL)(?![A-Za-z])/.exec(String(name ?? ''));
-  return m ? m[1].toUpperCase() : null;
-}
-
-/** 임대 공고인지: 청약홈 유형이 민간임대 계열이거나 이름에 '임대'·'행복주택' */
-export function isRentalNotice(notice) {
-  return RENTAL_NOTICE_TYPES.includes(notice?.typeLabel) || /임대|행복주택/.test(String(notice?.name ?? ''));
+  const value = String(name ?? '').toUpperCase().replace(/\s+/g, ' ');
+  const m = /(?<![0-9A-Z-])([A-Z]{1,2}-?\d{1,3}(?:-\d+)?)(?=BL|블록|[^0-9A-Z-]|$)/.exec(value);
+  return m ? m[1] : null;
 }
 
 const isAfterStage = (name) => /당첨|발표|계약/.test(String(name ?? ''));
@@ -1310,8 +1317,8 @@ function stagesOf(p) {
 
 function announce(text) {
   $('announce').textContent = '';
-  // 같은 글을 다시 알려도 읽히도록 한 박자 뒤에 넣는다
-  requestAnimationFrame(() => { $('announce').textContent = text; });
+  // 같은 글을 다시 알려도 읽히도록 한 박자 뒤에 넣는다(requestAnimationFrame 은 뒤에 있는 탭에서 멈추므로 setTimeout)
+  setTimeout(() => { $('announce').textContent = text; }, 50);
 }
 
 /** 다시 그린 뒤에도 키보드 포커스가 같은 항목에 남도록 */

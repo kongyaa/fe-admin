@@ -568,7 +568,11 @@ a.watch-cell:hover { border-color: var(--ink); color: var(--ink); }
   .seg button, .filters .seg button, .btn, .field select, .field input, .fchip, .linkish { min-height: 44px; }
   .theme-seg button { min-width: 44px; }
   .fold > summary, .memo summary { min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; }
-  .frow-proj, .frow-src a, .tl-src a { display: inline-block; padding: 6px 0; }
+  /* 소식 줄의 사업 링크·출처 링크, 블록 카드의 출처 링크도 높이 44px 이상 */
+  .frow-proj, .frow-src a, .tl-src a, .bcard-src a { display: inline-flex; align-items: center; min-height: 44px; }
+  .frow-meta, .tl-meta { row-gap: 0; }
+  .frow-body, .tl-item { gap: 0; }
+  .bcard-src { display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; }
 }
 /* 휴대폰보다 넓으면 자동 접기(.fold.auto: 안내문·필터)는 늘 펼쳐 두고 접기 제목을 숨긴다(app.js initFolds).
    블록 설명 같은 보통 접기(.fold)는 어느 폭에서나 제목으로 연다. 위 손가락 규칙보다 뒤에 둔다 */

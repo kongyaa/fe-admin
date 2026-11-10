@@ -203,6 +203,7 @@ export async function buildMap({
   const prev = await loadPrevious({
     fetch, ...(previous ?? {}), readFile, sleep,
   });
+  // 이전 배포를 못 읽으면 changes는 since: null, items: [](buildChanges), 이어 오던 단계 소식도 없다
   const changes = buildChanges(prev.data, internal);
   const feed = buildFeed({
     projects: internal,
@@ -255,6 +256,8 @@ export function summaryLines(data) {
   const lines = [`map seoul=${seoul.count} skipped=${skipped} asOf=${seoul.asOf} towns=${newtowns.count} ${noticePart}`
     + ` feed=${data.feed?.length ?? 0} calendar=${data.calendar?.length ?? 0} changes=${changesPart} news=${newsPart}`];
   if (newtowns.skipped) lines.push(`newtowns skipped=${newtowns.skipped}`);
+  // 이전 배포를 못 읽은 종류(no_previous는 비교를 하지 않은 경우라 남기지 않는다)
+  if (previousSkipped && previousSkipped !== 'no_previous') lines.push(`previous skipped=${previousSkipped}`);
   if (data.sources.news?.unmatched) lines.push(`news unmatched=${data.sources.news.unmatched}`);
   if (!notices.skipped && notices.errors.length > 0) lines.push(`notices errors=${notices.errors.join(',')}`);
   const buckets = tally(data.projects.map((project) => project.bucket));

@@ -1103,3 +1103,34 @@ test('index.html: Google Fonts allowed by the CSP and nothing else external', ()
   // 앱 코드는 HTML 문자열을 넣지 않는다(textContent 만)
   assert.equal(/\.(innerHTML|outerHTML)\s*\+?=|insertAdjacentHTML\(|document\.write\(/.test(readFileSync(new URL('../site/app.js', import.meta.url), 'utf8')), false);
 });
+
+test('noticeBlock reads block names with the pipeline parseBlock rule', async () => {
+  const { parseBlock } = await import('../src/pipeline/feed.js');
+  const names = [
+    '구리갈매역세권 B-1블록 신안인스빌 디센트', '하남교산 A2 푸르지오', 'A-4BL 공공분양', '교산 푸르지오 더 퍼스트(하남교산 A-2BL)',
+    '구리갈매역세권 A-1블록 행복주택', '중화역 라온프라이빗 센트로', 'e편한세상 84A', 'S-1블록', '', null,
+  ];
+  for (const name of names) assert.equal(app.noticeBlock(name), parseBlock(name), String(name));
+  assert.equal(app.noticeBlock('하남교산 A2 푸르지오'), 'A2');
+  assert.equal(app.noticeBlock('A-4BL 공공분양'), 'A-4');
+});
+
+test('one rental rule: isRentalNotice matches the pipeline and saleHistory uses it', async () => {
+  const pipe = await import('../src/pipeline/expected-window.js');
+  const notices = [
+    { name: '구리갈매역세권 A-1블록 행복주택', typeLabel: 'APT' },
+    { name: '구리갈매역세권 A-4블록 6년 분양전환공공임대주택(본청약)', typeLabel: 'APT' },
+    { name: '어떤 단지', typeLabel: '공공지원민간임대' },
+    { name: '어떤 단지', typeLabel: '민간임대' },
+    { name: '교산 푸르지오 더 퍼스트', typeLabel: 'APT' },
+  ];
+  for (const n of notices) assert.equal(app.isRentalNotice(n), pipe.isRentalNotice(n), n.name);
+  const rows = app.saleHistory({ notices: notices.map((n, i) => ({ ...n, announceDate: `2026-0${i + 1}-01` })) });
+  assert.deepEqual(rows.map((r) => r.rental), [false, true, true, true, true]);
+});
+
+test('footer says fonts come from Google Fonts and that reading marks stay in this browser', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('글꼴은 Google Fonts에서 불러옵니다.'));
+  assert.ok(html.includes('읽은 소식 표시는 이 브라우저에만 남습니다'));
+});

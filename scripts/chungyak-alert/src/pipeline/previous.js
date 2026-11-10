@@ -25,23 +25,42 @@ function parseJson(text) {
   }
 }
 
+// 이전 자료 크기 상한(지금 약 0.5MB). 넘으면 previous_too_large로 건너뛴다.
+export const MAX_PREVIOUS_BYTES = 10 * 1024 * 1024;
+
+function checkSize(bytes) {
+  if (bytes > MAX_PREVIOUS_BYTES) throw new AppError('previous_too_large');
+}
+
 /**
  * 이전 자료 읽기. file이 있으면 파일, 없으면 url(http(s)만). 어느 쪽도 없으면 skipped 'no_previous'.
  * 반환: { data: checkPrevious 결과 | null, skipped: 실패 종류 | null }. 절대 throw하지 않는다.
- * 한 번만 시도한다(배포된 파일이 없거나 느려도 빌드를 오래 붙잡지 않게).
+ * 받기는 한 번 더 시도한다(retries 1). 그래도 못 받으면 이어 오던 단계 소식은 이번 빌드에서 끊긴다(받아들인 손실, docs/MAP.md).
+ * 10MB를 넘는 자료는 읽지 않는다(Content-Length를 먼저 보고, 없으면 받은 뒤 크기를 본다).
  */
 export async function loadPrevious({
   fetch = globalThis.fetch, url = null, file = null, readFile, sleep,
 } = {}) {
   try {
-    if (file) return { data: checkPrevious(parseJson(String(readFile(file)))), skipped: null };
+    if (file) {
+      const raw = readFile(file);
+      checkSize(Buffer.byteLength(raw));
+      return { data: checkPrevious(parseJson(String(raw))), skipped: null };
+    }
     if (!url) return { data: null, skipped: 'no_previous' };
     const safe = safeHttpUrl(url);
     if (!safe) return { data: null, skipped: 'previous_url' };
     const response = await fetchWithRetry(fetch, safe, { headers: { accept: 'application/json' } }, {
-      kind: 'previous', retries: 0, timeoutMs: 15000, sleep,
+      kind: 'previous', retries: 1, timeoutMs: 15000, sleep,
     });
-    return { data: checkPrevious(parseJson(await response.text())), skipped: null };
+    const declared = Number(response.headers?.get?.('content-length'));
+    if (Number.isFinite(declared) && declared > MAX_PREVIOUS_BYTES) {
+      await response.body?.cancel?.();
+      throw new AppError('previous_too_large');
+    }
+    const text = await response.text();
+    checkSize(Buffer.byteLength(text));
+    return { data: checkPrevious(parseJson(text)), skipped: null };
   } catch (error) {
     const kind = safeError(error);
     return { data: null, skipped: kind === 'unexpected_error' ? 'previous_failed' : kind };

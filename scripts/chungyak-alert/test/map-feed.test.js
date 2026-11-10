@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { DEFAULT_NEWS, DEFAULT_NEWTOWNS, buildMap, summaryLines } from '../src/pipeline/build-map.js';
 import {
-  CALENDAR_LABELS, FEED_MAX, buildCalendar, buildFeed, carriedStageItems, changeItems, feedId, historyItems, isRentalItem,
+  CALENDAR_LABELS, FEED_MAX, STAGE_CARRY_DAYS, STAGE_MAX, buildCalendar, buildFeed, carriedStageItems, changeItems, feedId, historyItems, isRentalItem,
   kstDateTime, noticeBlock, noticeItems, parseBlock, planItems, receptionItem, stageLabel,
 } from '../src/pipeline/feed.js';
 import { noticeSummary } from '../src/pipeline/link-notices.js';
@@ -140,16 +140,40 @@ test('rental notices and calendar labels', () => {
   assert.deepEqual(CALENDAR_LABELS, ['특별공급', '1순위', '2순위', '접수', '당첨자 발표']);
 });
 
-test('receptionItem: in progress or starting within 14 days', () => {
-  assert.deepEqual(receptionItem(b1, today), { date: '2026-11-10', title: '1순위 접수 (2026-11-10 마감)' });
-  // 특별공급 날(1순위 전날)에도 1순위 시작일로 둔다
-  assert.deepEqual(receptionItem(b1, '2026-11-09'), { date: '2026-11-10', title: '1순위 접수 (2026-11-10 마감)' });
+test('receptionItem: title follows the stage of today (or the next one), date stays the 1순위 start', () => {
+  // 구리갈매 B-1: 특별공급 11-09, 1순위 11-10, 2순위 11-11, 전체 마감 11-11
+  assert.deepEqual(receptionItem(b1, '2026-10-27'), { date: '2026-11-10', title: '특별공급 접수, 전체 마감 2026-11-11' });
+  assert.deepEqual(receptionItem(b1, '2026-11-09'), { date: '2026-11-10', title: '특별공급 접수, 전체 마감 2026-11-11' });
+  assert.deepEqual(receptionItem(b1, today), { date: '2026-11-10', title: '1순위 접수, 전체 마감 2026-11-11' });
+  assert.deepEqual(receptionItem(b1, '2026-11-11'), { date: '2026-11-10', title: '2순위 접수, 전체 마감 2026-11-11' });
   assert.equal(receptionItem(b1, '2026-11-12'), null);
-  assert.deepEqual(receptionItem(happy, today), { date: '2026-11-10', title: '청약 접수 (2026-11-12 마감)' });
-  const soon = (start) => ({ end: null, stages: [{ name: '무순위 접수', start, end: start }] });
-  assert.deepEqual(receptionItem(soon('2026-11-24'), today), { date: '2026-11-24', title: '무순위 접수 (2026-11-24 마감)' });
+  // 첫 단계(11-09) 14일 전부터
+  assert.ok(receptionItem(b1, '2026-10-26'));
+  assert.equal(receptionItem(b1, '2026-10-25'), null);
+  assert.deepEqual(receptionItem(happy, today), { date: '2026-11-10', title: '청약 접수, 전체 마감 2026-11-12' });
+  // 단계 사이 빈 날은 다음 단계, 단계가 다 지났는데 공고 마감이 남았으면 마지막 단계
+  const gap = { end: '2026-11-20', stages: [{ name: '1순위 해당', start: '2026-11-05', end: '2026-11-05' }, { name: '2순위 해당', start: '2026-11-12', end: '2026-11-12' }] };
+  assert.deepEqual(receptionItem(gap, today), { date: '2026-11-05', title: '2순위 접수, 전체 마감 2026-11-20' });
+  assert.deepEqual(receptionItem(gap, '2026-11-15'), { date: '2026-11-05', title: '2순위 접수, 전체 마감 2026-11-20' });
+  const soon = (startDay) => ({ end: null, stages: [{ name: '무순위 접수', start: startDay, end: startDay }] });
+  assert.deepEqual(receptionItem(soon('2026-11-24'), today), { date: '2026-11-24', title: '무순위 접수, 전체 마감 2026-11-24' });
   assert.equal(receptionItem(soon('2026-11-25'), today), null);
   assert.equal(receptionItem({ end: '2026-11-20', stages: [] }, today), null);
+});
+
+test('접수 feed id ignores the title: the same notice keeps its id while the title moves to the next stage', () => {
+  const on = (day) => noticeItems(galmae(), day).filter((i) => i.kind === '접수' && i.block === 'B-1')[0];
+  const first = on(today);
+  const next = on('2026-11-11');
+  assert.equal(first.title, '1순위 접수, 전체 마감 2026-11-11');
+  assert.equal(next.title, '2순위 접수, 전체 마감 2026-11-11');
+  assert.equal(first.id, next.id);
+  assert.equal(first.id, feedId({
+    kind: '접수', projectId: 'town-guri-galmae-station', block: 'B-1', date: '2026-11-10', title: `접수:${b1.key}`,
+  }));
+  // 같은 날·같은 블록이어도 다른 공고면 id가 다르다
+  const other = noticeItems(galmae({ notices: [b1, { ...b1, key: 'other', name: '구리갈매역세권 B-1블록 (무순위)' }] }), today).filter((i) => i.kind === '접수');
+  assert.equal(new Set(other.map((i) => i.id)).size, 2);
 });
 
 test('buildCalendar: stage days and the winner date within 45 days, sorted', () => {
@@ -184,9 +208,9 @@ test('notice feed items: 공고 for every linked notice and 접수 while recepti
   const items = noticeItems(galmae(), today);
   assert.deepEqual(items.map((i) => [i.kind, i.date, i.block, i.rental, i.title]), [
     ['공고', '2026-10-30', 'B-1', false, '청약홈 공고: 구리갈매역세권 B-1블록 신안인스빌 디센트'],
-    ['접수', '2026-11-10', 'B-1', false, '1순위 접수 (2026-11-10 마감)'],
+    ['접수', '2026-11-10', 'B-1', false, '1순위 접수, 전체 마감 2026-11-11'],
     ['공고', '2026-10-27', 'A-1', true, '청약홈 공고: 구리갈매역세권 A-1블록 행복주택'],
-    ['접수', '2026-11-10', 'A-1', true, '청약 접수 (2026-11-12 마감)'],
+    ['접수', '2026-11-10', 'A-1', true, '청약 접수, 전체 마감 2026-11-12'],
   ]);
   assert.deepEqual(items[0].source, {
     title: '청약홈', url: B1_URL, date: '2026-10-30', local: false,
@@ -297,6 +321,36 @@ test('buildFeed drops a history/plan 일정 item when a news.yaml item of the sa
   assert.equal(titles([article('B-1')]).filter((t) => t.startsWith('일정 A-1')).length, 1);
 });
 
+test('Seoul 단계 items are capped at 50 before the 200-item Seoul cap, so notices survive a mass stage change', () => {
+  const projects = Array.from({ length: 300 }, (_, i) => ({
+    id: `seoul-${1000 + i}`,
+    region: '서울',
+    kind: '재개발',
+    notices: i < 50 ? [{
+      key: `n${i}`, name: `단지 ${i}`, announceDate: '2026-09-01', end: '2026-09-15', url: 'https://www.applyhome.co.kr/x', typeLabel: 'APT', stages: [],
+    }] : [],
+  }));
+  const changes = projects.map((project) => ({ projectId: project.id, from: '조합설립', to: '사업시행인가' }));
+  const feed = buildFeed({ projects, changes, today });
+  const count = (kind) => feed.filter((i) => i.kind === kind).length;
+  assert.equal(STAGE_MAX, 50);
+  assert.equal(count('단계'), STAGE_MAX);
+  assert.equal(count('공고'), 50);
+  assert.equal(feed.length, 100);
+  // 공공주택지구 단계 소식은 이 제한을 받지 않는다
+  const town = { id: 'town-x', region: '경기', kind: '공공주택지구' };
+  const withTown = buildFeed({ projects: [...projects, town], changes: [...changes, { projectId: 'town-x', from: '지구지정', to: '지구계획승인' }], today });
+  assert.equal(withTown.filter((i) => i.kind === '단계').length, STAGE_MAX + 1);
+});
+
+test('carried 단계 items are kept for 90 days', () => {
+  const projects = [{ id: 'seoul-1', region: '서울' }];
+  const entry = (date) => ({ kind: '단계', projectId: 'seoul-1', date, title: `단계 변경: ${date}` });
+  assert.equal(STAGE_CARRY_DAYS, 90);
+  const carried = carriedStageItems([entry('2026-08-12'), entry('2026-08-11'), entry('2026-11-09')], projects, today);
+  assert.deepEqual(carried.map((i) => i.date), ['2026-08-12', '2026-11-09']);
+});
+
 // 통합: 실제 newtowns.yaml·news.yaml과 실제 꼴의 청약홈 응답(구리갈매 B-1, A-1 행복주택)으로 빌드한다.
 const dir = mkdtempSync(join(tmpdir(), 'chungyak-feed-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -347,7 +401,7 @@ test('buildMap with real data files fills notices stages, calendar, feed, news, 
   ]);
 
   const kinds = (kind) => data.feed.filter((i) => i.kind === kind);
-  assert.deepEqual(kinds('접수').map((i) => [i.block, i.title]), [['B-1', '1순위 접수 (2026-11-10 마감)'], ['A-1', '청약 접수 (2026-11-12 마감)']]);
+  assert.deepEqual(kinds('접수').map((i) => [i.block, i.title]), [['B-1', '1순위 접수, 전체 마감 2026-11-11'], ['A-1', '청약 접수, 전체 마감 2026-11-12']]);
   assert.deepEqual(kinds('공고').map((i) => i.block).sort(), ['A-1', 'B-1']);
   // B-1·A-1 행복주택 본청약 이력은 공고로 덮인다. 오래된 지구 이력(A-1 사전청약 2021-12)은 남는다. 교산 계획(지역지)은 일정으로 남는다
   const galmaeSchedules = kinds('일정').filter((i) => i.projectId === 'town-guri-galmae-station');
