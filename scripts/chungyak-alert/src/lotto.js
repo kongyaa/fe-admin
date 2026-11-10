@@ -218,18 +218,31 @@ const priceCheckOn = (lotto, key) => isPlainObject(lotto.triggerPriceCheck) && l
 // remainderMaxRound가 양의 정수일 때만 반복 공급 규칙을 쓴다. null이면 끈다.
 const maxRoundOf = (lotto) => (Number.isInteger(lotto.remainderMaxRound) && lotto.remainderMaxRound > 0 ? lotto.remainderMaxRound : null);
 
+// lowConfidenceMinMarginRate가 0 이하의 유한한 수일 때만 신뢰도 하 음수 마진 규칙을 쓴다. 없거나 null이면 끈다.
+const lowMinRateOf = (lotto) => {
+  const rate = lotto.lowConfidenceMinMarginRate;
+  return typeof rate === 'number' && Number.isFinite(rate) && rate <= 0 ? rate : null;
+};
+
+// 판별 근거용 비율 표기. -0.05 → "-5%", -0.025 → "-2.5%".
+const ratePercent = (rate) => `${Math.round(rate * 1000) / 10}%`;
+
 // 있는데 형식이 틀린 조건형 설정. 예전 동작으로 돌아가므로 로그의 soft=bad_trigger_config로 알린다.
 export function badTriggerConfig(lotto) {
   const checks = lotto.triggerPriceCheck;
   const maxRound = lotto.remainderMaxRound;
+  const lowMinRate = lotto.lowConfidenceMinMarginRate;
   return (checks !== undefined && !isPlainObject(checks))
-    || (maxRound !== undefined && maxRound !== null && maxRoundOf(lotto) === null);
+    || (maxRound !== undefined && maxRound !== null && maxRoundOf(lotto) === null)
+    || (lowMinRate !== undefined && lowMinRate !== null && lowMinRateOf(lotto) === null);
 }
 
 // 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다.
 // 신뢰도 중 이상 추정이 있으면 안전 마진 부호로 정한다(가격 기준을 넘으면 마진이 양수라 로또다).
-// 추정이 없거나 신뢰도 하이면 놓치지 않게 로또로 둔다. 무순위가 remainderMaxRound차 이상이면 아님이지만,
-// 신뢰도 하 추정이라도 가격 기준을 넘으면 놓치지 않게 로또다.
+// 추정이 없거나 신뢰도 하이면 놓치지 않게 로또로 둔다. 다만 순서대로
+// 1) 신뢰도 하 추정이라도 가격 기준을 넘으면 놓치지 않게 로또다.
+// 2) 신뢰도 하 추정의 마진율이 lowConfidenceMinMarginRate(-5%) 이하로 뚜렷한 음수면 아님이다(lowConfidenceNegative).
+// 3) 무순위가 remainderMaxRound차 이상이면 아님이다(repeatedRound).
 function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
   const { key, label } = trigger;
   const candidate = {
@@ -247,6 +260,18 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
     };
   }
   if (best && meetsPriceRule(best, lotto)) return candidate;
+  const lowMinRate = lowMinRateOf(lotto);
+  if (best && best.confidence === CONFIDENCE.LOW && lowMinRate !== null
+    && Number.isFinite(best.marginRate) && best.marginRate <= lowMinRate) {
+    const head = `${label} 해당이나 시세 대비 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
+    const shortHead = `${label} 해당이나 시세 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
+    return {
+      status: STATUS.NOT,
+      reason: `${head}; ${priceText(best)}`,
+      shortReason: `${shortHead}; ${shortPriceText(best)}`,
+      lowConfidenceNegative: true,
+    };
+  }
   const round = key === 'remainder' ? parseRemainderRound(notice.name) : null;
   const maxRound = maxRoundOf(lotto);
   if (round !== null && maxRound !== null && round >= maxRound) {
@@ -466,9 +491,12 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
 // 신뢰도 중 이상 추정으로 아님이 된 조건형 공고는 그대로 뺀다. 무순위 반복 공급으로 아님이 된 공고도
 // 추정이 아니라 차수로 정한 것이라 유지하지 않는다(추정이 없을 때와 똑같이 뺀다). 반복 공급이라도
 // 가격 기준을 넘는 추정은 신뢰도 하여도 로또라 여기까지 오지 않는다.
+// 조건형 공고가 신뢰도 하 추정의 뚜렷한 음수 마진율(lowConfidenceNegative)로 아님이 된 것도 사용자 결정으로
+// 유지하지 않고 뺀다.
 export function keepPreviousLotto(evaluation, previousStatus) {
   if (previousStatus !== STATUS.LOTTO) return evaluation;
-  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE.LOW && !evaluation.repeatedRound;
+  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE.LOW
+    && !evaluation.repeatedRound && !evaluation.lowConfidenceNegative;
   if (evaluation.status !== STATUS.UNDETERMINED && !weak) return evaluation;
   const label = weak ? '이전 판별 유지(이번 추정 신뢰도 하)' : '이전 판별 유지';
   return {
