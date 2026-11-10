@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  NEWS_ENDPOINTS, cleanTitle, collectNews, createNewsClient, dedupe, keepRecent, newsDate, newsQuery, newsTargets,
-  normalizeItem, outletOf, relevant, zoneName,
+  NEWS_BUDGET_MS, NEWS_ENDPOINTS, NEWS_TIMEOUT_MS, cleanTitle, collectNews, createNewsClient, dedupe, keepRecent,
+  namesOtherDistrict, newsDate, newsQuery, newsTargets, normalizeItem, normalizeNewsTitle, outletOf, relevant, seoulNewsName,
+  zoneName,
 } from '../src/pipeline/news.js';
 
 const today = '2026-11-10';
@@ -64,10 +65,11 @@ test('normalizeItem keeps only title, outlet, date, url', () => {
   const result = normalizeItem(raw({ title: '<b>하남교산</b> 첫 본청약 &quot;임박&quot;' }));
   assert.deepEqual(result, { title: '하남교산 첫 본청약 "임박"', outlet: '뉴시스', date: '2026-11-09', url: 'https://www.newsis.com/view/1' });
   assert.equal('description' in result, false);
-  // 원문이 http(s)가 아니면 네이버 링크
+  // 원문이 http(s)가 아니면 네이버 링크. 언론사는 알 수 없어 null(사이트는 날짜만 보여 준다).
   const fallback = normalizeItem(raw({ originallink: 'javascript:alert(1)' }));
   assert.equal(fallback.url, 'https://n.news.naver.com/article/003/1');
-  assert.equal(fallback.outlet, '네이버 뉴스');
+  assert.equal(fallback.outlet, null);
+  assert.equal(normalizeItem(raw({ originallink: '' })).outlet, null);
   assert.equal(normalizeItem(raw({ originallink: '', link: '' })), null);
   assert.equal(normalizeItem(raw({ title: '<b></b>' })), null);
   assert.equal(normalizeItem(raw({ pubDate: 'x' })).date, null);
@@ -123,8 +125,9 @@ test('relevance for Seoul zones guards digit endings', () => {
   assert.equal(relevant(item({ title: '신당10구역 시공사 선정' }), sindang), false);
   assert.equal(relevant(item({ title: '신당1구역 이주 시작' }), sindang), true);
 
-  // 서울 기사 제목에는 구가 거의 없으므로 구는 보지 않는다.
-  assert.equal(relevant(item({ title: '성동구 신당1구역?' }), sindang), true);
+  // 제목이 다른 서울 구를 말하면 같은 이름이어도 다른 구역이다.
+  assert.equal(relevant(item({ title: '성동구 신당1구역?' }), sindang), false);
+  assert.equal(relevant(item({ title: '중구 신당1구역 이주' }), sindang), true);
 
   const mido = seoul({ name: '반포미도2차', district: '서초구', kind: '재건축' });
   assert.equal(relevant(item({ title: '반포 미도2차 재건축 속도' }), mido), true);
@@ -144,6 +147,89 @@ test('relevance for towns uses name or noticeMatch', () => {
   assert.equal(relevant(item({ title: '구리 토평2지구 보상' }), topyeong), true);
   assert.equal(relevant(item({ title: '토평20단지' }), topyeong), false);
   assert.equal(relevant(item({ title: '하남교산 소식' }), town({ noticeMatch: undefined })), true);
+});
+
+// 서울 구역명 -> 검색어와 제목 비교값(keys). link-notices.js의 zoneKey와 별개인 뉴스용 규칙이다.
+test('Seoul news names: query and keys table', () => {
+  const cases = [
+    // [이름, 종류, 구, 검색어, keys, extras]
+    ['신영1', '재개발', '종로구', '종로 신영1구역 재개발', ['신영1'], []],
+    ['한남3', '재개발', '용산구', '용산 한남3구역 재개발', ['한남3'], []],
+    ['한남3구역', '재개발', '용산구', '용산 한남3구역 재개발', ['한남3'], []],
+    ['세운3-8,9,10', '재개발', '중구', '중구 세운3-8구역 재개발', ['세운3-8', '세운3-9', '세운3-10'], []],
+    ['세운3-8, 9, 10구역', '재개발', '중구', '중구 세운3-8구역 재개발', ['세운3-8', '세운3-9', '세운3-10'], []],
+    ['마포로1구역 제8지구', '재개발', '중구', '중구 마포로1구역 제8지구 재개발', ['마포로1구역제8지구'], []],
+    ['반포주공1단지(1,2,4주구)', '재건축', '서초구', '서초 반포주공1단지 재건축', ['반포주공1단지'], ['124주구']],
+    ['은마', '재건축', '강남구', '강남 은마아파트 재건축', ['은마아파트', '은마재건축'], []],
+    ['수표', '재개발', '중구', '중구 수표 재개발', ['수표구역'], []],
+    ['을지로3가', '재개발', '중구', '중구 을지로3가 재개발', ['을지로3가'], []],
+    ['신반포4지구', '재건축', '서초구', '서초 신반포4지구 재건축', ['신반포4지구'], []],
+    ['반포미도2차', '재건축', '서초구', '서초 반포미도2차 재건축', ['반포미도2차'], []],
+  ];
+  for (const [name, kind, district, query, keys, extras] of cases) {
+    const project = seoul({ name, kind, district });
+    assert.equal(newsQuery(project), query, name);
+    assert.deepEqual(seoulNewsName(project).keys, keys, name);
+    assert.deepEqual(seoulNewsName(project).extras, extras, name);
+  }
+  assert.equal(seoulNewsName(seoul({ name: '  ' })), null);
+  assert.equal(seoulNewsName(seoul({ name: '(1,2주구)' })), null);
+});
+
+test('Seoul relevance table (positives and negatives)', () => {
+  const at = (name, kind, district) => seoul({ name, kind, district });
+  const cases = [
+    // [사업, 제목, 남기는지]
+    [at('세운3-8,9,10', '재개발', '중구'), '세운3-8구역 재개발 분양 일정', true],
+    [at('세운3-8,9,10', '재개발', '중구'), '세운 3-10구역 착공', true],
+    [at('세운3-8,9,10', '재개발', '중구'), '세운3-8·9·10구역 통합 개발', true],
+    [at('세운3-8,9,10', '재개발', '중구'), '세운3-1구역 시공사 선정', false],
+    [at('세운3-8,9,10', '재개발', '중구'), '세운3-80 상가', false],
+    [at('세운3-8,9,10', '재개발', '중구'), '세운3구역 재개발', false],
+    [at('마포로1구역 제8지구', '재개발', '중구'), '마포로1구역 제8지구 재개발 착공', true],
+    [at('마포로1구역 제8지구', '재개발', '중구'), '마포로1구역 제10지구 정비계획', false],
+    [at('반포주공1단지(1,2,4주구)', '재건축', '서초구'), '반포주공1단지 1·2·4주구 재건축 이주', true],
+    [at('반포주공1단지(1,2,4주구)', '재건축', '서초구'), '반포주공1단지 1·2·4주구 공사비 협상', true], // 괄호 안이 문맥
+    [at('반포주공1단지(1,2,4주구)', '재건축', '서초구'), '반포주공1단지 매매가 신고가', false],
+    [at('은마', '재건축', '강남구'), '은마아파트 49층 재건축 확정', true],
+    [at('은마', '재건축', '강남구'), '은마 재건축 조합 설립', true],
+    [at('은마', '재건축', '강남구'), '대치 은마아파트 상가 화재', false],
+    [at('은마', '재건축', '강남구'), '은마 프로젝트 공개', false],
+    [at('을지로3가', '재개발', '중구'), '을지로3가역 상권 살아난다', false],
+    [at('을지로3가', '재개발', '중구'), '을지로3가 구역 재개발 사업시행인가', true],
+    [at('한남3', '재개발', '용산구'), '한남뉴타운 3구역 이주 마무리', true],
+    [at('한남3', '재개발', '용산구'), '한남재정비촉진지구 3구역 관리처분', true],
+    [at('한남3', '재개발', '용산구'), '한남3구역 현대건설', true], // 숫자로 끝나는 key는 문맥 없이도
+    [at('한남3', '재개발', '용산구'), '한남뉴타운 4구역 시공사', false],
+    [at('한남3', '재개발', '용산구'), '한남30 빌딩', false],
+    [at('신영1', '재개발', '종로구'), '종로구 신영1구역 분양', true],
+    [at('신영1', '재개발', '종로구'), '마포구 신영1구역 재개발', false],
+    [at('신길2', '재개발', '영등포구'), '신길뉴타운 2구역 관리처분', true],
+    [at('신길2', '재개발', '영등포구'), '신길2차 아파트 리모델링', false],
+    [at('신당1', '재개발', '중구'), '신당10구역 시공사 선정', false],
+    [at('신당1', '재개발', '중구'), '서울 성동구·중구 재개발 신당1구역 포함', true], // 사업의 구도 있으면 남긴다
+    [at('신반포4지구', '재건축', '서초구'), '신반포4지구 재건축 분양 일정', true],
+    [at('신반포4지구', '재건축', '서초구'), '신반포4지구 상가 화재', false],
+    [at('반포미도2차', '재건축', '서초구'), '반포 미도2차 재건축 속도', true],
+    [at('반포미도2차', '재건축', '서초구'), '반포미도2차 매매 거래', false],
+    [at('반포미도2차', '재건축', '서초구'), '반포미도1차 재건축', false],
+  ];
+  for (const [project, title, expected] of cases) {
+    assert.equal(relevant(item({ title }), project), expected, `${project.name}: ${title}`);
+  }
+});
+
+test('title normalisation and other-district check', () => {
+  assert.equal(normalizeNewsTitle('한남뉴타운 3구역'), '한남3구역');
+  assert.equal(normalizeNewsTitle('노량진 재정비촉진구역 8구역'), '노량진8구역');
+  assert.equal(normalizeNewsTitle('한남 재정비촉진지구 3구역'), '한남3구역');
+  assert.equal(namesOtherDistrict('성동구 신당1구역', '중구'), true);
+  assert.equal(namesOtherDistrict('중구 신당1구역', '중구'), false);
+  assert.equal(namesOtherDistrict('성동구·중구 재개발', '중구'), false);
+  assert.equal(namesOtherDistrict('[동대문구] 청량리 재개발', '중구'), true);
+  // 낱말 중간의 '중구'(집중구역)는 구가 아니다.
+  assert.equal(namesOtherDistrict('정비 집중구역 지정', '종로구'), false);
+  assert.equal(namesOtherDistrict('신영1구역 착공', '종로구'), false);
 });
 
 test('targets: all towns, Seoul live > soon > mid by window start, capped', () => {
@@ -285,4 +371,88 @@ test('collectNews without keys makes no calls', async () => {
   assert.equal(result.stopped, 'news_no_key');
   assert.deepEqual(result.byId, {});
   assert.equal(calls.length, 0);
+});
+
+// --- 시간 한도: 네이버가 느리거나 막혀도 지도 빌드(작업 15분)를 넘기지 않는다 ---
+
+const timeoutError = () => Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+
+test('client aborts a slow call after timeoutMs (default 10s) and retries once', async () => {
+  assert.equal(NEWS_TIMEOUT_MS, 10000);
+  const signals = [];
+  const hanging = async (url, init) => {
+    signals.push(init.signal);
+    return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+  };
+  await assert.rejects(createNewsClient({ fetch: hanging, env, sleep: noSleep, timeoutMs: 20 }).search('하남교산'), { kind: 'news_timeout' });
+  assert.equal(signals.length, 2);
+  assert.ok(signals.every((signal) => signal instanceof AbortSignal && signal.aborted));
+});
+
+test('collectNews stops after 2 consecutive timeouts', async () => {
+  const { fetch, calls } = fakeFetch(() => { throw timeoutError(); });
+  const result = await collectNews({
+    projects: [town(), seoul(), seoul({ id: 'seoul-2', name: '신당1' }), seoul({ id: 'seoul-3', name: '한남3' })],
+    client: createNewsClient({ fetch, env, sleep: noSleep }),
+    today,
+    sleep: noSleep,
+  });
+  assert.equal(result.stopped, 'news_timeout');
+  assert.equal(result.checked, 2);
+  assert.deepEqual(result.errors, ['news_timeout']);
+  assert.equal(result.failed, 2);
+  // 사업마다 한 번 재시도: 2사업 x 2번
+  assert.equal(calls.length, 4);
+  assert.deepEqual(result.byId, {});
+});
+
+test('collectNews network streak resets on success; network errors count too', async () => {
+  // 시간 초과, 성공, 네트워크 오류, 성공: 연달아 2번이 아니므로 끝까지 간다.
+  const plan = { 하남교산: 'timeout', '종로 신영1구역 재개발': 'ok', '중구 신당1구역 재개발': 'network', '용산 한남3구역 재개발': 'ok' };
+  const { fetch } = fakeFetch((url) => {
+    const step = plan[url.searchParams.get('query')];
+    if (step === 'timeout') throw timeoutError();
+    if (step === 'network') throw new TypeError('fetch failed');
+    return Response.json(okBody([raw({ title: '한남3구역 관리처분 인가', originallink: 'https://www.yna.co.kr/h3' })]));
+  });
+  const projects = [town(), seoul(), seoul({ id: 'seoul-2', name: '신당1', district: '중구' }), seoul({ id: 'seoul-3', name: '한남3', district: '용산구' })];
+  const result = await collectNews({ projects, client: createNewsClient({ fetch, env, sleep: noSleep }), today, sleep: noSleep });
+  assert.equal(result.stopped, null);
+  assert.equal(result.checked, 4);
+  assert.deepEqual(result.errors, ['news_timeout', 'news_network']);
+  assert.deepEqual(Object.keys(result.byId), ['seoul-3']);
+
+  // 네트워크 오류 2번 연달아면 news_network로 멈춘다.
+  const down = fakeFetch(() => { throw new TypeError('fetch failed'); });
+  const stopped = await collectNews({ projects, client: createNewsClient({ fetch: down.fetch, env, sleep: noSleep }), today, sleep: noSleep });
+  assert.equal(stopped.stopped, 'news_network');
+  assert.equal(stopped.checked, 2);
+});
+
+test('collectNews stops at the time budget and keeps what it collected', async () => {
+  assert.equal(NEWS_BUDGET_MS, 180000);
+  let clock = 0;
+  // 호출마다 70초가 걸리는 것처럼 시계를 민다.
+  const { fetch, calls } = fakeFetch(() => {
+    clock += 70000;
+    return Response.json(okBody([raw({ title: '하남교산 본청약' }), raw({ title: '신영1구역 착공', originallink: 'https://www.yna.co.kr/s1' })]));
+  });
+  const projects = [town(), seoul(), seoul({ id: 'seoul-2', name: '신당1', district: '중구' }), seoul({ id: 'seoul-3', name: '한남3', district: '용산구' })];
+  const result = await collectNews({
+    projects, client: createNewsClient({ fetch, env, sleep: noSleep }), today, sleep: noSleep, now: () => clock,
+  });
+  // 0초, 70초, 140초에 검색하고 210초에 멈춘다.
+  assert.equal(result.stopped, 'news_budget');
+  assert.equal(result.checked, 3);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(Object.keys(result.byId).sort(), ['seoul-1441', 'town-hanam-gyosan']);
+  assert.deepEqual(result.errors, []);
+
+  // budgetMs로 줄일 수 있다.
+  clock = 0;
+  const short = await collectNews({
+    projects, client: createNewsClient({ fetch, env, sleep: noSleep }), today, sleep: noSleep, now: () => clock, budgetMs: 60000,
+  });
+  assert.equal(short.stopped, 'news_budget');
+  assert.equal(short.checked, 1);
 });

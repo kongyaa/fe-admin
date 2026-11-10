@@ -100,19 +100,33 @@
 
 네이버 뉴스 검색 API(공식)로 사업마다 최근 기사 몇 건을 모아 `projects.json`의 `news`로 싣고, 사이트 상세에 "관련 소식"으로 보여 준다. 스크래핑은 하지 않는다.
 
-- 키: `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`(GitHub Secrets, 워크플로가 빌드 단계에 넘긴다). 둘 중 하나라도 비어 있으면 뉴스 단계를 건너뛴다(`sources.news.skipped: no_key`, 호출 없음). Actions에서는 두 값을 `::add-mask::`로 가린다. `NAVER_NEWS_ENDPOINT=hub`(기본, 네이버 API 허브 `naverapihub.apigw.ntruss.com/search/v1/news`, 헤더 `X-NCP-APIGW-API-KEY-ID`/`X-NCP-APIGW-API-KEY`) 또는 `legacy`(developers.naver.com `openapi.naver.com/v1/search/news.json`, 헤더 `X-Naver-Client-Id`/`X-Naver-Client-Secret`). 키는 헤더로만 보내 주소와 오류 문구에 남지 않는다. 키가 없으면 `news_no_key`, 다른 값이면 `news_endpoint`.
+- 키: `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`(GitHub Secrets, 워크플로가 빌드 단계에 넘긴다). 둘 중 하나라도 비어 있으면 뉴스 단계를 건너뛴다(`sources.news.skipped: no_key`, 호출 없음). Actions에서는 두 값을 `::add-mask::`로 가린다. `NAVER_NEWS_ENDPOINT`는 비밀이 아닌 설정이라 저장소 Variables(`vars.NAVER_NEWS_ENDPOINT`)에서 읽는다. `hub`(기본, 네이버 API 허브 `naverapihub.apigw.ntruss.com/search/v1/news`, 헤더 `X-NCP-APIGW-API-KEY-ID`/`X-NCP-APIGW-API-KEY`) 또는 `legacy`(developers.naver.com `openapi.naver.com/v1/search/news.json`, 헤더 `X-Naver-Client-Id`/`X-Naver-Client-Secret`). 키는 헤더로만 보내 주소와 오류 문구에 남지 않는다. 키가 없으면 `news_no_key`, 다른 값이면 `news_endpoint`.
 - 대상(`newsTargets`): 공공주택지구 전부 + 서울 정비사업 중 `live`·`soon`·`mid`. 서울은 `live` > `soon` > `mid`, 같은 구간은 예상 시기 시작이 이른 순으로 150개까지(`maxSeoul`).
   사업 하나에 검색 한 번이라 호출 수는 대상 수와 같다(5xx·시간 초과는 한 번 재시도, 429도 한 번 재시도 후 멈춤). 2026-06 서울 자료(공고 연결 없이)로는 공공주택지구 3 + 서울 `soon`·`mid` 119 = 122건이고, 상한은 공공주택지구 수 + 150이다. 하루 한도(25,000건)보다 훨씬 적다.
-  예약 실행 말고도 `main` push와 PR 실행마다 같은 수만큼 부른다(PR은 같은 저장소 브랜치일 때만 Secrets가 넘어간다).
-- 검색어(`newsQuery`): 공공주택지구는 이름(`하남교산`). 서울은 `<구에서 '구'를 뺀 이름> <구역명> <재개발|재건축>`(`종로 신영1구역 재개발`). 구역명이 숫자로 끝나면 `구역`을 붙이고(`신영1` → `신영1구역`), `반포미도2차`·`개포주공5단지`는 그대로 둔다. `중구`는 줄이지 않는다. 최신순(`sort=date`) 20건을 받는다.
-- 관련성(`relevant`): 제목(태그·엔티티 제거, 공백 제거)에 이름이 있어야 남긴다. 서울은 공고 연결과 같은 구역명 값(`구역`과 공백을 뺀 값, `신영1구역`·`신영 1구역` 모두 맞음)이고, 3글자 미만이면 `<이름>구역`으로만 찾는다. 공공주택지구는 이름 또는 `noticeMatch`(2글자 이상). 숫자로 끝나는 값 뒤에 숫자, `차`, `단지`, `동`, `가`가 오면 다른 것으로 본다(`신당1` ≠ `신당10`, `신길2` ≠ `신길2차`). 기사 제목에는 구가 거의 없어 구는 보지 않는다(다른 구의 같은 이름 구역이 섞일 수 있다).
+  예약 실행 말고도 `main` push와 PR 실행마다 같은 수만큼 부른다(PR은 같은 저장소 브랜치일 때만 Secrets가 넘어간다). PR 실행에서도 일부러 켜 둔다: 실행당 약 120건은 하루 한도에 비해 작고, PR에서 실제 자료로 결과를 확인할 수 있다.
+- 시간 한도: 호출 하나는 10초(`NEWS_TIMEOUT_MS`)에 끊고(`news_timeout`) 한 번 재시도하므로 사업 하나에 약 20초를 넘지 않는다. 뉴스 단계 전체는 3분(`NEWS_BUDGET_MS = 180000`, `collectNews`의 `budgetMs`)이 한도다.
+  다음 사업을 검색하기 전에 시계(`now`, 테스트에서 바꿔 끼움)로 재어 넘었으면 `stopped: news_budget`으로 멈추고 그때까지 모은 기사는 싣는다. 진행 중인 호출은 끝까지 기다리므로 실제 상한은 3분 20초 남짓이고, 지도 빌드 작업 시간(15분)을 넘기지 않는다.
+- 검색어(`newsQuery`): 공공주택지구는 이름(`하남교산`). 서울은 `<구에서 '구'를 뺀 이름> <구역명> <재개발|재건축>`(`종로 신영1구역 재개발`). `중구`는 줄이지 않는다. 최신순(`sort=date`) 20건을 받는다.
+  구역명 자리(`seoulNewsName`의 `queryName`)는 끝 괄호를 뗀 이름이고(`반포주공1단지(1,2,4주구)` → `서초 반포주공1단지 재건축`), 숫자로 끝나면 `구역`을 붙인다(`신영1` → `신영1구역`, `반포미도2차`·`마포로1구역 제8지구`는 그대로).
+  `<앞>-<n>,<n>,…` 목록은 첫 구역으로 찾는다(`세운3-8,9,10` → `중구 세운3-8구역 재개발`). 3글자 미만 재건축은 `<이름>아파트`(`은마` → `강남 은마아파트 재건축`), 3글자 미만 재개발은 이름 그대로다.
+- 관련성(`relevant`): 제목(태그·엔티티 제거, 공백 제거)에 비교값(key)이 있어야 남긴다. 숫자로 끝나는 key 뒤에 숫자, `차`, `단지`, `동`, `가`가 오면 다른 것으로 본다(`신당1` ≠ `신당10`, `신길2` ≠ `신길2차`).
+  공공주택지구는 이름 또는 `noticeMatch`(2글자 이상)가 key다. 서울 key(`seoulNewsName`)는 공고 연결의 `zoneKey`(`link-notices.js`, 그대로 둔다)와 따로 만든다.
+  - 끝 괄호는 떼고, 괄호 안(`,`·`·`·공백을 뺀 값, `124주구`)은 선택 문맥(`extras`)으로 둔다.
+  - `구역`은 끝에 있을 때만 뗀다(`한남3구역` → `한남3`, `마포로1구역 제8지구` → `마포로1구역제8지구`. `마포로1구역`만으로는 다른 지구와 섞여 key로 쓰지 않는다).
+  - `<앞>-<n>,<n>,…`은 하나씩 펼친다(`세운3-8,9,10` → `세운3-8`, `세운3-9`, `세운3-10`).
+  - 3글자 미만이면 재건축은 `<이름>아파트`·`<이름>재건축`(`은마아파트`, `은마재건축`), 그 밖은 `<이름>구역`(`수표구역`)만 쓴다.
+  - 비교 전에 제목에서 `뉴타운`, `재정비촉진지구`, `재정비촉진구역`과 공백을 지운다(`한남뉴타운 3구역` → `한남3구역`이 `한남3`에 맞음).
+  - 숫자로 끝나지 않는 key(`을지로3가`, `반포미도2차`, `신반포4지구`, `은마아파트`)는 제목에 정비 문맥 낱말(`재개발|재건축|정비|구역|조합|시공|분양|착공|이주|관리처분|사업시행|인가`) 또는 괄호 안 값이 함께 있어야 한다(`을지로3가역 상권` 제외).
+  - 제목이 서울 25개 구 중 사업의 구가 아닌 구(`<X>구`, 낱말 처음에서만)만 말하면 뺀다(`성동구 신당1구역`은 중구 신당1이 아님). 사업의 구도 함께 있으면(`성동구·중구 …`) 남긴다.
 - 정리: 같은 링크나 같은 제목(공백·문장부호 무시)은 하나만, 오늘 기준 14일 전(그날 포함)부터 오늘까지만, 최신순 5건(`limitPerProject`)까지.
 - 14일 규칙: 약관의 서버 보관 한도는 21일(`NEWS_MAX_AGE_DAYS`)이다. 지도는 주 1회 다시 만들어 한 번 실린 기사가 다음 빌드까지 최대 7일(`MAP_REBUILD_DAYS`) 더 배포본에 남으므로,
   싣는 기사는 14일(`NEWS_PUBLISH_DAYS = 21 - 7`, `collectNews`의 `maxAgeDays` 기본값)까지로 잡아 배포본에 있는 동안 21일을 넘지 않게 한다. 그래서 사이트 안내도 "최근 2주"다.
   빌드가 실패하면(서울 자료 실패 등) 이전 배포가 남아 이 계산이 깨진다. 사이트는 화면에서 21일이 지난 기사를 한 번 더 숨기지만(`newsItems`) 파일에서는 빠지지 않으니, 빌드가 한 주 넘게 실패하면 손으로 다시 돌린다.
-- 저장하는 값: `{ title, outlet, date, url }`뿐이다. 제목은 `<b>` 태그를 지우고 엔티티(`&quot;`, `&amp;` 등)를 푼 값, 언론사는 원문 주소 호스트로 정한다(알려진 언론사는 이름, 아니면 `www.`를 뗀 호스트). 날짜는 `pubDate`(RFC 1123)의 한국 날짜, 링크는 원문(`originallink`)이 http(s)면 원문, 아니면 네이버 뉴스 링크다. 날짜를 읽지 못한 기사는 보관 기간을 지킬 수 없어 뺀다. 요약(`description`)과 본문은 저장하지 않는다.
+- 저장하는 값: `{ title, outlet, date, url }`뿐이다. 제목은 `<b>` 태그를 지우고 엔티티(`&quot;`, `&amp;` 등)를 푼 값, 언론사는 원문 주소 호스트로 정한다(알려진 언론사는 이름, 아니면 `www.`를 뗀 호스트). 날짜는 `pubDate`(RFC 1123)의 한국 날짜, 링크는 원문(`originallink`)이 http(s)면 원문, 아니면 네이버 뉴스 링크다. 네이버 뉴스 링크로 대신할 때는 언론사를 알 수 없어 `outlet: null`이고 사이트는 날짜만 보여 준다(`네이버 뉴스`는 언론사가 아니라 쓰지 않는다). 날짜를 읽지 못한 기사는 보관 기간을 지킬 수 없어 뺀다. 요약(`description`)과 본문은 저장하지 않는다.
 - 약관(2026-09 개정 보도 기준): 출처와 원문 링크를 함께 보여 주고, 서버 보관은 21일 이내, AI 학습·답변 생성·재판매에 쓰지 않는다. 사이트에는 언론사 이름과 원문 링크를 함께 보여 줘야 한다.
-- 실패: 사업 하나의 실패는 `errors`에 kind만 남기고 다음 사업으로 간다. `401`·`403`·`429`, 키 없음, 잘못된 endpoint는 `stopped`에 kind를 두고 바로 멈춘다(호출을 더 보내지 않음). 사업 사이에 200ms 쉰다.
+- 실패: 사업 하나의 실패는 `errors`에 kind만 남기고 다음 사업으로 간다. `401`·`403`·`429`, 키 없음, 잘못된 endpoint는 `stopped`에 kind를 두고 바로 멈춘다(호출을 더 보내지 않음).
+  시간 초과(`news_timeout`)·네트워크 오류(`news_network`)는 한 번은 넘어가고, 연달아 2번(`NEWS_NETWORK_STOP_AFTER`)이면 `stopped`에 그 kind를 두고 멈춘다(성공하거나 다른 오류가 나면 다시 센다). 늘 시간 초과인 API면 2사업 x 2번 = 4번 부르고 멈춘다.
+  시간 한도를 넘으면 `stopped: news_budget`. 사업 사이에 200ms 쉰다.
 - 결과(`collectNews`): `{ byId: { [사업 id]: [...] }, checked, matched, errors, failed, stopped }`. 기사가 남은 사업만 `byId`에 있다.
 - 연결(`build-map.js` `collectMapNews`): 공고 연결·블록별 현황·`bucketOf` 뒤, `toPublic` 전에 `newsTargets`를 부른다(구간이 필요하고, `toPublic`이 `noticeMatch`를 지운다).
   기사가 남은 사업에만 `news: [{ title, outlet, date, url }]`(최신순 5건까지)를 붙이고, 기사가 없는 사업에는 `news` 필드가 없다. `toPublic`은 이 네 값만 남기고 주소는 `safeHttpUrl`을 거친다.
@@ -368,7 +382,7 @@ npx serve site                        # 또는 아무 정적 서버로 site/ 열
 ```
 
 `DATA_GO_KR_KEY`가 없으면 공고 연결과 분양 성과의 청약홈·국토부 조회를 건너뛴다(보도된 경쟁률만 붙음).
-`NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`이 없으면 관련 소식을 건너뛴다(`map news skipped=no_key`). developers.naver.com 키면 `NAVER_NEWS_ENDPOINT=legacy`도 넣는다.
+`NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`이 없으면 관련 소식을 건너뛴다(`map news skipped=no_key`). developers.naver.com 키면 `NAVER_NEWS_ENDPOINT=legacy`도 넣는다(Actions에서는 Secrets가 아니라 Variables).
 분양 성과의 경쟁률은 data.go.kr 15098905에 따로 활용신청해야 한다(같은 키). 승인 전이면 `competition_http_401/403` 하나만 남기고 보도 값으로 넘어간다.
 
 ## 배포

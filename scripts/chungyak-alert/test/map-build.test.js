@@ -733,3 +733,25 @@ test('run logs the news line with counts only', async () => {
   assert.equal(newsLineOf(lines), 'map news checked=4 matched=1 projects=4 errors=0 stopped=none');
   assert.ok(lines.every((line) => !line.includes('http') && !line.includes('test-id') && !line.includes('test-secret')));
 });
+
+test('a Naver API that always times out costs a few calls and the map still builds', async () => {
+  const calls = [];
+  const fetch = async (url) => {
+    const u = new URL(url);
+    if (`${u.origin}${u.pathname}` !== NEWS_ENDPOINTS.hub.url) throw new Error('unexpected request');
+    calls.push(u.searchParams.get('query'));
+    throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+  };
+  const data = await buildMap({
+    fetch, env: newsEnv, today, seoulFile, newtownsFile: townsFile, sleep: noSleep,
+  });
+  // 연달아 2사업이 시간 초과면 멈춘다(사업마다 한 번 재시도 = 4번).
+  assert.equal(calls.length, 4);
+  assert.deepEqual([...new Set(calls)], ['하남교산', '종로 신영1구역 재개발']);
+  assert.equal(data.projects.length, 5);
+  assert.ok(data.projects.every((p) => !('news' in p)));
+  assert.deepEqual(data.sources.news, {
+    checked: 2, matched: 0, projects: 4, skipped: null, errors: ['news_timeout'], stopped: 'news_timeout',
+  });
+  assert.equal(newsLineOf(summaryLines(data)), 'map news checked=2 matched=0 projects=4 errors=1 stopped=news_timeout kinds=news_timeout');
+});
