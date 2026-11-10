@@ -120,6 +120,8 @@ function latestNaver(all) {
  * 이 구의 사업이 하나도 검색되지 않았으면 '모은 기사가 없다'고 말하지 않는다. 평가·전망 없이 수만 적는다.
  */
 export function districtBrief(district, stats, { seoulAsOf = null, today = null, newsSearched = null } = {}) {
+  // 검색한 사업이 하나도 없으면(빈 Set) 모으지 않은 것과 같다
+  const searched = newsSearched instanceof Set && newsSearched.size > 0 ? newsSearched : null;
   const st = stats.get(district);
   if (!st || st.t === 0) return null;
   const g = district;
@@ -150,7 +152,8 @@ export function districtBrief(district, stats, { seoulAsOf = null, today = null,
     if (firstNames.length) p2.push(T('예상 시기가 가장 이른 곳은 '), B(firstNames.join(', ')), T('입니다. '));
     const dosi = st.soon.filter((p) => /도시정비형/.test(p.subKind ?? '')).length;
     const rebuild = st.soon.filter((p) => p.kind === '재건축').length;
-    if (dosi > 0) p2.push(T(`1년 안 사업 ${st.s}곳 중 ${dosi}곳은 도시정비형(도심 업무지구형) 재개발입니다.`));
+    if (dosi > 0 && dosi === st.s) p2.push(T(`1년 안 사업 ${st.s}곳은 모두 도시정비형(도심 업무지구형) 재개발입니다.`));
+    else if (dosi > 0) p2.push(T(`1년 안 사업 ${st.s}곳 중 ${dosi}곳은 도시정비형(도심 업무지구형) 재개발입니다.`));
     else if (rebuild === st.s) p2.push(T('1년 안 사업은 모두 재건축입니다.'));
   }
 
@@ -159,12 +162,12 @@ export function districtBrief(district, stats, { seoulAsOf = null, today = null,
   if (notice) {
     p3.push(T('최근 청약홈 공고는 '), B(notice.notice.name), T(`(${notice.project.name}, ${dayLabel(notice.notice.announceDate)})였습니다. `));
   }
-  const naver = newsSearched ? latestNaver(st.all) : null;
+  const naver = searched ? latestNaver(st.all) : null;
   if (naver) {
     const when = naver.item.date.slice(5).replace('-', '.');
     const meta = naver.item.outlet ? `${naver.item.outlet}, ${when}` : when;
     p3.push(T(`최근 2주 기사 중에는 ${naver.project.name} 관련 소식(${meta})이 가장 최근입니다.`));
-  } else if (newsSearched && st.all.some((p) => newsSearched.has(p.id))) p3.push(T('최근 2주 사이 모은 기사는 없습니다.'));
+  } else if (searched && st.all.some((p) => searched.has(p.id))) p3.push(T('최근 2주 사이 모은 기사는 없습니다.'));
 
   const collected = /^\d{4}-\d{2}-\d{2}$/.test(String(today ?? '')) ? ` (${today.slice(5)} 수집)` : '';
   return {
@@ -173,7 +176,7 @@ export function districtBrief(district, stats, { seoulAsOf = null, today = null,
     foot: [
       { label: `서울시 정비사업 추진현황${seoulAsOf ? ` (${seoulAsOf} 기준)` : ''}`, url: DATASET_URL },
       { label: `청약홈 공고 연결${collected}`, url: APPLYHOME_URL },
-      ...(newsSearched ? [{ label: NAVER_FOOT, url: null }] : []),
+      ...(searched ? [{ label: NAVER_FOOT, url: null }] : []),
     ],
     basis: SEOUL_BRIEF_BASIS,
   };
@@ -339,7 +342,8 @@ export function townBrief(project, { curated = [], today } = {}) {
       if (detail) p1.push(T(detail));
     });
     const last = mains.at(-1);
-    p1.push(T(`${josa(mainDetail(last) ? '대' : last.block, '으로', '로')} ${monthLabel(main.noticeDate)} 공고됐습니다.`));
+    // 조사는 실제로 붙는 글자(괄호 설명의 마지막 한글, 없으면 블록 이름)로: '(공공분양)으로', '(686세대)로'
+    p1.push(T(`${josa(mainDetail(last) || last.block, '으로', '로')} ${monthLabel(main.noticeDate)} 공고됐습니다.`));
     const noted = new Set();
     for (const entry of mains) {
       const note = add(newestSource(entry.sources) ?? entry.sources?.[0]);

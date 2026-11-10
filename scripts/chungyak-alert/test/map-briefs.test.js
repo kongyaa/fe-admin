@@ -83,7 +83,7 @@ test('district brief: a 구 with a 공고 중 project, latest notice and a Naver
   assert.equal(p1, '중랑구 정비사업 3곳 중 청약 예상 시기는 1년 안 **1곳**, 1~3년 사이 0곳입니다. '
     + '관리처분인가 이후(이주·착공 포함) 1곳, 초기 단계(구역지정~조합설립) 2곳입니다.');
   assert.equal(p2, '1년 안 사업 중 계획 세대가 가장 큰 곳은 **중화3**(176세대, 착공)입니다. 예상 시기가 가장 이른 곳은 **중화3**입니다. '
-    + '1년 안 사업 1곳 중 1곳은 도시정비형(도심 업무지구형) 재개발입니다.');
+    + '1년 안 사업 1곳은 모두 도시정비형(도심 업무지구형) 재개발입니다.');
   assert.equal(p3, '최근 청약홈 공고는 **중화역 라온프라이빗 센트로**(중화3, 11월 6일)였습니다. 최근 2주 기사 중에는 중화3 관련 소식(뉴시스, 11.08)이 가장 최근입니다.');
   assert.ok(!JSON.stringify(brief).includes('흥행')); // 네이버 제목은 옮기지 않는다
   assert.deepEqual(brief.foot.map((f) => f.label), ['서울시 정비사업 추진현황 (2026-06 기준)', '청약홈 공고 연결 (11-10 수집)', NAVER_FOOT]);
@@ -115,6 +115,8 @@ test('district brief: says nothing about articles unless Naver search ran for th
   // 모았지만 이 구의 사업은 하나도 검색하지 않았다(검색 대상 밖·중간에 멈춤): '없다'고 말하지 않는다
   const other = districtBrief('도봉구', stats, { today, newsSearched: new Set(['seoul-1']) });
   assert.ok(!textOf(other).join('').includes('모은 기사는 없습니다'));
+  // 검색한 사업이 하나도 없는 빈 Set도 모으지 않은 것과 같다(네이버 각주 없음)
+  assert.equal(districtBrief('도봉구', stats, { today, newsSearched: new Set() }).foot.length, 2);
   // 모으지 않았으면 사업에 남은 기사가 있어도 쓰지 않는다
   assert.ok(!textOf(districtBrief('중랑구', stats, { today, newsSearched: null })).join('').includes('관련 소식'));
 });
@@ -345,4 +347,22 @@ test('window range text: a whole calendar year reads as the year', () => {
   assert.equal(windowRangeText('2028-12', '2030-12'), '2028년 12월에서 2030년 12월 사이');
   assert.equal(windowRangeText('2026-11', '2026-11'), '2026년 11월');
   assert.equal(windowRangeText('2029-01', '2030-12'), '2029년 1월에서 2030년 12월 사이');
+});
+
+test('town brief: josa follows the rendered detail even without households', () => {
+  const lh = { title: 'LH청약플러스', outlet: 'LH청약플러스', url: 'https://apply.lh.or.kr/x', date: '2026-04-30' };
+  const town = {
+    id: 't', name: '시험지구', kind: '공공주택지구', stage: '블록별 분양', window: { from: '2027-01', to: '2027-01' }, notices: [], sources: [], plans: [], blocks: [],
+    history: [{ block: 'A3', stage: '본청약', type: '공공분양', noticeDate: '2026-04-30', rental: false, sources: [lh] }],
+  };
+  assert.equal(textOf(townBrief(town, { today }))[0], '시험지구의 가장 최근 본청약은 **A3**(공공분양)으로 2026년 4월 공고됐습니다.[1]');
+  town.history[0].type = null;
+  assert.equal(textOf(townBrief(town, { today }))[0], '시험지구의 가장 최근 본청약은 **A3**로 2026년 4월 공고됐습니다.[1]');
+});
+
+test('every curated news summary is a 합쇼체 sentence (briefs quote them as-is)', async () => {
+  const { loadNews } = await import('../src/pipeline/curated-news.js');
+  const news = loadNews(new URL('../data/news.yaml', import.meta.url));
+  assert.ok(news.items.length > 0);
+  for (const item of news.items) assert.match(item.title, /니다(\([^)]*\))?\.$/, item.title);
 });

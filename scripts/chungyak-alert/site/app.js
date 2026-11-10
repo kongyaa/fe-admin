@@ -1531,6 +1531,19 @@ export function stampLine(generatedAt, now = new Date()) {
   return when ? `${when} 수집, 다음 ${nextCollection(now).time}` : '수집 시각 정보 없음';
 }
 
+/** 지금 접수 중인 사업(지구) 수: 접수 중인 공고가 있는 서로 다른 사업. 요약판 칸과 머리말이 같이 쓴다 */
+export function liveProjectCount(projects, today) {
+  return new Set(receivingNow(projects, today).map((r) => r.project?.id)).size;
+}
+
+/** 한글 등 입력기 조합 중의 키(조합을 끝내는 Enter 포함)인지. 이때는 검색 단축키를 쓰지 않는다 */
+export function isComposingKey(e) {
+  return e?.isComposing === true || e?.keyCode === 229;
+}
+
+// 검색 결과 수 알림: 이만큼 입력이 멈췄을 때, 수가 바뀐 경우만
+export const SEARCH_ANNOUNCE_MS = 300;
+
 /** 아직 보지 않은(NEW) 소식 수 */
 export function unseenCount(feed, baseline) {
   return entriesOf(feed).filter((f) => isNewItem(f, baseline)).length;
@@ -1547,11 +1560,26 @@ export function searchKey(value) {
   return normalizeText(value).replace(/(?<=[a-z])-(?=\d)/g, '');
 }
 
-// 블록 줄의 단지 이름: 같은 블록(분양/임대 같은 쪽) 이력 중 제목이 있는 가장 늦은 것
+/**
+ * 이력 제목에 블록 이름이 이미 있는지('남양주왕숙2 A03'은 A-3, '카이브 유보라(AC4BL)'는 AC4). 블록 번호 앞자리 0은 무시한다.
+ * 파이프라인 briefs.js titleHasBlock 과 같은 규칙
+ */
+export function titleHasBlock(title, block) {
+  if (!textOrNull(title) || !textOrNull(block)) return false;
+  const plain = (value) => blockKey(value).replace(/^([A-Z]+)0+(?=\d)/, '$1');
+  const want = plain(block);
+  return String(title).split(/[\s()[\],·/]+/).some((word) => /^[A-Za-z]{1,2}-?\d/.test(word) && plain(word) === want);
+}
+
+// 블록 줄의 단지 이름: 같은 블록(분양/임대 같은 쪽) 이력 중 제목이 있는 가장 늦은 것.
+// 제목에 블록 이름이나 지구 이름이 들어 있으면('남양주왕숙 A-01') 검색 줄에 이름이 겹치므로 쓰지 않는다(유형으로)
 function blockTitle(project, row) {
   const key = blockKey(row.block);
+  const town = normalizeText(project.name);
   return entriesOf(project.history).filter((e) => blockKey(e.block) === key && (e.rental === true) === row.rental && textOrNull(e.title))
-    .map((e) => e.title.trim()).at(-1) ?? null;
+    .map((e) => e.title.trim())
+    .filter((t) => !titleHasBlock(t, row.block) && !(town && normalizeText(t).includes(town)))
+    .at(-1) ?? null;
 }
 
 /**
@@ -1622,11 +1650,13 @@ export function buildSearchIndex(projects, feed, { today, todayYm } = {}) {
 /**
  * 검색: 검색 비교값에 질의가 들어 있는 항목을 묶음 순서(신도시·블록·사업·소식)로 최대 max개.
  * 묶음 안에서는 이름이 딱 맞는 것, 이름이 질의로 시작하는 것, 나머지 순(같으면 목록 순서).
+ * 자리는 차례로 채운다: 1) 결과가 있는 묶음마다 한 자리, 2) 묶음별 기본 수(SEARCH_GROUPS)까지, 3) 남은 자리를 묶음 순서로.
+ * 늘 합계를 세며 채우므로 뒤 묶음도 자리를 잃지 않는다.
  */
 export function searchAll(index, query, max = SEARCH_MAX) {
   const q = searchKey(query);
-  if (!q) return [];
-  const groups = SEARCH_GROUPS.map(([group, first]) => {
+  if (!q || max <= 0) return [];
+  const groups = SEARCH_GROUPS.map(([group, quota]) => {
     const hits = entriesOf(index).map((e, i) => ({ e, i })).filter(({ e }) => e.group === group && String(e.key).includes(q))
       .map(({ e, i }) => {
         const exact = Array.isArray(e.exact) ? e.exact : [];
@@ -1637,15 +1667,21 @@ export function searchAll(index, query, max = SEARCH_MAX) {
       })
       .sort((a, b) => a.rank - b.rank || a.i - b.i)
       .map((x) => x.e);
-    return { group, first, hits };
+    return { quota, hits, take: 0 };
   });
-  const picked = new Set();
-  for (const g of groups) for (const e of g.hits.slice(0, g.first)) picked.add(e);
-  for (const g of groups) for (const e of g.hits) if (picked.size < max) picked.add(e);
-  const order = SEARCH_GROUPS.map(([group]) => group);
-  return [...picked].map((e, i) => ({ e, i }))
-    .sort((a, b) => order.indexOf(a.e.group) - order.indexOf(b.e.group) || a.i - b.i)
-    .slice(0, max).map((x) => x.e);
+  let total = 0;
+  const fill = (limit) => {
+    for (const g of groups) {
+      while (total < max && g.take < Math.min(limit(g), g.hits.length)) {
+        g.take += 1;
+        total += 1;
+      }
+    }
+  };
+  fill(() => 1);
+  fill((g) => g.quota);
+  fill((g) => g.hits.length);
+  return groups.flatMap((g) => g.hits.slice(0, g.take));
 }
 
 // ---------------------------------------------------------------------------
@@ -1689,6 +1725,7 @@ const state = {
   searchIndex: [], // 머리말 검색 대상(buildSearchIndex)
   searchHits: [], // 지금 보이는 검색 결과
   searchActive: -1, // 키보드로 고른 결과 번호
+  composing: false, // 검색창 한글 조합 중
   route: null,
   townBlock: null,
   quietPop: false, // toggleDistrict 가 부른 history.back() 의 popstate 인지
@@ -1957,7 +1994,7 @@ function renderHeader() {
   badge.hidden = n === 0;
   badge.textContent = n > 99 ? '99+' : String(n);
   $('bell').setAttribute('aria-label', n ? `새 소식 ${n}건` : '새 소식');
-  const live = new Set(receivingNow(state.projects, state.today).map((r) => r.project.id)).size;
+  const live = liveProjectCount(state.projects, state.today);
   const link = $('nav-live');
   link.hidden = live === 0;
   link.replaceChildren(h('span', { class: 'live-dot', 'aria-hidden': 'true' }), `지금 접수 중 ${live}곳`);
@@ -2035,13 +2072,14 @@ function renderMain() {
 
 function renderTiles() {
   const live = receivingNow(state.projects, state.today);
+  const liveCount = liveProjectCount(state.projects, state.today);
   const fresh = state.feed.filter(isNew);
   const planned = plannedBlocks(state.projects, state.today);
   const soon = seoulSoon(state.projects, bucketFn);
   const f = state.feedFilter;
   const tiles = [
     {
-      key: 'live', label: '지금 접수 중', num: live.length, unit: '곳', on: f.kind === '접수' && !f.onlyNew,
+      key: 'live', label: '지금 접수 중', num: liveCount, unit: '곳', on: f.kind === '접수' && !f.onlyNew,
       detail: live.length ? live.map((r) => receivingText(r)).join(', ') : '오늘 접수하는 공고가 없습니다',
     },
     {
@@ -2568,11 +2606,17 @@ function writeMainHash() {
  * 사업·지구 화면으로 간다: 지금 기록에 돌아올 자리(data-key)를 남기고 새 기록을 쌓는다.
  * 휴대폰 뒤로 가기·'← …으로'가 사이트를 떠나지 않고 누른 자리로 돌아온다.
  */
-function openLink(href, { key = null, back = null } = {}) {
+/** replace: 지금 기록(휴대폰 검색 화면의 기록)을 이 화면 기록으로 바꿔 쓴다(뒤로 가기 한 번에 그 앞 화면으로) */
+function openLink(href, { key = null, back = null, replace = false } = {}) {
   // 첫 화면에서 펼친 구는 돌아올 때 그대로 펼쳐 두도록 주소에 함께 담는다
   const parsed = { ...parseHash(href), district: state.filters.district };
-  if (state.route?.kind === 'main') history.replaceState({ ...(history.state ?? {}), returnKey: key }, '');
-  history.pushState({ pushed: 'view', back: back ?? '첫 화면으로' }, '', hashFor(parsed) || `${location.pathname}${location.search}`);
+  const url = hashFor(parsed) || `${location.pathname}${location.search}`;
+  const entry = { pushed: 'view', back: back ?? '첫 화면으로' };
+  if (replace) history.replaceState(entry, '', url);
+  else {
+    if (state.route?.kind === 'main') history.replaceState({ ...(history.state ?? {}), returnKey: key }, '');
+    history.pushState(entry, '', url);
+  }
   route();
 }
 
@@ -2636,6 +2680,11 @@ function restoreReturn() {
 
 /** 뒤로·앞으로 가기(popstate)와 주소창에서 해시를 바꾼 경우(hashchange). 둘 다 와도 한 번만 바꾼다 */
 function syncFromHash() {
+  // 화면이 바뀌면 휴대폰 검색 화면·메뉴 시트는 닫는다(그 위에 남지 않게, 스크롤 잠금도 풀린다)
+  if (typeof document !== 'undefined') {
+    closeSearch({ blur: true });
+    closeSheet({ restore: false });
+  }
   if (!state.data || !isStateHash(location.hash)) return; // '#sources' 같은 문서 안 이동은 그대로 둔다
   const { district } = parseHash(location.hash);
   const gu = district && SEOUL_DISTRICTS.has(district) ? district : null;
@@ -2653,10 +2702,6 @@ function syncFromHash() {
   route();
 }
 
-/**
- * 구 칸을 누르면 그 구의 사업 목록을 펼친다(다시 누르면 접음). 좁은 화면에서는 펼칠 때 기록을 하나 남겨
- * 뒤로 가기가 목록을 접게 하고, 그 기록에서 접으면 기록을 하나 되돌린다(켜고 끄기를 반복해도 기록이 쌓이지 않게).
- */
 /** 관심 지구 칸: 같은 지구를 다시 누르면 닫는다. 지구를 고르면 서울 구 선택은 푼다 */
 function toggleTown(name) {
   const next = state.regionTown === name ? null : name;
@@ -2673,6 +2718,10 @@ function toggleTown(name) {
   announce(next ? `${next} 지역 브리핑을 펼쳤습니다` : '지구 브리핑을 닫았습니다');
 }
 
+/**
+ * 구 칸을 누르면 그 구의 사업 목록을 펼친다(다시 누르면 접음). 좁은 화면에서는 펼칠 때 기록을 하나 남겨
+ * 뒤로 가기가 목록을 접게 하고, 그 기록에서 접으면 기록을 하나 되돌린다(켜고 끄기를 반복해도 기록이 쌓이지 않게).
+ */
 function toggleDistrict(district) {
   const next = state.filters.district === district ? null : district;
   if (next) state.regionTown = null;
@@ -3096,7 +3145,50 @@ function initTheme() {
 
 const phoneQuery = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(max-width: 520px)') : { matches: false };
 
-/** 검색 결과 상자를 닫는다(휴대폰 전체 화면 검색이면 그 화면도). keepFocus 가 아니면 검색창에서 포커스를 뺀다 */
+// 휴대폰 전체 화면 검색이나 메뉴 시트를 열면 기록을 하나 남긴다(history.state.overlay). 뒤로 가기는 그 화면을 닫는다.
+// 닫은 뒤에 할 일(메뉴 링크로 이동 등)은 그 뒤로 가기가 끝난 다음에 한다.
+let afterOverlayPop = null;
+
+function pushOverlay(kind) {
+  if (history.state?.overlay) return;
+  history.pushState({ ...(history.state ?? {}), overlay: kind }, '');
+}
+
+/** 열어 둔 화면의 기록이 있으면 뒤로 가서 닫고(popstate 가 화면을 닫는다) then 을 부른다. 기록이 없으면 바로 */
+function leaveOverlay(then = null) {
+  if (history.state?.overlay) {
+    afterOverlayPop = then;
+    history.back();
+    return true;
+  }
+  then?.();
+  return false;
+}
+
+// 검색 화면·메뉴 시트가 떠 있는 동안 뒤의 화면은 inert(누르거나 읽히지 않게)
+function setBackgroundInert(on, keep) {
+  const parts = [$('app'), $('status'), $('sources'), document.querySelector('.skip'), document.querySelector('.top-nav'),
+    $('disclaimer'), $('refresh-text'), document.querySelector('.brand'), document.querySelector('.top-actions'), $('search')];
+  for (const el of parts) {
+    if (!el || el === keep) continue;
+    if (on) el.setAttribute('inert', '');
+    else el.removeAttribute('inert');
+  }
+}
+
+/** 휴대폰 전체 화면 검색을 연다(대화상자처럼: 기록 남김, 뒤 화면 inert) */
+function openSearchOverlay() {
+  if (document.body.classList.contains('search-open')) return;
+  const box = $('search');
+  document.body.classList.add('search-open');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-label', '검색');
+  setBackgroundInert(true, box);
+  pushOverlay('search');
+}
+
+/** 검색 결과 상자를 닫는다(휴대폰 전체 화면 검색이면 그 화면도). 기록은 건드리지 않는다 */
 function closeSearch({ blur = false, clear = false } = {}) {
   const input = $('q');
   state.searchActive = -1;
@@ -3104,11 +3196,28 @@ function closeSearch({ blur = false, clear = false } = {}) {
   input.setAttribute('aria-expanded', 'false');
   input.removeAttribute('aria-activedescendant');
   if (clear) input.value = '';
-  document.body.classList.remove('search-open');
+  if (document.body.classList.contains('search-open')) {
+    document.body.classList.remove('search-open');
+    const box = $('search');
+    box.removeAttribute('role');
+    box.removeAttribute('aria-modal');
+    box.removeAttribute('aria-label');
+    setBackgroundInert(false);
+  }
   if (blur) input.blur();
 }
 
-/** 검색창 글자로 결과를 다시 그린다 */
+/** 휴대폰 검색 화면을 사용자가 닫을 때(뒤로 버튼·Esc): 남긴 기록이 있으면 뒤로 가서 닫는다 */
+function exitSearchOverlay({ clear = false } = {}) {
+  if (clear) $('q').value = '';
+  if (history.state?.overlay === 'search') leaveOverlay();
+  else closeSearch({ blur: true });
+}
+
+let announceTimer = 0;
+let lastAnnounced = null;
+
+/** 검색창 글자로 결과를 다시 그린다. 한글 조합 중에는 '결과 없음'을 띄우지 않는다 */
 function renderSearch() {
   const input = $('q');
   const q = input.value;
@@ -3131,11 +3240,18 @@ function renderSearch() {
   h('span', { class: `sr-group g-${SEARCH_GROUPS.findIndex(([g]) => g === e.group)}` }, e.group),
   h('span', { class: 'sr-label' }, e.label),
   e.meta ? h('span', { class: 'sr-meta' }, e.meta) : null)));
-  empty.hidden = hits.length > 0;
-  empty.textContent = hits.length ? '' : `‘${q.trim()}’에 맞는 결과가 없습니다. 구역명, 구 이름, 신도시, 블록(A2)으로 찾아 보세요.`;
-  pop.hidden = false;
+  const showEmpty = !hits.length && !state.composing;
+  empty.hidden = !showEmpty;
+  empty.textContent = showEmpty ? `‘${q.trim()}’에 맞는 결과가 없습니다. 구역명, 구 이름, 신도시, 블록(A2)으로 찾아 보세요.` : '';
+  pop.hidden = !hits.length && !showEmpty && !document.body.classList.contains('search-open');
   input.setAttribute('aria-expanded', String(hits.length > 0));
-  announce(hits.length ? `검색 결과 ${hits.length}건` : '검색 결과 없음');
+  // 글자마다 읽지 않게 잠시 멈췄을 때, 결과 수가 바뀌었을 때만 알린다
+  clearTimeout(announceTimer);
+  announceTimer = setTimeout(() => {
+    if (state.composing || hits.length === lastAnnounced) return;
+    lastAnnounced = hits.length;
+    announce(hits.length ? `검색 결과 ${hits.length}건` : '검색 결과 없음');
+  }, SEARCH_ANNOUNCE_MS);
 }
 
 function markActive(i) {
@@ -3148,24 +3264,33 @@ function markActive(i) {
   el.scrollIntoView({ block: 'nearest' });
 }
 
-/** 검색 결과 하나를 연다(지구·사업 화면으로) */
+/** 검색 결과 하나를 연다(지구·사업 화면으로). 휴대폰 검색 화면의 기록은 그 화면 기록으로 바꿔 쓴다(뒤로 가기 한 번에 첫 화면) */
 function openHit(i) {
   const e = state.searchHits[i];
   if (!e) return;
+  const replace = history.state?.overlay === 'search';
   closeSearch({ blur: true, clear: true });
-  openLink(e.href, { back: '첫 화면으로' });
+  openLink(e.href, { back: '첫 화면으로', replace });
 }
 
 function initSearch() {
   const input = $('q');
+  input.addEventListener('compositionstart', () => { state.composing = true; });
+  input.addEventListener('compositionend', () => {
+    state.composing = false;
+    renderSearch();
+  });
   input.addEventListener('input', renderSearch);
   input.addEventListener('focus', () => {
     // 휴대폰에서는 검색창을 누르면 전체 화면 검색으로
-    if (phoneQuery.matches) document.body.classList.add('search-open');
+    if (phoneQuery.matches) openSearchOverlay();
     renderSearch();
   });
   input.addEventListener('keydown', (e) => {
+    // 한글 조합 중의 키(조합을 끝내는 Enter·화살표 포함)는 검색창이 먼저 처리하게 둔다
+    if (isComposingKey(e)) return;
     const open = !$('search-pop').hidden;
+    const overlay = document.body.classList.contains('search-open');
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (!state.searchHits.length) return;
       e.preventDefault();
@@ -3177,9 +3302,10 @@ function initSearch() {
       openHit(Math.max(0, state.searchActive));
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      if (overlay) exitSearchOverlay();
       // 결과가 열려 있으면 닫기만, 이미 닫혀 있으면 글자를 지우고 검색창을 나간다
-      if (open && !document.body.classList.contains('search-open')) closeSearch();
-      else closeSearch({ blur: true, clear: !open });
+      else if (open) closeSearch();
+      else closeSearch({ blur: true, clear: true });
     }
   });
   // 결과를 누를 때 검색창이 먼저 포커스를 잃어 상자가 닫히지 않게
@@ -3188,7 +3314,7 @@ function initSearch() {
     const li = e.target instanceof Element ? e.target.closest('[data-hit]') : null;
     if (li) openHit(Number(li.dataset.hit));
   });
-  $('search-back').addEventListener('click', () => closeSearch({ blur: true }));
+  $('search-back').addEventListener('click', () => exitSearchOverlay());
   // 넓은 화면: 검색 밖을 누르면 결과 상자를 닫는다
   document.addEventListener('mousedown', (e) => {
     if (document.body.classList.contains('search-open')) return;
@@ -3199,42 +3325,60 @@ function initSearch() {
   });
   // '/' 로 검색창에 바로 간다(글자를 쓰는 중이 아닐 때)
   document.addEventListener('keydown', (e) => {
-    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || isComposingKey(e)) return;
     const t = e.target;
     if (t instanceof Element && (t.closest('input, textarea, select, [contenteditable="true"]'))) return;
     e.preventDefault();
     input.focus();
   });
-  phoneQuery.addEventListener?.('change', () => { if (!phoneQuery.matches) document.body.classList.remove('search-open'); });
+  phoneQuery.addEventListener?.('change', () => {
+    if (!phoneQuery.matches && document.body.classList.contains('search-open')) exitSearchOverlay();
+  });
 }
 
-/** 넓은 화면의 테마 메뉴(시스템·라이트·다크) */
-function setThemeMenu(open, { focus = false } = {}) {
+/** 넓은 화면의 테마 메뉴(시스템·라이트·다크). 고르면 닫고 테마 버튼으로 포커스를 돌린다 */
+function setThemeMenu(open, { focus = false, restore = false } = {}) {
   const btn = $('theme-btn');
   const menu = $('theme');
   menu.hidden = !open;
   btn.setAttribute('aria-expanded', String(open));
   if (open && focus) (menu.querySelector('[aria-pressed="true"]') ?? menu.querySelector('button'))?.focus();
+  if (!open && restore) btn.focus();
 }
 
-/** 휴대폰 메뉴(메뉴 링크·새로고침·테마). 열면 첫 링크로, 닫으면 메뉴 버튼으로 포커스 */
-function setSheet(open) {
-  $('menu-sheet').hidden = !open;
-  $('sheet-backdrop').hidden = !open;
-  $('menu-btn').setAttribute('aria-expanded', String(open));
-  document.body.classList.toggle('sheet-open', open);
-  if (open) $('menu-sheet').querySelector('.sheet-nav a')?.focus();
+/** 휴대폰 메뉴 시트를 연다(기록 남김, 뒤 화면 inert). 첫 링크로 포커스 */
+function openSheet() {
+  $('menu-sheet').hidden = false;
+  $('sheet-backdrop').hidden = false;
+  $('menu-btn').setAttribute('aria-expanded', 'true');
+  document.body.classList.add('sheet-open');
+  setBackgroundInert(true);
+  pushOverlay('sheet');
+  $('menu-sheet').querySelector('.sheet-nav a')?.focus();
 }
 
+/** 시트 화면만 닫는다(기록은 건드리지 않는다). restore 면 메뉴 버튼으로 포커스 */
 function closeSheet({ restore = true } = {}) {
   if ($('menu-sheet').hidden) return;
-  setSheet(false);
+  $('menu-sheet').hidden = true;
+  $('sheet-backdrop').hidden = true;
+  $('menu-btn').setAttribute('aria-expanded', 'false');
+  document.body.classList.remove('sheet-open');
+  setBackgroundInert(false);
   if (restore) $('menu-btn').focus();
+}
+
+/** 사용자가 시트를 닫을 때(닫기·Esc·바깥): 남긴 기록이 있으면 뒤로 가서 닫고, 닫은 뒤 then */
+function exitSheet(then = null) {
+  if (history.state?.overlay === 'sheet') leaveOverlay(then);
+  else {
+    closeSheet({ restore: !then });
+    then?.();
+  }
 }
 
 /** 머리말·메뉴의 구역 링크: 다른 화면이면 첫 화면으로 돌아간 뒤 그 구역으로 */
 function jumpSection(id) {
-  closeSheet({ restore: false });
   closeSearch();
   if (state.route && state.route.kind !== 'main') {
     history.pushState(null, '', hashFor({ district: state.filters.district }) || `${location.pathname}${location.search}`);
@@ -3242,30 +3386,58 @@ function jumpSection(id) {
   }
   // route() 는 화면을 바로 바꾸므로 곧바로 옮겨도 된다
   jumpTo(id);
+  markNav(id);
+}
+
+// 구역 링크의 aria-current: 지금 보이는 첫 화면 구역(맨 위에 가까운 것). 지구·사업 화면에서는 없음
+const NAV_SECTIONS = ['dashboard', 'feed-title', 'region-box', 'towns-title', 'seoul-title', 'cal-box'];
+
+function markNav(id) {
+  for (const a of document.querySelectorAll('.top-nav a[data-jump], .sheet-nav a[data-jump]')) {
+    if (!NAV_SECTIONS.includes(a.dataset.jump)) continue;
+    if (id && a.dataset.jump === id) a.setAttribute('aria-current', 'location');
+    else a.removeAttribute('aria-current');
+  }
+}
+
+function initNavCurrent() {
+  if (typeof IntersectionObserver === 'undefined') return;
+  const visible = new Map();
+  const observer = new IntersectionObserver((entries) => {
+    for (const en of entries) visible.set(en.target.id, en.isIntersecting ? en.boundingClientRect.top : null);
+    if (state.route && state.route.kind !== 'main') {
+      markNav(null);
+      return;
+    }
+    const top = [...visible].filter(([, y]) => y !== null).sort((a, b) => Math.abs(a[1]) - Math.abs(b[1]))[0];
+    markNav(top ? top[0] : null);
+  }, { rootMargin: '-10% 0px -60% 0px' });
+  for (const id of NAV_SECTIONS) if ($(id)) observer.observe($(id));
 }
 
 function initHeader() {
   initSearch();
+  initNavCurrent();
   $('theme-btn').addEventListener('click', () => setThemeMenu($('theme').hidden, { focus: true }));
   $('theme').addEventListener('click', (e) => {
-    if (e.target instanceof Element && e.target.closest('[data-theme-choice]')) setThemeMenu(false);
+    if (e.target instanceof Element && e.target.closest('[data-theme-choice]')) setThemeMenu(false, { restore: true });
   });
-  $('menu-btn').addEventListener('click', () => setSheet(true));
-  $('menu-close').addEventListener('click', () => closeSheet());
-  $('sheet-backdrop').addEventListener('click', () => closeSheet());
-  $('sheet-refresh').addEventListener('click', () => {
-    closeSheet();
-    refresh();
+  // 테마 메뉴 밖으로 포커스가 나가면 닫는다
+  $('theme').closest('.theme-wrap').addEventListener('focusout', (e) => {
+    if (!$('theme').hidden && !(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setThemeMenu(false);
   });
+  $('menu-btn').addEventListener('click', openSheet);
+  $('menu-close').addEventListener('click', () => exitSheet());
+  $('sheet-backdrop').addEventListener('click', () => exitSheet());
+  $('sheet-refresh').addEventListener('click', () => exitSheet(refresh));
   document.addEventListener('mousedown', (e) => {
     if (!$('theme').hidden && e.target instanceof Element && !e.target.closest('.theme-wrap')) setThemeMenu(false);
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('theme').hidden) {
-      setThemeMenu(false);
-      $('theme-btn').focus();
+      setThemeMenu(false, { restore: true });
     } else if (e.key === 'Escape' && !$('menu-sheet').hidden) {
-      closeSheet();
+      exitSheet();
     } else if (e.key === 'Tab' && !$('menu-sheet').hidden) {
       // 메뉴가 열려 있으면 Tab 이 메뉴 안에서만 돈다
       const items = [...$('menu-sheet').querySelectorAll('a, button')];
@@ -3280,23 +3452,37 @@ function initHeader() {
       }
     }
   });
-  // 구역 링크(머리말 메뉴·휴대폰 메뉴·새 소식 종·지금 접수 중), 로고(첫 화면 맨 위로)
+  // 뒤로 가기: 열어 둔 검색 화면·메뉴 시트를 닫고, 닫은 뒤 할 일이 있으면 한다(syncFromHash 보다 먼저 등록)
+  window.addEventListener('popstate', () => {
+    const wasSheet = !$('menu-sheet').hidden;
+    closeSearch({ blur: true });
+    closeSheet({ restore: false });
+    const then = afterOverlayPop;
+    afterOverlayPop = null;
+    if (then) setTimeout(then, 0);
+    else if (wasSheet) $('menu-btn').focus();
+  });
+  // 구역 링크(머리말 메뉴·휴대폰 메뉴·새 소식 종·지금 접수 중), 로고(첫 화면 맨 위로).
+  // 자료가 없으면(불러오는 중·실패) 막지 않고 브라우저의 보통 링크 이동에 맡긴다
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
-    if (!target || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!target || !state.data || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const jump = target.closest('a[data-jump]');
     const home = target.closest('a[data-home]');
     if (!jump && !home) return;
     e.preventDefault();
-    if (!state.data) return;
-    if (jump) jumpSection(jump.dataset.jump);
-    else {
-      if (state.route && state.route.kind !== 'main') leaveView();
-      window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
-    }
+    const go = () => {
+      if (jump) jumpSection(jump.dataset.jump);
+      else {
+        if (state.route && state.route.kind !== 'main') leaveView();
+        window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+      }
+    };
+    if (jump && jump.closest('#menu-sheet')) exitSheet(go);
+    else go();
   });
   phoneQuery.addEventListener?.('change', () => {
-    if (!phoneQuery.matches) closeSheet({ restore: false });
+    if (!phoneQuery.matches && !$('menu-sheet').hidden) exitSheet();
   });
 }
 

@@ -146,7 +146,7 @@ async function collectMapNews(projects, {
     return {
       byId: result.byId ?? {},
       // 검색이 성공한 사업 id(지역 브리핑용, 출력에는 싣지 않는다). 수집 함수가 주지 않으면 null(모름)
-      searched: Array.isArray(result.searched) ? new Set(result.searched) : null,
+      searched: Array.isArray(result.searched) && result.searched.length ? new Set(result.searched) : null,
       stats: {
         checked: result.checked ?? 0,
         matched: result.matched ?? 0,

@@ -1474,7 +1474,7 @@ test('index.html header C: logo mark, combobox search, bell, refresh, theme menu
   assert.ok(html.includes('id="q" role="combobox" aria-expanded="false" aria-controls="search-results"'));
   assert.ok(html.includes('id="search-results" role="listbox"'));
   assert.ok(html.includes('id="bell" href="#feed-title" data-jump="feed-title"'));
-  assert.ok(html.includes('id="theme-btn" aria-label="화면 테마" aria-haspopup="true" aria-expanded="false" aria-controls="theme"'));
+  assert.ok(html.includes('id="theme-btn" aria-label="화면 테마" aria-haspopup="dialog" aria-expanded="false" aria-controls="theme"'));
   assert.ok(html.includes('id="menu-sheet" role="dialog" aria-modal="true"'));
   for (const label of ['한눈에', '새 소식', '지역 현황', '신도시 블록', '서울 정비사업', '청약 일정']) {
     assert.equal((html.match(new RegExp(`data-jump="[a-z-]+">${label}</a>`, 'g')) ?? []).length, 2, label); // 머리말 메뉴와 휴대폰 메뉴
@@ -1483,4 +1483,98 @@ test('index.html header C: logo mark, combobox search, bell, refresh, theme menu
   assert.ok(html.includes('id="nav-live"') && html.includes('class="brand-mark"'));
   // 예전 제목 줄은 없다
   assert.ok(!html.includes('class="top-main"') && !html.includes('class="sub"'));
+});
+
+// --- 검토 반영(머리말·검색) ---
+test('isComposingKey: IME composition keys are ignored by the search shortcuts', () => {
+  assert.equal(app.isComposingKey({ key: 'Enter', isComposing: true }), true);
+  assert.equal(app.isComposingKey({ key: 'Process', keyCode: 229 }), true);
+  assert.equal(app.isComposingKey({ key: 'Enter', isComposing: false, keyCode: 13 }), false);
+  assert.equal(app.isComposingKey(undefined), false);
+  assert.ok(app.SEARCH_ANNOUNCE_MS >= 300);
+  const js = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  // 검색창 keydown 의 첫 줄이 조합 중 키를 거른다
+  assert.match(js, /input\.addEventListener\('keydown', \(e\) => \{\s*\/\/[^\n]*\n\s*if \(isComposingKey\(e\)\) return;/);
+});
+
+test('titleHasBlock (site) and search block labels never repeat the block or town name', () => {
+  assert.equal(app.titleHasBlock('남양주왕숙 A-01', 'A-1'), true);
+  assert.equal(app.titleHasBlock('남양주왕숙2 A03', 'A-3'), true);
+  assert.equal(app.titleHasBlock('계양신도시 카이브 유보라(AC4BL)', 'AC4'), true);
+  assert.equal(app.titleHasBlock('교산 푸르지오 더 퍼스트', 'A2'), false);
+  assert.equal(app.titleHasBlock('남양주왕숙2 A-13', 'A-3'), false);
+  const town = {
+    id: 'town-w', name: '남양주왕숙', kind: '공공주택지구', region: '경기', district: '남양주시', stage: '블록별 분양', ...win('2026-11'),
+    history: [
+      { block: 'A-1', stage: '본청약', title: '남양주왕숙 A-01', rental: false, noticeDate: '2025-07-24' },
+      { block: 'B-1', stage: '본청약', title: '왕숙 푸르지오 더 퍼스트 1단지', rental: false, noticeDate: '2025-07-29' },
+      { block: 'B-17', stage: '본청약', title: '남양주왕숙 B-17블록 공공분양', rental: false, noticeDate: '2025-11-27' },
+    ],
+    blocks: [
+      { block: 'A-1', type: '공공분양', status: '본청약 공고', sources: [] },
+      { block: 'B-1', type: '민간참여 공공분양', status: '본청약 공고', sources: [] },
+      { block: 'B-17', type: '공공분양', status: '본청약 공고', sources: [] },
+    ],
+  };
+  const labels = app.buildSearchIndex([town], [], { today: '2026-11-11', todayYm: '2026-11' }).filter((e) => e.group === '블록').map((e) => e.label);
+  assert.deepEqual(labels.sort(), ['남양주왕숙 A-1 공공분양', '남양주왕숙 B-1 왕숙 푸르지오 더 퍼스트 1단지', '남양주왕숙 B-17 공공분양'].sort());
+});
+
+test('searchAll keeps a slot for every group with hits, within SEARCH_MAX (구, A-1)', () => {
+  const town = (id, name, district, blocks) => ({
+    id, name, kind: '공공주택지구', region: '경기', district, stage: '블록별 분양', ...win('2026-12'), history: [],
+    blocks: blocks.map((block) => ({ block, type: '공공분양', status: '본청약 공고', sources: [] })),
+  });
+  const projects = [
+    town('t1', '구리갈매역세권', '구리시', ['A-1', 'A-2', 'A-3', 'A-4', 'B-1', 'S-1']),
+    town('t2', '구리토평한강', '구리시', []),
+    town('t3', '남양주왕숙', '남양주시', ['A-1', 'A-2']),
+    ...Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, name: `구역${i}`, kind: '재개발', region: '서울', district: '종로구', stage: '조합설립', ...win('2030-01') })),
+  ];
+  const feed = [
+    { id: 'f1', kind: '뉴스', projectId: 't1', block: 'A-1', date: '2026-10-01', title: 'A-1 행복주택 공급 계획에 포함됐습니다.', source: { provider: null } },
+    { id: 'f2', kind: '공고', projectId: 's1', block: null, date: '2026-10-02', title: '청약홈 공고: 구역1 단지', source: { provider: null } },
+  ];
+  const index = app.buildSearchIndex(projects, feed, { today: '2026-11-11', todayYm: '2026-11' });
+  const groupsOf = (hits) => [...new Set(hits.map((e) => e.group))];
+  const gu = app.searchAll(index, '구');
+  assert.equal(gu.length, app.SEARCH_MAX);
+  assert.deepEqual(groupsOf(gu), ['신도시', '블록', '사업', '소식']); // 뒤 묶음도 자리를 잃지 않는다
+  // 묶음 순서대로 나온다
+  const order = gu.map((e) => app.SEARCH_GROUPS.findIndex(([g]) => g === e.group));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  const a1 = app.searchAll(index, 'A-1');
+  assert.ok(a1.length <= app.SEARCH_MAX);
+  assert.deepEqual(groupsOf(a1), ['블록', '소식']);
+  assert.deepEqual(a1.filter((e) => e.group === '블록').slice(0, 2).map((e) => e.label), ['구리갈매역세권 A-1 공공분양', '남양주왕숙 A-1 공공분양']);
+  assert.deepEqual(app.searchAll(index, '구', 2).map((e) => e.group), ['신도시', '블록']);
+});
+
+test('liveProjectCount counts distinct projects (tile and header agree)', () => {
+  const day = '2026-11-11';
+  const n = (key, start, end = start) => ({ key, name: key, stages: [{ name: '1순위', start, end }] });
+  const projects = [
+    { id: 'a', name: '가', notices: [n('a1', '2026-11-10', '2026-11-12'), n('a2', '2026-11-11')] },
+    { id: 'b', name: '나', notices: [n('b1', '2026-11-11')] },
+    { id: 'c', name: '다', notices: [n('c1', '2026-11-20')] },
+  ];
+  assert.equal(app.receivingNow(projects, day).length, 3);
+  assert.equal(app.liveProjectCount(projects, day), 2);
+  const js = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("num: liveCount, unit: '곳'"));
+  assert.ok(js.includes('const live = liveProjectCount(state.projects, state.today);'));
+});
+
+test('header: overlay/sheet push a history entry and close on back; theme popup is a dialog; nav anchors work without data', () => {
+  const js = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("pushOverlay('search')") && js.includes("pushOverlay('sheet')"));
+  // syncFromHash 가 두 화면을 닫는다
+  assert.match(js, /function syncFromHash\(\) \{[\s\S]{0,300}closeSearch\(\{ blur: true \}\);\s*closeSheet\(\{ restore: false \}\);/);
+  // 자료가 없으면 기본 링크 이동(preventDefault 전에 state.data 확인)
+  assert.match(js, /if \(!target \|\| !state\.data \|\| e\.button !== 0/);
+  assert.ok(js.includes("setAttribute('inert', '')") && js.includes("box.setAttribute('aria-modal', 'true')"));
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('id="theme" role="dialog" aria-label="화면 테마"'));
+  const css = readFileSync(new URL('../site/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.linkish, \.top-nav a, \.theme-menu button \{ min-height: 44px; \}/);
 });

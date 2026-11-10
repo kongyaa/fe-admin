@@ -148,6 +148,8 @@ button, input, select { font: inherit; color: inherit; }
 .top-nav { display: flex; align-items: stretch; gap: 2px; border-top: 1px solid var(--rule); margin: 0 -20px; padding: 0 10px; min-height: 40px; font-size: .875rem; overflow-x: auto; }
 .top-nav a { display: flex; align-items: center; padding: 0 10px; color: var(--ink); text-decoration: none; white-space: nowrap; }
 .top-nav a:hover { color: var(--survey); box-shadow: inset 0 -2px 0 var(--survey); }
+.top-nav a[aria-current] { font-weight: 700; box-shadow: inset 0 -2px 0 var(--ink); }
+.sheet-nav a[aria-current] { font-weight: 700; }
 .top-nav .nav-live { margin-left: auto; gap: 6px; color: var(--green); font-weight: 700; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
 .nav-stamp { display: none; }
@@ -699,7 +701,7 @@ button.watch-cell { cursor: pointer; text-align: left; font: inherit; }
 }
 /* 손가락으로 누르는 화면: 누를 수 있는 것은 높이 44px 이상 */
 @media (pointer: coarse), (max-width: 520px) {
-  .seg button, .filters .seg button, .btn, .field select, .field input, .fchip, .linkish { min-height: 44px; }
+  .seg button, .filters .seg button, .btn, .field select, .field input, .fchip, .linkish, .top-nav a, .theme-menu button { min-height: 44px; }
   .sheet-theme .seg button { min-width: 64px; }
   .fold > summary, .memo summary { min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; }
   /* 소식 줄의 사업 링크·출처 링크, 블록 카드의 출처 링크도 높이 44px 이상 */

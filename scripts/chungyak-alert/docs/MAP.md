@@ -455,7 +455,7 @@ items:
   - town: guri-galmae-station   # newtowns.yaml 지구 id, 또는 서울 사업 id(seoul-1673)
     block: B-1                  # 선택. 지구 전체 기사는 비운다
     date: "2026-11-08"          # 기사 날짜 YYYY-MM-DD
-    title: "84㎡ 평균 분양가 …"   # 기사 제목이 아니라 우리가 쓴 한 줄 요약(기사에 적힌 사실만)
+    title: "84㎡ 평균 분양가는 …입니다."   # 기사 제목이 아니라 우리가 쓴 요약(기사에 적힌 사실만). 합쇼체 문장으로 끝낸다(지역 브리핑이 그대로 옮긴다, 검사 있음)
     outlet: 스트레이트뉴스
     url: https://www.straightnews.co.kr/news/articleView.html?idxno=314854
     local: false                # 지역지(하남일보·하남Times 등)면 true
