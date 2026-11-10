@@ -8,7 +8,11 @@ import {
 } from '../src/pipeline/build-map.js';
 import { SEOUL_STAGES, DATASET_URL, DOWNLOAD_URL } from '../src/pipeline/seoul-redevelop.js';
 import { linkNotices } from '../src/pipeline/link-notices.js';
+import {
+  MAP_REBUILD_DAYS, NEWS_ENDPOINTS, NEWS_MAX_AGE_DAYS, NEWS_PUBLISH_DAYS,
+} from '../src/pipeline/news.js';
 import { TOWN_STAGES } from '../src/pipeline/newtowns.js';
+import { AppError } from '../src/util.js';
 import { DATA_ROWS, LISTING_HTML, UNKNOWN_STAGE_ROW, seoulFixture } from './map-fixtures.js';
 
 const today = '2026-11-10';
@@ -586,4 +590,168 @@ towns:
   const galmae = data.projects.find((p) => p.id === 'town-guri-galmae-station');
   assert.equal(galmae.history[0].end, '2026-11-11');
   assert.deepEqual([galmae.blocks[0].block, galmae.blocks[0].status, galmae.blocks[0].statusDate], ['B-1', '접수 중', '2026-11-11']);
+});
+
+// --- 관련 소식(네이버 뉴스) ---
+
+const newsEnv = { NAVER_CLIENT_ID: 'test-id', NAVER_CLIENT_SECRET: 'test-secret' };
+const newsRaw = (title, pubDate, url, extra = {}) => ({
+  title, originallink: url, link: 'https://n.news.naver.com/article/003/1', description: '요약은 저장하지 않는다', pubDate, ...extra,
+});
+
+const newsLineOf = (lines) => lines.find((line) => line.startsWith('map news '));
+
+// 네이버 API 허브 뉴스 검색만 받는 가짜 fetch. reply(query) -> items 배열 또는 Response
+function newsFetch(reply, calls = []) {
+  return async (url, init = {}) => {
+    const u = new URL(url);
+    if (`${u.origin}${u.pathname}` !== NEWS_ENDPOINTS.hub.url) throw new Error('unexpected request');
+    const query = u.searchParams.get('query');
+    calls.push({ query, headers: init.headers ?? {} });
+    const answer = reply(query);
+    if (answer instanceof Response) return answer;
+    return Response.json({ total: answer.length, start: 1, display: answer.length, items: answer });
+  };
+}
+
+test('news keeps 14 days on the map so a weekly rebuild stays within the 21-day storage limit', () => {
+  assert.equal(NEWS_PUBLISH_DAYS, 14);
+  assert.equal(NEWS_PUBLISH_DAYS + MAP_REBUILD_DAYS, NEWS_MAX_AGE_DAYS);
+  assert.equal(NEWS_MAX_AGE_DAYS, 21);
+});
+
+test('buildMap attaches recent news to target projects (hub headers, 14-day cutoff, public shape)', async () => {
+  const calls = [];
+  const fetch = newsFetch((query) => {
+    if (query === '하남교산') {
+      return [
+        newsRaw('<b>하남교산</b> A3블록 &quot;본청약&quot; 일정', 'Tue, 10 Nov 2026 09:00:00 +0900', 'https://www.hankyung.com/1'),
+        newsRaw('교산 신도시 교통 대책', 'Tue, 27 Oct 2026 10:00:00 +0900', 'https://www.newsis.com/2'), // 14일 전: 남김
+        newsRaw('하남교산 토지보상 마무리', 'Mon, 26 Oct 2026 10:00:00 +0900', 'https://www.yna.co.kr/3'), // 15일 전: 뺌
+        newsRaw('감일지구 소식', 'Mon, 09 Nov 2026 10:00:00 +0900', 'https://www.mk.co.kr/4'), // 이름 없음: 뺌
+      ];
+    }
+    if (query === '종로 신영1구역 재개발') return [newsRaw('신영10구역 조합 총회', 'Mon, 09 Nov 2026 10:00:00 +0900', 'https://www.yna.co.kr/5')];
+    return [];
+  }, calls);
+  const data = await buildMap({
+    fetch, env: newsEnv, today, seoulFile, newtownsFile: townsFile, sleep: noSleep,
+  });
+  assert.deepEqual(calls.map((c) => c.query), ['하남교산', '종로 신영1구역 재개발', '강남 개포주공5단지 재건축', '서초 반포미도2차 재건축']);
+  // 공고 연결을 건너뛰어(키 없음) 반포미도2차도 announced가 아닌 soon이라 대상이다.
+  for (const { headers } of calls) {
+    assert.equal(headers['X-NCP-APIGW-API-KEY-ID'], 'test-id');
+    assert.equal(headers['X-NCP-APIGW-API-KEY'], 'test-secret');
+  }
+  assert.deepEqual(data.sources.news, {
+    checked: 4, matched: 1, projects: 4, skipped: null, errors: [], stopped: null,
+  });
+  const gyosan = data.projects.find((p) => p.id === 'town-hanam-gyosan');
+  assert.deepEqual(gyosan.news, [
+    { title: '하남교산 A3블록 "본청약" 일정', outlet: '한국경제', date: '2026-11-10', url: 'https://www.hankyung.com/1' },
+    { title: '교산 신도시 교통 대책', outlet: '뉴시스', date: '2026-10-27', url: 'https://www.newsis.com/2' },
+  ]);
+  // 기사가 없는 사업에는 news가 없다. 요약(description)은 어디에도 남지 않는다.
+  assert.equal(data.projects.filter((p) => 'news' in p).length, 1);
+  assert.equal(JSON.stringify(data).includes('요약은 저장하지 않는다'), false);
+  assert.equal(newsLineOf(summaryLines(data)), 'map news checked=4 matched=1 projects=4 errors=0 stopped=none');
+});
+
+test('buildMap skips news without both Naver keys', async () => {
+  for (const env of [{}, { NAVER_CLIENT_ID: 'test-id' }, { NAVER_CLIENT_ID: ' ', NAVER_CLIENT_SECRET: 'x' }]) {
+    const calls = [];
+    const data = await buildMap({
+      fetch: newsFetch(() => [], calls), env, today, seoulFile, newtownsFile: townsFile, sleep: noSleep,
+    });
+    assert.equal(calls.length, 0);
+    assert.deepEqual(data.sources.news, {
+      checked: 0, matched: 0, projects: 0, skipped: 'no_key', errors: [], stopped: null,
+    });
+    assert.ok(data.projects.every((p) => !('news' in p)));
+    assert.equal(newsLineOf(summaryLines(data)), 'map news skipped=no_key');
+  }
+});
+
+test('news failures never stop the map build', async () => {
+  // 사업 하나가 실패하면 kind만 남기고 다음 사업으로 간다.
+  const partial = await buildMap({
+    fetch: newsFetch((query) => (query === '하남교산'
+      ? new Response('', { status: 500 })
+      : [newsRaw('신영1구역 관리처분 인가', 'Mon, 09 Nov 2026 10:00:00 +0900', 'https://www.yna.co.kr/9')])),
+    env: newsEnv, today, seoulFile, newtownsFile: townsFile, sleep: noSleep,
+  });
+  assert.equal(partial.projects.length, 5);
+  assert.deepEqual(partial.sources.news, {
+    checked: 4, matched: 1, projects: 4, skipped: null, errors: ['news_http_500'], stopped: null,
+  });
+  assert.deepEqual(partial.projects.find((p) => p.id === 'seoul-1441').news.map((n) => n.url), ['https://www.yna.co.kr/9']);
+  assert.equal(newsLineOf(summaryLines(partial)), 'map news checked=4 matched=1 projects=4 errors=1 stopped=none kinds=news_http_500');
+
+  // 인증 오류는 첫 사업에서 멈춘다.
+  const calls = [];
+  const denied = await buildMap({
+    fetch: newsFetch(() => new Response('', { status: 401 }), calls),
+    env: newsEnv, today, seoulFile, newtownsFile: townsFile, sleep: noSleep,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(denied.projects.length, 5);
+  assert.deepEqual(denied.sources.news, {
+    checked: 1, matched: 0, projects: 4, skipped: null, errors: ['news_http_401'], stopped: 'news_http_401',
+  });
+
+  // 뉴스 단계가 통째로 던져도 지도는 만들어지고 kind만 남는다.
+  for (const [thrown, kind] of [[new Error('boom'), 'news_failed'], [new AppError('news_parse'), 'news_parse']]) {
+    const data = await buildMap({
+      fetch: newsFetch(() => []),
+      env: newsEnv,
+      today,
+      seoulFile,
+      newtownsFile: townsFile,
+      sleep: noSleep,
+      news: async () => { throw thrown; },
+    });
+    assert.equal(data.projects.length, 5);
+    assert.ok(data.projects.every((p) => !('news' in p)));
+    assert.deepEqual(data.sources.news, {
+      checked: 0, matched: 0, projects: 0, skipped: null, errors: [kind], stopped: null,
+    });
+  }
+});
+
+test('run logs the news line with counts only', async () => {
+  const lines = [];
+  const code = await run({
+    argv: ['--out', join(dir, 'news.json'), '--seoul-file', seoulFile, '--newtowns', townsFile],
+    env: newsEnv,
+    today,
+    fetch: newsFetch((query) => (query === '하남교산'
+      ? [newsRaw('하남교산 본청약', 'Mon, 09 Nov 2026 10:00:00 +0900', 'https://www.hankyung.com/1')]
+      : [])),
+    log: (line) => lines.push(line),
+  });
+  assert.equal(code, 0);
+  assert.equal(newsLineOf(lines), 'map news checked=4 matched=1 projects=4 errors=0 stopped=none');
+  assert.ok(lines.every((line) => !line.includes('http') && !line.includes('test-id') && !line.includes('test-secret')));
+});
+
+test('a Naver API that always times out costs a few calls and the map still builds', async () => {
+  const calls = [];
+  const fetch = async (url) => {
+    const u = new URL(url);
+    if (`${u.origin}${u.pathname}` !== NEWS_ENDPOINTS.hub.url) throw new Error('unexpected request');
+    calls.push(u.searchParams.get('query'));
+    throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+  };
+  const data = await buildMap({
+    fetch, env: newsEnv, today, seoulFile, newtownsFile: townsFile, sleep: noSleep,
+  });
+  // 연달아 2사업이 시간 초과면 멈춘다(사업마다 한 번 재시도 = 4번).
+  assert.equal(calls.length, 4);
+  assert.deepEqual([...new Set(calls)], ['하남교산', '종로 신영1구역 재개발']);
+  assert.equal(data.projects.length, 5);
+  assert.ok(data.projects.every((p) => !('news' in p)));
+  assert.deepEqual(data.sources.news, {
+    checked: 2, matched: 0, projects: 4, skipped: null, errors: ['news_timeout'], stopped: 'news_timeout',
+  });
+  assert.equal(newsLineOf(summaryLines(data)), 'map news checked=2 matched=0 projects=4 errors=1 stopped=news_timeout kinds=news_timeout');
 });

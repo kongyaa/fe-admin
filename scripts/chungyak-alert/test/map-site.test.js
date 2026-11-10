@@ -807,3 +807,57 @@ test('edge cases: year boundary range, duplicate hash keys, district-only empty 
     title: '지금 조건에 맞는 사업이 없습니다.', conditions: ['중구'], clearQuery: false, reset: true,
   });
 });
+
+// --- 관련 소식 ---
+const newsPipeline = await import('../src/pipeline/news.js');
+
+test('ymdDaysBefore counts calendar days across months and years', () => {
+  assert.equal(app.ymdDaysBefore('2026-11-10', 21), '2026-10-20');
+  assert.equal(app.ymdDaysBefore('2026-01-05', 14), '2025-12-22');
+  assert.equal(app.ymdDaysBefore('2026-03-01', 1), '2026-02-28');
+  assert.equal(app.ymdDaysBefore('2026-11', 1), null);
+  assert.equal(app.ymdDaysBefore(null, 1), null);
+});
+
+test('newsItems keeps safe, dated, recent items newest first, at most 5', () => {
+  const day = '2026-11-10';
+  const n = (extra) => ({ title: '하남교산 본청약', outlet: '뉴시스', date: '2026-11-09', url: 'https://www.newsis.com/1', ...extra });
+  assert.deepEqual(app.newsItems({}, day), []);
+  assert.deepEqual(app.newsItems({ news: 'x' }, day), []);
+  assert.deepEqual(app.newsItems(null, day), []);
+  const project = {
+    news: [
+      n({ url: 'https://a.com/old', date: '2026-10-19' }), // 22일 전: 숨김
+      n({ url: 'https://a.com/edge', date: '2026-10-20' }), // 21일 전: 보임
+      n({ url: 'javascript:alert(1)' }),
+      n({ url: 'https://a.com/no-title', title: '  ' }),
+      n({ url: 'https://a.com/no-date', date: null }),
+      n({ url: 'https://a.com/future', date: '2026-11-11' }),
+      n({ url: 'https://a.com/1', date: '2026-11-01', outlet: null }),
+      n({ url: 'https://a.com/2', date: '2026-11-10' }),
+      n({ url: 'https://a.com/3', date: '2026-11-05' }),
+      n({ url: 'https://a.com/4', date: '2026-11-03' }),
+      n({ url: 'https://a.com/5', date: '2026-11-02' }),
+      null,
+      ['https://a.com/array'],
+    ],
+  };
+  const items = app.newsItems(project, day);
+  assert.deepEqual(items.map((x) => x.url), ['https://a.com/2', 'https://a.com/3', 'https://a.com/4', 'https://a.com/5', 'https://a.com/1']);
+  assert.equal(items.length, app.NEWS_LIMIT);
+  assert.deepEqual(Object.keys(items[0]).sort(), ['date', 'outlet', 'title', 'url']);
+  assert.equal(items.at(-1).outlet, null);
+  assert.deepEqual(app.newsItems({ news: project.news.slice(0, 2) }, day).map((x) => x.url), ['https://a.com/edge']);
+  assert.deepEqual(app.newsItems(project, ''), []);
+});
+
+test('news display limits match the pipeline and the note says 2 weeks', () => {
+  assert.equal(app.NEWS_SHOW_DAYS, newsPipeline.NEWS_MAX_AGE_DAYS);
+  assert.equal(newsPipeline.NEWS_PUBLISH_DAYS, 14);
+  assert.match(app.NEWS_NOTE, /최근 2주/);
+  assert.match(app.NEWS_NOTE, /출처: 각 언론사$/);
+  assert.equal(app.NEWS_CREDIT, '검색: NAVER');
+  assert.equal(app.newsMetaText({ outlet: '뉴시스', date: '2026-11-09' }), '뉴시스 · 2026-11-09');
+  assert.equal(app.newsMetaText({ outlet: null, date: '2026-11-09' }), '2026-11-09');
+  assert.equal(app.newsMetaText({}), '');
+});
