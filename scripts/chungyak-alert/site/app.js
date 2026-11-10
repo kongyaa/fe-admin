@@ -277,7 +277,8 @@ export function saleHistory(project) {
       const url = safeHttpUrl(src.url);
       return url ? [{ ...src, url }] : [];
     });
-    let end = null;
+    // 접수 마감: 이력의 end(yaml), 같은 공고로 이어진 청약홈 공고가 있으면 그 마감
+    let end = typeof e.end === 'string' && e.end.trim() ? e.end.trim() : null;
     notices.forEach((n, i) => {
       if (used.has(i) || !isSameSale(e, n)) return;
       used.add(i);
@@ -324,12 +325,15 @@ export function latestSale(project) {
 // --- 블록별 현황 ---------------------------------------------------------------
 
 // 블록 상태(정렬 순서). 파이프라인(src/pipeline/blocks.js)의 BLOCK_STATUS_ORDER와 같게 둔다.
-export const BLOCK_STATUS_ORDER = ['접수 중', '분양 끝남', '임대 공고', '다음 예정(보도)', '착공', '사업승인', '계획 보도', '미정'];
+export const BLOCK_STATUS_ORDER = [
+  '접수 중', '본청약 공고', '임대 공고', '다음 예정(보도)', '예정 지남(보도)', '착공', '사업승인', '계획 보도', '미정',
+];
 export const BLOCK_STATUS_CLASS = {
   '접수 중': 'c-live',
-  '분양 끝남': 'c-sold',
+  '본청약 공고': 'c-sold',
   '임대 공고': 'c-rent',
   '다음 예정(보도)': 'c-mid',
+  '예정 지남(보도)': 'c-over',
   착공: 'c-ann',
   사업승인: 'c-appr',
   '계획 보도': 'c-pre',
@@ -337,7 +341,13 @@ export const BLOCK_STATUS_CLASS = {
 };
 export const UNKNOWN_BLOCK_TYPE = '유형 미확인';
 const BLOCK_LIVE = '접수 중';
+const BLOCK_PLANNED = '다음 예정(보도)';
+const BLOCK_PLAN_PASSED = '예정 지남(보도)';
+// 경과에 유형 이름 그대로 나오는 공고(파이프라인 REMAINDER_NOTICE_TYPES 와 같다). 이름에 '잔여'가 있는 유형도 받는다.
+export const REMAINDER_NOTICE_TYPES = ['무순위', '임의공급', '불법행위 재공급'];
 const BLOCK_STAGES = [PRE_SUBSCRIPTION, '본청약', BLOCK_LIVE];
+const isBlockStage = (stage) => typeof stage === 'string'
+  && (BLOCK_STAGES.includes(stage) || REMAINDER_NOTICE_TYPES.includes(stage) || stage.includes('잔여'));
 
 /** 블록별 현황을 보여 줄 사업: 블록별 분양 단계의 공공주택지구 */
 export function isBlockTownProject(project) {
@@ -355,16 +365,22 @@ function cleanLinks(list) {
 }
 
 /**
- * 오늘 기준 상태. 빌드 뒤에 접수 마감(statusDate)이 지났으면 '접수 중'을 분양 줄은 '분양 끝남', 임대 줄은 '임대 공고'로 바꾸고,
- * 날짜는 경과에서 가장 늦은 공고일로 둔다. 모르는 상태는 '미정'.
+ * 오늘 기준 상태. 빌드 뒤에 접수 마감(statusDate)이 지났으면 '접수 중'을 분양 줄은 '본청약 공고', 임대 줄은 '임대 공고'로 바꾸고,
+ * 날짜는 경과에서 가장 늦은 공고일로 둔다. 빌드 뒤에 계획 기간(plan.to)이 지났으면 '다음 예정(보도)'를 '예정 지남(보도)'로 바꾼다.
+ * 모르는 상태는 '미정'.
  */
 export function blockStatusNow(row, today) {
   const status = BLOCK_STATUS_ORDER.includes(row?.status) ? row.status : '미정';
   const date = ymdOrNull(row?.statusDate);
+  if (status === BLOCK_PLANNED) {
+    const to = toYm(row?.plan?.to);
+    const passed = to && toYm(today) && monthsBetween(toYm(today), to) < 0;
+    return { status: passed ? BLOCK_PLAN_PASSED : status, date };
+  }
   if (status !== BLOCK_LIVE || !date || !today || date >= today) return { status, date };
   const issued = (Array.isArray(row?.timeline) ? row.timeline : [])
     .filter((t) => t && t.stage !== BLOCK_LIVE && t.stage !== PRE_SUBSCRIPTION).map((t) => ymdOrNull(t.date)).filter(Boolean).sort();
-  return { status: row.rental === true ? '임대 공고' : '분양 끝남', date: issued.at(-1) ?? null };
+  return { status: row.rental === true ? '임대 공고' : '본청약 공고', date: issued.at(-1) ?? null };
 }
 
 const naturalBlock = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'ko', { numeric: true });
@@ -391,7 +407,7 @@ export function blockRows(project, today) {
       rental: b.rental === true,
       status,
       date,
-      timeline: entriesOf(b.timeline).filter((t) => BLOCK_STAGES.includes(t.stage) && ymdOrNull(t.date))
+      timeline: entriesOf(b.timeline).filter((t) => isBlockStage(t.stage) && ymdOrNull(t.date))
         .map((t) => ({ stage: t.stage, date: ymdOrNull(t.date) })),
       plan,
       note: textOrNull(b.note),
@@ -407,16 +423,19 @@ export function blockStatusCounts(rows) {
     .filter((c) => c.count > 0);
 }
 
-/** '전체 39개 블록 중 16개 사업승인(2025-11, 시티뉴스)'. 전체 블록 수가 없으면 null */
+/**
+ * 지구 전체 블록 수 문구: 출처가 한 말임을 앞에 밝힌다 '시티뉴스(2025-11): 39개 블록 중 16개 사업승인'.
+ * 표의 '사업승인' 칩 수(출처로 확인해 넣은 줄, 공고가 난 블록은 다른 상태)와 같은 집합이 아니다. 전체 블록 수가 없으면 null
+ */
 export function blockTotalText(blockTotal) {
   const total = countOrNull(blockTotal?.total);
   if (!total) return null;
   const approved = countOrNull(blockTotal.approved);
   const src = cleanLinks(blockTotal.sources)[0] ?? null;
-  const outlet = textOrNull(blockTotal.outlet) ?? (src ? sourceOutlet(src) : null);
-  const basis = [toYm(blockTotal.date), outlet].filter(Boolean).join(', ');
-  const head = approved !== null ? `전체 ${total}개 블록 중 ${approved}개 사업승인` : `전체 ${total}개 블록`;
-  return basis ? `${head}(${basis})` : head;
+  const outlet = textOrNull(blockTotal.outlet) ?? (src ? sourceOutlet(src) : null) ?? '출처';
+  const month = toYm(blockTotal.date);
+  const said = approved !== null ? `${total}개 블록 중 ${approved}개 사업승인` : `전체 ${total}개 블록`;
+  return `${outlet}${month ? `(${month})` : ''}: ${said}`;
 }
 
 /** 유형 칸: 유형, 없으면 '유형 미확인' */
@@ -991,7 +1010,8 @@ function blockSection(p) {
             cell('출처', r.sources.length ? h('span', { class: 'block-src' }, joinLinks(r.sources)) : '-'));
         })))),
     h('p', { class: 'note' }, '출처로 확인한 블록만 보여 줍니다. 사업승인 날짜는 승인일을 모르면 보도일이고, 유형이 출처에 없으면 "유형 미확인"입니다. '
-      + '분양과 임대가 함께 있는 블록은 줄을 나눕니다.'));
+      + '분양과 임대가 함께 있는 블록은 줄을 나눕니다.'
+      + (totalText ? ' 위 전체 블록 수 문구는 그 출처가 보도한 수치라 표의 상태별 줄 수와 같은 기준이 아닙니다.' : '')));
 }
 
 function renderDetail(p, missingId) {

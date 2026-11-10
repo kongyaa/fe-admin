@@ -35,6 +35,7 @@ function publicHistory(entry) {
     title: entry.title,
     households: entry.households,
     noticeDate: entry.noticeDate,
+    end: entry.end ?? null,
     rental: entry.rental === true,
     sources: publicSources(entry.sources),
   };
@@ -112,12 +113,17 @@ export function markAnnounced(project) {
   };
 }
 
-// 블록별 분양 지구에 접수 중인 공고가 이어지면 구간은 live로 두고(bucketOf), 규칙으로 잡는 다음 블록 기간은
-// 그 공고 마감 달 다음 달부터 다시 잡는다. 보도된 블록 계획이나 지구 계획으로 잡은 기간은 그대로다.
-export function nextBlockAfterLive(project, today) {
-  if (!project.live || !isBlockTown(project.kind, project.stage)) return project;
-  const liveEnd = (project.notices ?? []).map((notice) => notice.end).filter((end) => end && end >= today).sort().at(-1);
-  return liveEnd ? applyWindow(project, today, { liveEnd }) : project;
+// 공고 연결 뒤 블록별 분양 지구의 다음 블록 예상을 다시 잡는다.
+// - 이어진 공고의 공고명에 계획 블록 이름이 있으면 그 블록은 공고가 난 것으로 보고 계획 근거에서 뺀다(blockAnnounced).
+// - 접수 중인 공고가 있으면 구간은 live로 두고(bucketOf), 규칙으로 잡는 다음 블록 기간은 그 공고 마감 달 다음 달부터 잡는다.
+// 지구 계획(expected)으로 잡은 기간은 그대로다.
+export function nextBlockAfterLink(project, today) {
+  const notices = project.notices ?? [];
+  if (notices.length === 0 || !isBlockTown(project.kind, project.stage)) return project;
+  const liveEnd = project.live
+    ? notices.map((notice) => notice.end).filter((end) => end && end >= today).sort().at(-1) ?? null
+    : null;
+  return applyWindow(project, today, { liveEnd });
 }
 
 function tally(values) {
@@ -147,7 +153,7 @@ export async function buildMap({
   const linkedResult = notices.skipped
     ? { projects: base, linked: 0, checked: 0 }
     : linkNotices(base, notices.notices, today);
-  const projects = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLive(project, today)))
+  const projects = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
     .map((project) => toPublic({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
 
   return {

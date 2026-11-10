@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  addMonths, applyWindow, blockKey, bucketOf, expectedWindow, monthsBetween, onOrAfter, pendingPlans, planRange, sourceOutlet, toMonth,
+  addMonths, applyWindow, blockAnnounced, blockKey, bucketOf, expectedWindow, monthsBetween, onOrAfter, pendingPlans, planRange, sourceOutlet, toMonth,
   townPlanWindow,
 } from '../src/pipeline/expected-window.js';
 
@@ -345,4 +345,31 @@ test('onOrAfter compares days when both have them, months otherwise', () => {
   assert.equal(onOrAfter('2027-04-30', '2027-05'), false);
   assert.equal(onOrAfter(null, '2027-05'), null);
   assert.equal(onOrAfter('2027-05', undefined), null);
+});
+
+test('블록별 분양: a linked notice naming a planned block clears it from the window, like a history entry', () => {
+  const live = [{ name: '하남교산 A9블록 공공분양', announceDate: '2026-11-03', end: '2026-11-20', typeLabel: 'APT' }];
+  // 지금: A9는 공고가 나서 근거에서 빠지고 A11만 남는다
+  const now = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, plans: PLANS, notices: live });
+  assert.equal(now.basis, '보도된 다음 블록 계획: A11 2026-하반기 (하남Times 2025-12-13). 지역지 보도만 있음');
+  // 계획이 모두 지난 뒤에도 A9를 '공고는 아직 없습니다'에 넣지 않는다
+  const late = townPlanWindow({ plans: PLANS, notices: live, today: '2028-07-01' });
+  assert.equal(late.rule, 'town-plan-late');
+  assert.equal(late.basis, '보도된 일정(D2·D5 2026-상반기, A11 2026-하반기, A8 2028-상반기)이 지났지만 공고는 아직 없습니다. 남은 블록 순차 공고');
+  // applyWindow는 사업의 notices를 넘긴다
+  const project = applyWindow({ kind: '공공주택지구', stage: '블록별 분양', stageDates: {}, plans: PLANS, history: [], notices: live }, today);
+  assert.match(project.windowBasis, /계획: A11 2026-하반기/);
+  // 임대·민간사전청약 공고, 블록 이름이 없는 공고, 보도일보다 이른 공고는 채우지 않는다
+  for (const notice of [
+    { ...live[0], typeLabel: '공공지원민간임대' },
+    { ...live[0], typeLabel: '민간사전청약' },
+    { ...live[0], name: '하남교산 A90블록' },
+    { ...live[0], announceDate: '2025-12-01' },
+  ]) {
+    assert.match(townPlanWindow({ plans: PLANS, notices: [notice], today }).basis, /계획: A9·A11 2026-하반기/, JSON.stringify(notice));
+  }
+  // 블록별 현황과 같은 함수
+  assert.equal(blockAnnounced('A-9', { notices: live, since: '2025-12-13' }), true);
+  assert.equal(blockAnnounced('A11', { notices: live, since: '2025-12-13' }), false);
+  assert.equal(blockAnnounced('A9', { history: [{ block: 'A9', stage: '본청약', noticeDate: '2026-12-01' }], since: '2025-12-13', today }), false);
 });

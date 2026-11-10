@@ -384,7 +384,7 @@ towns:
   assert.equal(gyosan.windowBasis, '보도된 다음 블록 계획: A9·A11 2026-하반기 (하남Times 2025-12-13). 공고 미확인');
   assert.equal(gyosan.bucket, 'soon');
   assert.deepEqual(gyosan.history[1], {
-    block: 'A2', stage: '본청약', type: '공공분양', title: '교산 푸르지오 더 퍼스트', households: 1115, noticeDate: '2025-03-31', rental: false,
+    block: 'A2', stage: '본청약', type: '공공분양', title: '교산 푸르지오 더 퍼스트', households: 1115, noticeDate: '2025-03-31', end: null, rental: false,
     sources: [{ title: 'LH 공고', url: 'https://example.com/a2', date: '2025-03-31', outlet: 'LH' }],
   });
   assert.deepEqual(gyosan.history.map((e) => [e.block, e.stage, e.rental]), [['A2', '사전청약', false], ['A2', '본청약', false], ['A20', '본청약', true]]);
@@ -393,7 +393,7 @@ towns:
   }
   // 블록별 현황: 이력·계획만 있는 블록도 줄이 되고, 상태 순서대로 나온다
   assert.deepEqual(gyosan.blocks.map((b) => [b.block, b.rental, b.status, b.statusDate]), [
-    ['A2', false, '분양 끝남', '2025-03-31'],
+    ['A2', false, '본청약 공고', '2025-03-31'],
     ['A20', true, '임대 공고', '2026-09-01'],
     ['A5', false, '다음 예정(보도)', null],
     ['A9', false, '다음 예정(보도)', '2025-12-13'],
@@ -401,7 +401,7 @@ towns:
     ['S-1', false, '사업승인', '2025-11-24'],
   ]);
   assert.deepEqual(gyosan.blocks[0], {
-    block: 'A2', type: '공공분양', households: 1115, rental: false, status: '분양 끝남', statusDate: '2025-03-31',
+    block: 'A2', type: '공공분양', households: 1115, rental: false, status: '본청약 공고', statusDate: '2025-03-31',
     timeline: [{ stage: '사전청약', date: '2021-11-18' }, { stage: '본청약', date: '2025-03-31' }],
     plan: null,
     note: null,
@@ -410,7 +410,7 @@ towns:
       { title: 'LH 공고', url: 'https://example.com/a2', date: '2025-03-31', outlet: 'LH' },
     ],
   });
-  assert.deepEqual(gyosan.blockSummary, { '분양 끝남': 1, '임대 공고': 1, '다음 예정(보도)': 3, 사업승인: 1 });
+  assert.deepEqual(gyosan.blockSummary, { '본청약 공고': 1, '임대 공고': 1, '다음 예정(보도)': 3, 사업승인: 1 });
   assert.deepEqual(gyosan.blockTotal, {
     total: 39, approved: 16, date: '2025-11-24', outlet: '시티뉴스',
     sources: [{ title: '기사 (시티뉴스)', url: 'http://example.com/ct', date: '2025-11-24' }],
@@ -488,4 +488,66 @@ towns:
   assert.equal(gyosan.bucket, 'live');
   assert.equal(gyosan.windowRule, 'town-plan');
   assert.deepEqual(gyosan.window, { from: '2027-01', to: '2027-06' });
+});
+
+test('a linked notice naming a planned block takes it out of the next-block window and fills its block row', async () => {
+  const file = join(dir, 'notice-plan.yaml');
+  writeFileSync(file, `
+asOf: "2026-11-10"
+towns:
+  - id: hanam-gyosan
+    name: 하남교산
+    region: 경기
+    district: 하남
+    stage: 블록별 분양
+    stageDates:
+      블록별 분양: "2025-03-31"
+    noticeMatch: [교산]
+    history:
+      - { block: A2, title: 교산 푸르지오 더 퍼스트, noticeDate: "2025-03-31", source: { url: "https://example.com/a2" } }
+    plans:
+      - { blocks: [A9, A11], expected: "2026-하반기", note: "지역지 보도만 있음", source: { title: "기사 (하남Times)", url: "http://example.com/a9", date: "2025-12-13" } }
+  - id: guri-galmae-station
+    name: 구리갈매역세권
+    region: 경기
+    district: 구리
+    stage: 블록별 분양
+    noticeMatch: [갈매역세권]
+    history:
+      - { block: B-1, title: 구리갈매역세권 신안인스빌 디센트, noticeDate: "2026-10-30", end: "2026-11-11", source: { url: "https://example.com/b1" } }
+`);
+  const fetch = async (url) => {
+    const op = new URL(url).pathname.split('/').at(-1);
+    if (op !== 'getAPTLttotPblancDetail') return Response.json({ totalCount: 0, data: [] });
+    return Response.json({
+      totalCount: 1,
+      data: [{
+        HOUSE_MANAGE_NO: '2026000600', PBLANC_NO: '2026000600', HOUSE_SECD: '01', HOUSE_NM: '하남교산 A9블록 공공분양',
+        SUBSCRPT_AREA_CODE_NM: '경기', HSSPLY_ADRES: '경기도 하남시 천현동 일원',
+        RCRIT_PBLANC_DE: '2026-11-03', PBLANC_URL: 'https://www.applyhome.co.kr/a9',
+        GNRL_RNK1_CRSPAREA_RCPTDE: '2026-11-19', GNRL_RNK1_CRSPAREA_ENDDE: '2026-11-20',
+      }],
+    });
+  };
+  const data = await buildMap({ fetch, env: { DATA_GO_KR_KEY: 'k' }, today, seoulFile, newtownsFile: file, sleep: noSleep });
+  const gyosan = data.projects.find((p) => p.id === 'town-hanam-gyosan');
+  assert.equal(gyosan.bucket, 'live');
+  // A9는 공고가 나서 근거에서 빠지고 A11만 남는다
+  assert.equal(gyosan.windowRule, 'town-plan');
+  assert.equal(gyosan.windowBasis, '보도된 다음 블록 계획: A11 2026-하반기 (하남Times 2025-12-13). 지역지 보도만 있음');
+  assert.doesNotMatch(gyosan.windowBasis, /A9/);
+  const rows = Object.fromEntries(gyosan.blocks.map((b) => [b.block, b]));
+  assert.deepEqual([rows.A9.status, rows.A9.statusDate, rows.A9.plan], ['접수 중', '2026-11-20', null]);
+  assert.deepEqual([rows.A11.status, rows.A11.plan.expected], ['다음 예정(보도)', '2026-하반기']);
+  assert.deepEqual(gyosan.blockSummary, { '접수 중': 1, '본청약 공고': 1, '다음 예정(보도)': 1 });
+  // 계획이 모두 지난 뒤(2027-02)에도 A9를 '공고는 아직 없습니다'에 넣지 않는다
+  const later = await buildMap({ fetch, env: { DATA_GO_KR_KEY: 'k' }, today: '2027-02-01', seoulFile, newtownsFile: file, sleep: noSleep });
+  const lateTown = later.projects.find((p) => p.id === 'town-hanam-gyosan');
+  assert.equal(lateTown.windowRule, 'town-plan-late');
+  assert.equal(lateTown.windowBasis, '보도된 일정(A11 2026-하반기)이 지났지만 공고는 아직 없습니다. 남은 블록 순차 공고');
+  assert.equal(Object.fromEntries(lateTown.blocks.map((b) => [b.block, b])).A11.status, '예정 지남(보도)');
+  // 청약홈 공고가 안 이어진 이력도 접수 마감(end)이 남았으면 접수 중이고, 출력 이력에 end가 있다
+  const galmae = data.projects.find((p) => p.id === 'town-guri-galmae-station');
+  assert.equal(galmae.history[0].end, '2026-11-11');
+  assert.deepEqual([galmae.blocks[0].block, galmae.blocks[0].status, galmae.blocks[0].statusDate], ['B-1', '접수 중', '2026-11-11']);
 });

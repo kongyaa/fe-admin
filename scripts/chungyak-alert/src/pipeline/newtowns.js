@@ -2,7 +2,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { AppError, normalizeDate, safeHttpUrl } from '../util.js';
 import { BLOCK_STATUSES, UNDECIDED } from './blocks.js';
-import { PRE_SUBSCRIPTION, blockKey, planRange } from './expected-window.js';
+import {
+  PRE_SUBSCRIPTION, blockKey, onOrAfter, planRange,
+} from './expected-window.js';
 
 // data/newtowns.yaml(직접 관리하는 공공주택지구 목록)을 읽어 지도 사업 형태로 바꾼다.
 export const TOWN_STAGES = ['후보지', '지구지정', '지구계획승인', '부지조성 착공', '블록별 분양', '준공'];
@@ -80,7 +82,16 @@ function requiredDate(value) {
 // 분양 이력의 구분. 비우면 본청약(블록 입주자모집공고). 사전청약은 이력에만 보이고 계획·최근 분양에는 쓰지 않는다.
 export const HISTORY_STAGES = ['본청약', PRE_SUBSCRIPTION];
 
-// 분양 이력 한 건(사전청약·본청약). 모르는 키는 무시한다.
+// 이력의 접수 마감일(선택). 일까지 있는 YYYY-MM-DD만 받고(아니면 newtowns_date), 공고일보다 앞이면 newtowns_field.
+function receiptEnd(value, noticeDate) {
+  const end = townDate(value);
+  if (!end) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) throw new AppError('newtowns_date');
+  if (onOrAfter(end, noticeDate) === false) throw new AppError('newtowns_field');
+  return end;
+}
+
+// 분양 이력 한 건(사전청약·본청약). end는 접수 마감일(선택, 블록 상태 '접수 중'에 쓴다). 모르는 키는 무시한다.
 function noticeEntry(raw) {
   const entry = entryObject(raw);
   const block = text(entry.block);
@@ -88,13 +99,15 @@ function noticeEntry(raw) {
   const stage = text(entry.stage) ?? HISTORY_STAGES[0];
   if (!HISTORY_STAGES.includes(stage)) throw new AppError('newtowns_field');
   const moveIn = townDate(entry.moveIn);
+  const noticeDate = requiredDate(entry.noticeDate);
   return {
     block,
     stage,
     type: text(entry.type),
     title: text(entry.title),
     households: count(entry.households),
-    noticeDate: requiredDate(entry.noticeDate),
+    noticeDate,
+    end: receiptEnd(entry.end, noticeDate),
     ...(moveIn ? { moveIn } : {}),
     rental: flag(entry.rental),
     note: text(entry.note),

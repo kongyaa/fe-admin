@@ -85,6 +85,7 @@ const BLOCKS = withTown(`    stage: 블록별 분양
         type: 민간분양
         households: 213
         noticeDate: "2026-10-30"
+        end: "2026-11-11"
         source: { title: 청약홈, outlet: 청약홈, url: "https://example.com/b1", date: "2026-10-30" }
       - block: A2
         type: 공공분양
@@ -122,7 +123,7 @@ const BLOCKS = withTown(`    stage: 블록별 분양
 test('block history (사전청약·본청약) and plans are validated and sorted by date', () => {
   const [town] = parseNewtowns(BLOCKS).towns;
   assert.deepEqual(town.history[0], {
-    block: 'A2', stage: '사전청약', type: '공공분양', title: null, households: 1056, noticeDate: '2021-11-18', rental: false, note: null,
+    block: 'A2', stage: '사전청약', type: '공공분양', title: null, households: 1056, noticeDate: '2021-11-18', end: null, rental: false, note: null,
     sources: [{ title: '사전청약 기사', url: 'https://example.com/pre', date: '2021-11-17' }],
   });
   // stage를 비우면 본청약
@@ -140,6 +141,8 @@ test('block history (사전청약·본청약) and plans are validated and sorted
   assert.equal('moveIn' in town.history[2], false);
   assert.deepEqual(town.history[2].sources, [{ title: 'https://example.com/a4', url: 'https://example.com/a4', date: null }]);
   assert.equal(town.history[3].sources[0].outlet, '청약홈');
+  // 접수 마감(end)은 선택. 적으면 그대로, 없으면 null
+  assert.deepEqual(town.history.map((entry) => entry.end), [null, null, null, '2026-11-11']);
 
   assert.deepEqual(town.plans.map((plan) => [plan.blocks, plan.expected, plan.from, plan.to]), [
     [['D2'], '2026-상반기', '2026-01', '2026-06'],
@@ -169,6 +172,11 @@ test('bad block entries stop the build', () => {
   assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: 2025', src])), { kind: 'newtowns_date' });
   assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2025-03-01"', 'moveIn: 내년', src])), { kind: 'newtowns_date' });
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026-3분기"', src])), { kind: 'newtowns_date' });
+  // 접수 마감(end)은 일까지 있는 날짜만, 공고일보다 앞이면 안 된다
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2026-10-30"', 'end: "2026-11"', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2026-10-30"', 'end: 마감', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2026-10-30"', 'end: "2026-10-29"', src])), { kind: 'newtowns_field' });
+  assert.equal(parseNewtowns(entry('history', ['block: A1', 'noticeDate: "2026-10"', 'end: "2026-10-05"', src])).towns[0].history[0].end, '2026-10-05');
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026"', src])), { kind: 'newtowns_date' });
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026-00"', src])), { kind: 'newtowns_date' });
   // 필수 값
@@ -266,6 +274,10 @@ test('the real newtowns.yaml parses', () => {
   ]);
   assert.ok(byId['town-guri-galmae-station'].history.some((e) => e.rental));
   assert.ok(byId['town-guri-galmae-station'].history.some((e) => e.stage === '사전청약'));
+  // B-1은 2순위 접수일(메트로신문 2026-11-03)을 접수 마감으로 둔다. A4 사전청약은 일반형·선택형 공고일이 달라 달까지
+  const galmaeHistory = byId['town-guri-galmae-station'].history;
+  assert.equal(galmaeHistory.find((e) => e.block === 'B-1').end, '2026-11-11');
+  assert.deepEqual(galmaeHistory.filter((e) => e.block === 'A4').map((e) => [e.noticeDate, e.households, e.sources.length]), [['2023-09', 515, 2]]);
   assert.deepEqual(byId['town-guri-topyeong-hangang'].history, []);
   // 블록별 현황: 모든 블록에 출처, 교산은 지구 전체 블록 수(시티뉴스)
   for (const project of loaded.projects) assert.ok(project.blockEntries.every((b) => b.sources.length > 0), project.id);

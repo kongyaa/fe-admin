@@ -1,7 +1,10 @@
 import { safeHttpUrl } from '../util.js';
 import {
-  PRE_SUBSCRIPTION, blockKey, onOrAfter, reportDate, sourceOutlet, toMonth,
+  NOTICE_PRE_SUBSCRIPTION, PRE_SUBSCRIPTION, blockAnnounced, blockKey, compactName, isRentalNotice, monthsBetween, nameHasBlock,
+  onOrAfter, planRange, planSince, sourceOutlet, toMonth,
 } from './expected-window.js';
+
+export { nameHasBlock };
 
 // 블록별 현황: newtowns.yaml의 blocks(사업승인 등 블록 단위 사실)와 분양 이력(history), 연결된 청약홈 공고(notices),
 // 보도된 다음 블록 계획(plans)을 블록마다 한 줄로 합친다. 같은 블록이라도 분양과 임대는 다른 줄이다
@@ -12,33 +15,23 @@ export const BLOCK_STATUSES = ['사업승인', '착공', '계획 보도', '미�
 export const UNDECIDED = '미정';
 
 // 화면에 보이는 상태(정렬 순서이기도 하다). site/app.js의 BLOCK_STATUS_ORDER와 같게 둔다.
-// 접수 중(연결된 공고 접수 중) > 분양 끝남(본청약 이력 또는 접수가 끝난 공고) > 임대 공고(임대 이력)
-// > 다음 예정(보도)(아직 공고가 안 난 보도 계획) > yaml 상태(착공, 사업승인, 계획 보도) > 미정
-export const BLOCK_STATUS_ORDER = ['접수 중', '분양 끝남', '임대 공고', '다음 예정(보도)', '착공', '사업승인', '계획 보도', UNDECIDED];
+// 접수 중(연결된 공고나 이력의 접수가 오늘 이후까지) > 본청약 공고(본청약 이력 또는 접수가 끝난 공고) > 임대 공고(임대 이력)
+// > 다음 예정(보도)(아직 공고가 안 난 보도 계획) > 예정 지남(보도)(기간이 지났는데 공고가 없는 보도 계획)
+// > yaml 상태(착공, 사업승인, 계획 보도) > 미정
+// '본청약 공고'는 공고가 났다는 뜻이다. 분양이 다 끝났는지(미계약·잔여 등)는 알 수 없어 '끝남'이라 하지 않는다.
+export const BLOCK_STATUS_ORDER = [
+  '접수 중', '본청약 공고', '임대 공고', '다음 예정(보도)', '예정 지남(보도)', '착공', '사업승인', '계획 보도', UNDECIDED,
+];
 export const LIVE = '접수 중';
-export const SOLD = '분양 끝남';
+export const SALE_NOTICE = '본청약 공고';
 export const RENTAL_NOTICE = '임대 공고';
 export const PLANNED = '다음 예정(보도)';
+export const PLAN_PASSED = '예정 지남(보도)';
 export const MAIN_SUBSCRIPTION = '본청약';
 
-// 청약홈 공고 유형 중 임대와 사전청약. site/app.js의 RENTAL_NOTICE_TYPES·NOTICE_PRE_SUBSCRIPTION과 같은 값.
-const RENTAL_NOTICE_TYPES = ['민간임대', '공공지원민간임대'];
-const NOTICE_PRE_SUBSCRIPTION = '민간사전청약';
-
-// 비교용 이름: 공백·가운뎃점과 글자-숫자 사이 '-'를 뺀다(site/app.js의 compactName과 같다)
-const compactName = (value) => String(value ?? '').toUpperCase().replace(/[\s·]/g, '').replace(/(?<=[A-Z])-(?=\d)/g, '');
-
-// 공고명에 블록 이름이 있는지. 'A2'는 '…(A-2BL)'에 맞고 'A20'·'BA2'·'A2-1'에는 맞지 않는다(site/app.js nameHasBlock과 같다)
-export function nameHasBlock(name, block) {
-  const key = blockKey(block);
-  if (key.length < 2) return false;
-  const hay = compactName(name);
-  for (let i = hay.indexOf(key); i >= 0; i = hay.indexOf(key, i + 1)) {
-    const after = hay.slice(i + key.length);
-    if (!/[0-9A-Z]/.test(hay[i - 1] ?? '') && !/^-?\d/.test(after)) return true;
-  }
-  return false;
-}
+// 경과에 유형 이름 그대로 적는 청약홈 공고 유형(본청약이 아니라 남은 세대를 다시 뽑는 공고). site/app.js의 REMAINDER_NOTICE_TYPES와 같다.
+// 유형 이름에 '잔여'가 있는 공고도 그 이름 그대로 적는다.
+export const REMAINDER_NOTICE_TYPES = ['무순위', '임의공급', '불법행위 재공급'];
 
 // 같은 공고일인지: 둘 다 일까지 있으면 같은 날, 하나라도 달까지만 있으면 같은 달(site/app.js sameNoticeDate와 같다)
 function sameNoticeDate(a, b) {
@@ -51,8 +44,15 @@ function sameNoticeDate(a, b) {
 }
 
 const rowKey = (block, rental) => `${blockKey(block)}|${rental ? 'rental' : 'sale'}`;
-const isRentalNotice = (notice) => RENTAL_NOTICE_TYPES.includes(notice?.typeLabel);
-const noticeStage = (notice) => (notice?.typeLabel === NOTICE_PRE_SUBSCRIPTION ? PRE_SUBSCRIPTION : MAIN_SUBSCRIPTION);
+
+// 연결된 공고의 경과 단계: 민간사전청약은 사전청약, 무순위·임의공급·불법행위 재공급·잔여는 유형 이름, 그 밖은 본청약
+export function noticeStage(notice) {
+  const type = String(notice?.typeLabel ?? '').trim();
+  if (type === NOTICE_PRE_SUBSCRIPTION) return PRE_SUBSCRIPTION;
+  if (REMAINDER_NOTICE_TYPES.includes(type) || type.includes('잔여')) return type;
+  return MAIN_SUBSCRIPTION;
+}
+
 const latest = (values) => values.filter(Boolean).sort().at(-1) ?? null;
 
 function cleanSources(list) {
@@ -70,33 +70,47 @@ function dedupeSources(list) {
   return list.filter((source) => (seen.has(source.url) ? false : seen.add(source.url)));
 }
 
-// 연결된 공고가 어느 줄인지. 이력의 단지 이름(4글자 이상)이 공고명에 있으면 그 줄, 아니면 공고명에 블록 이름이 있는 줄.
+// 공고명에 블록처럼 보이는 이름(영문 1~2자 + 숫자, 'A-9BL'·'S2블록'·'B-1')이 있는지. 줄 블록과 안 맞아도 단지 이름으로 붙이지 않게 쓴다.
+const BLOCK_TOKEN = /(?<![0-9A-Z])[A-Z]{1,2}\d{1,3}(?:-\d+)?(?=BL|블록|[^0-9A-Z]|$)/;
+
+// 연결된 공고가 어느 줄인지. 공고명에 줄의 블록 이름이 있으면 그 줄(nameHasBlock)이 먼저다.
+// 공고명에 블록 이름이 없을 때만 이력의 단지 이름(4글자 이상)이 공고명에 있는 줄로 본다
+// ('교산 푸르지오 더 퍼스트 2차 (A-9BL)'는 A2의 단지 이름이 들어 있어도 A9 줄). 블록처럼 보이는 이름이 있는데 맞는 줄이 없으면 붙이지 않는다.
 // 분양 공고는 분양 줄, 임대 공고는 임대 줄에만 붙인다. 맞는 줄이 없으면 null(분양 이력 목록에는 그대로 보인다).
 export function noticeRowKey(notice, rows) {
   const rental = isRentalNotice(notice);
   const candidates = rows.filter((row) => row.rental === rental);
+  const byBlock = candidates.find((row) => row.names.some((block) => nameHasBlock(notice?.name, block)));
+  if (byBlock) return byBlock.key;
   const name = compactName(notice?.name);
+  if (BLOCK_TOKEN.test(name)) return null;
   const byTitle = candidates.find((row) => row.history.some((entry) => {
     const title = compactName(entry.title);
     return title.length >= 4 && name.includes(title);
   }));
-  if (byTitle) return byTitle.key;
-  const byBlock = candidates.find((row) => row.names.some((block) => nameHasBlock(notice?.name, block)));
-  return byBlock ? byBlock.key : null;
+  return byTitle ? byTitle.key : null;
 }
 
-// 계획이 그 줄에서 아직 공고 전인지. 같은 줄의 본청약 이력(오늘까지)이나 연결된 본청약 공고가 하한(계획 보도일,
-// 없으면 지구의 블록별 분양 단계 날짜, 그것도 없으면 하한 없음)과 같거나 뒤면 공고가 난 것으로 본다(pendingPlans와 같은 규칙,
-// 임대 계획은 임대 줄의 이력으로 본다).
-function planPending(plan, row, { stageDate, today }) {
-  const since = reportDate(plan) ?? (toMonth(stageDate) ? stageDate : null);
-  const dates = [
-    ...row.history.filter((entry) => entry.stage !== PRE_SUBSCRIPTION && (!today || onOrAfter(today, entry.noticeDate)))
-      .map((entry) => entry.noticeDate),
-    ...row.notices.filter((notice) => noticeStage(notice) !== PRE_SUBSCRIPTION).map((notice) => notice.announceDate),
-  ].filter(Boolean);
-  return !dates.some((date) => !since || onOrAfter(date, since));
+// 줄의 계획 블록이 아직 공고 전인지. 다음 블록 예상(pendingPlans)과 같은 규칙(blockAnnounced)으로 지구의 이력과 연결된 공고 전체를 본다.
+// 임대 계획은 임대 이력·임대 공고로 본다.
+function planPending({ plan, block }, row, {
+  history, notices, stageDate, today,
+}) {
+  return !blockAnnounced(block, {
+    history, notices, since: planSince(plan, stageDate), today, rental: row.rental,
+  });
 }
+
+// 계획 기간이 이번 달보다 앞에서 끝났는지(기간을 모르면 false)
+function planEnded(plan, today) {
+  const to = plan.to ?? planRange(plan.expected)?.to ?? null;
+  const months = monthsBetween(today, to);
+  return months !== null && months < 0;
+}
+
+// 이력이 접수 중인지: 사전청약이 아니고, 공고일이 오늘까지이며, 접수 마감(end)이 오늘 이후
+const historyLive = (entry, today) => entry.stage !== PRE_SUBSCRIPTION && Boolean(entry.end) && entry.end >= today
+  && onOrAfter(today, entry.noticeDate) !== false;
 
 function planHouseholdsFor(plan, block) {
   if (plan.householdsByBlock) {
@@ -118,26 +132,32 @@ function publicPlan(plan) {
 
 // 이력·공고로 정하는 상태. 없으면 null(계획·yaml 상태로 넘어감).
 function noticeStatus(row, today) {
-  const live = row.notices.filter((notice) => notice.end && notice.end >= today);
-  if (live.length) return { status: LIVE, statusDate: latest(live.map((notice) => notice.end)) };
+  const live = [
+    ...row.notices.filter((notice) => notice.end && notice.end >= today).map((notice) => notice.end),
+    ...row.history.filter((entry) => historyLive(entry, today)).map((entry) => entry.end),
+  ];
+  if (live.length) return { status: LIVE, statusDate: latest(live) };
   const issued = [
     ...row.history.filter((entry) => entry.stage !== PRE_SUBSCRIPTION && onOrAfter(today, entry.noticeDate) !== false)
       .map((entry) => entry.noticeDate),
     ...row.notices.filter((notice) => noticeStage(notice) !== PRE_SUBSCRIPTION).map((notice) => notice.announceDate),
   ];
   if (!issued.length) return null;
-  return { status: row.rental ? RENTAL_NOTICE : SOLD, statusDate: latest(issued) };
+  return { status: row.rental ? RENTAL_NOTICE : SALE_NOTICE, statusDate: latest(issued) };
 }
 
-// 경과: 이력(사전청약·본청약)과 이력에 없는 연결 공고, 접수 중인 공고는 '접수 중'(날짜는 마감일). 날짜순.
+// 경과: 이력(사전청약·본청약)과 이력에 없는 연결 공고(무순위 등은 유형 이름), 접수 중인 공고·이력은 '접수 중'(날짜는 마감일,
+// 같은 마감일은 한 번). 날짜순.
 function timelineOf(row, today) {
   const items = row.history.map((entry) => ({ stage: entry.stage, date: entry.noticeDate }));
+  const liveEnds = new Set(row.history.filter((entry) => historyLive(entry, today)).map((entry) => entry.end));
   for (const notice of row.notices) {
     const stage = noticeStage(notice);
     const duplicate = row.history.some((entry) => entry.stage === stage && sameNoticeDate(entry.noticeDate, notice.announceDate));
     if (!duplicate && notice.announceDate) items.push({ stage, date: notice.announceDate });
-    if (notice.end && notice.end >= today) items.push({ stage: LIVE, date: notice.end });
+    if (notice.end && notice.end >= today) liveEnds.add(notice.end);
   }
+  for (const end of liveEnds) items.push({ stage: LIVE, date: end });
   return items.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
@@ -172,11 +192,12 @@ function collectRows({ entries, history, plans }) {
 
 /**
  * 블록별 현황 줄. 상태 규칙(앞이 먼저):
- * 1) 접수 중: 이 줄에 이어진 청약홈 공고의 접수가 오늘 이후까지(statusDate = 마감일)
- * 2) 분양 끝남(분양 줄)·임대 공고(임대 줄): 본청약 이력(오늘까지) 또는 접수가 끝난 연결 공고(statusDate = 가장 늦은 공고일)
+ * 1) 접수 중: 이 줄에 이어진 청약홈 공고나 이력(end)의 접수가 오늘 이후까지(statusDate = 마감일)
+ * 2) 본청약 공고(분양 줄)·임대 공고(임대 줄): 본청약 이력(오늘까지) 또는 접수가 끝난 연결 공고(statusDate = 가장 늦은 공고일)
  * 3) 다음 예정(보도): 아직 공고가 안 난 보도 계획(statusDate = 그 계획의 가장 최근 보도일, plan.source와 같은 출처)
- * 4) yaml status(착공·사업승인·계획 보도, statusDate = yaml statusDate)
- * 5) 미정
+ * 4) 예정 지남(보도): 공고가 안 난 계획이 모두 기간이 지남(날짜는 3과 같다). 기간이 남은 계획이 있으면 그 계획이 3이다.
+ * 5) yaml status(착공·사업승인·계획 보도, statusDate = yaml statusDate)
+ * 6) 미정
  * 사전청약은 상태를 바꾸지 않고 경과(timeline)에만 보인다.
  */
 export function townBlocks({
@@ -188,14 +209,17 @@ export function townBlocks({
     if (key) rows.find((row) => row.key === key).notices.push(notice);
   }
   return rows.map((row) => {
-    const pending = row.plans.filter(({ plan }) => planPending(plan, row, { stageDate, today }));
-    const [next] = pending;
+    const pending = row.plans.filter((item) => planPending(item, row, {
+      history, notices, stageDate, today,
+    }));
+    const next = pending.find(({ plan }) => !planEnded(plan, today)) ?? pending[0];
     const main = [...row.history].reverse().find((entry) => entry.stage !== PRE_SUBSCRIPTION) ?? row.history.at(-1) ?? null;
     const fromNotice = noticeStatus(row, today);
     let status;
     if (fromNotice) status = fromNotice;
-    else if (next) status = { status: PLANNED, statusDate: publicPlan(next.plan).source?.date ?? null };
-    else status = { status: row.entry?.status ?? UNDECIDED, statusDate: row.entry?.statusDate ?? null };
+    else if (next) {
+      status = { status: planEnded(next.plan, today) ? PLAN_PASSED : PLANNED, statusDate: publicPlan(next.plan).source?.date ?? null };
+    } else status = { status: row.entry?.status ?? UNDECIDED, statusDate: row.entry?.statusDate ?? null };
     const planInfo = row.plans[0] ?? null;
     const households = row.entry?.households ?? main?.households
       ?? row.plans.map(({ plan, block }) => planHouseholdsFor(plan, block)).find((n) => n !== null) ?? null;

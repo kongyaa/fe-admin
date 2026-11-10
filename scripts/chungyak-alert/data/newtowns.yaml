@@ -117,7 +117,7 @@ towns:
           - { title: "하남교산, 내년 A9·A11·A20·S2블록 분양 본격화 (하남Times, 지역지)", outlet: 하남Times, url: "http://m.hanamtimes.com/news/articleView.html?idxno=12508", date: "2025-11-27" }
     # 블록별 현황 (2026-11-10 조사). 사업승인 목록은 시티뉴스 2025-11-24(지역지) 하나뿐이고 본문 글자가 일부 깨져 있다.
     # 블록 이름·세대 수는 읽히고 16개 블록 합계가 기사 합계 1만4,339세대와 맞는다. 유형 글자가 깨진 6개 블록(A14·A18·A19·S4·S9·S10)은
-    # 유형을 비운다(유형 미확인). 승인일은 기사에 없어 statusDate는 보도일이다. A2는 이 목록에도 있으나 본청약 이력으로 분양 끝남이라 뺀다.
+    # 유형을 비운다(유형 미확인). 승인일은 기사에 없어 statusDate는 보도일이다. A2는 이 목록에도 있으나 본청약 이력으로 본청약 공고 상태라 뺀다.
     # S7·A13은 '승인 예정'으로만 보여(문장 판독 불가) 넣지 않는다. A8·A6·A17·A21 세대 수(하남일보)는 사업승인 근거가 없어 넣지 않는다.
     blockTotal:
       total: 39
@@ -245,8 +245,11 @@ towns:
         stage: 사전청약
         type: 공공분양(일반형 230)·선택형(285)
         households: 515
-        noticeDate: "2023-09-22"
-        source: { title: "'구리 갈매 역세권지구 A4블록 사전청약' 서울시 장애인 특별공급 기관추천 안내 (서울시)", url: "https://news.seoul.go.kr/welfare/archives/555616", date: "2023-09-21" }
+        noticeDate: "2023-09"
+        note: "블록(A4)과 일반형·선택형 공고 예정일(일반형 2023-09-22, 선택형 09-26, 하나의 공고일이 아니라 달까지)은 서울시 안내. 가구 수 일반형 230·선택형 285(합계 515)는 뉴데일리 2023-10-16(블록 표기 없음, 구리갈매역세권 물량)"
+        source:
+          - { title: "'구리 갈매 역세권지구 A4블록 사전청약' 서울시 장애인 특별공급 기관추천 안내 (서울시)", url: "https://news.seoul.go.kr/welfare/archives/555616", date: "2023-09-21" }
+          - { title: "LH, 오늘부터 '뉴:홈' 3035호 사전청약 접수 실시 (뉴데일리)", url: "https://biz.newdaily.co.kr/site/data/html/2023/10/16/2023101600159.amp.html", date: "2023-10-16" }
       - block: A-1
         type: 신혼희망타운
         households: 1182
@@ -275,8 +278,11 @@ towns:
         type: 민간분양
         households: 213
         noticeDate: "2026-10-30"
+        end: "2026-11-11"  # 2순위 접수일(메트로신문 2026-11-03: 특별공급 11-09, 1순위 11-10, 2순위 11-11)
         title: 구리갈매역세권 신안인스빌 디센트
-        source: { title: "청약홈 분양정보 (houseManageNo 2026000472)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472", date: "2026-10-30" }
+        source:
+          - { title: "청약홈 분양정보 (houseManageNo 2026000472)", outlet: 청약홈, url: "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472", date: "2026-10-30" }
+          - { title: "㈜신안, '구리갈매역세권 신안인스빌 디센트' 30일 견본주택 개관 (메트로신문)", url: "https://www.metroseoul.co.kr/article/20261103500089", date: "2026-11-03" }
     plans:
       - blocks: [B2]
         type: 실버스테이 민간임대
