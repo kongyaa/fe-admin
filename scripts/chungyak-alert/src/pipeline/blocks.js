@@ -245,6 +245,24 @@ export function townBlocks({
   }).sort(compareBlocks);
 }
 
+// 줄 열쇠(blockKey + 분양/임대). 출력 줄의 block과 rental로 다시 만들 수 있다(build-map이 분양 성과를 붙일 때).
+export const blockRowKey = (block, rental) => rowKey(block, rental);
+
+// 줄마다 이어진 청약홈 공고(townBlocks와 같은 규칙, noticeRowKey). Map<줄 열쇠, 공고[]>
+export function blockRowNotices({
+  entries = [], history = [], plans = [], notices = [],
+}) {
+  const rows = collectRows({ entries, history, plans });
+  const result = new Map();
+  for (const notice of notices ?? []) {
+    const key = noticeRowKey(notice, rows);
+    if (!key) continue;
+    if (!result.has(key)) result.set(key, []);
+    result.get(key).push(notice);
+  }
+  return result;
+}
+
 // 상태별 줄 수(상태 순서, 0은 뺀다)
 export function blockSummary(blocks) {
   const counts = {};

@@ -220,6 +220,17 @@ button, input, select { font: inherit; color: inherit; }
 .block-note { display: block; color: var(--muted); font-size: .74rem; margin-top: 2px; }
 .block-src { font-size: .76rem; color: var(--muted); }
 .block-src a { white-space: nowrap; }
+/* 분양 성과: 블록 줄 바로 아래 한 줄(표 전체 너비). 좁은 화면에서는 위 카드에 이어 붙는다 */
+.block-table tr.has-perf > th, .block-table tr.has-perf > td { border-bottom: 0; }
+.block-table tr.block-perf-row > td { padding: 0 6px 8px; }
+.perf { background: var(--wash); border-radius: 6px; padding: 6px 10px; display: grid; gap: 4px; font-size: .8rem; min-width: 0; }
+.perf-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+.perf-head a { white-space: nowrap; }
+.perf-list { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; }
+.perf-list dt { color: var(--muted); font-size: .76rem; padding-top: 1px; }
+.perf-list dd { margin: 0; min-width: 0; font-variant-numeric: tabular-nums; }
+.perf-points { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.perf-caveat { display: block; color: var(--muted); font-size: .74rem; margin-top: 2px; }
 .c-appr { background: transparent; color: var(--plan); border: 1px solid var(--plan); padding: 0 7px; font-weight: 600; }
 @media (max-width: 480px) {
   .block-table-wrap { overflow-x: visible; }
@@ -230,6 +241,13 @@ button, input, select { font: inherit; color: inherit; }
   .block-table td { border-bottom: 0; padding: 2px 0; display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 6px; }
   .block-table td::before { content: attr(data-label); color: var(--muted); font-size: .74rem; }
   .block-table td > div { min-width: 0; }
+  .block-table tr.has-perf { border-bottom: 0; border-radius: 6px 6px 0 0; margin-bottom: 0; }
+  .block-table tr.block-perf-row { border-top: 0; border-radius: 0 0 6px 6px; padding-top: 0; }
+  .block-table tr.block-perf-row > td { display: block; padding: 0; }
+  .block-table tr.block-perf-row > td::before { content: none; }
+  .perf { padding: 6px 8px; }
+  .perf-list { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .perf-list dd + dt { margin-top: 4px; }
 }
 .c-rent { background: var(--plan-soft); color: var(--plan); }
 .c-pre { background: transparent; color: var(--muted); border: 1px solid var(--rule); padding: 0 7px; font-weight: 600; }
