@@ -11,11 +11,11 @@ export const DEFAULT_STAGES = {
   town: ['후보지', '지구지정', '지구계획승인', '부지조성 착공', '블록별 분양', '준공'],
 };
 
-// 정렬 순서이기도 하다: 공고 나옴 → 1년 안 → 3년 안 → 3년 뒤·미정 → 공고 있었음 → 예상 지남 → 분양했을 가능성 → 준공
+// 정렬 순서이기도 하다: 공고 중 → 1년 안 → 3년 안 → 3년 뒤·미정 → 공고 있었음 → 예상 지남 → 분양했을 가능성 → 준공
 // 파이프라인(src/pipeline/expected-window.js)의 BUCKETS와 같게 둔다.
 export const BUCKET_ORDER = ['live', 'soon', 'mid', 'far', 'announced', 'overdue', 'likely_sold', 'done'];
 export const BUCKET_INFO = {
-  live: { label: '공고 나옴', cls: 'c-live' },
+  live: { label: '공고 중', cls: 'c-live' },
   soon: { label: '1년 안', cls: 'c-soon' },
   mid: { label: '3년 안', cls: 'c-mid' },
   far: { label: '3년 뒤·미정', cls: 'c-far' },
@@ -60,7 +60,7 @@ export function addMonths(ym, n) {
 }
 
 /**
- * 예상 시기 구간: live(공고 나옴) | soon(12개월 안) | mid(36개월 안) | far(그 뒤·미정)
+ * 예상 시기 구간: live(공고 중: 마감 전 공고 연결) | soon(12개월 안) | mid(36개월 안) | far(그 뒤·미정)
  * | announced(지난 공고만 연결) | overdue(예상 지남) | likely_sold(분양했을 가능성) | done(준공)
  * todayYm 은 'YYYY-MM' (한국 시간 기준 이번 달)
  */
@@ -103,10 +103,19 @@ export function normalizeText(value) {
 }
 
 /**
- * 필터에 맞는지. filters = { area, kind, stage('seoul:이주' 형식 또는 ''), when, district, q }
- * bucket 을 미리 계산해 두었으면 넘겨서 다시 계산하지 않는다.
+ * 검색 대상 글자(정규화한 값): 이름·주소·도로명주소에 구 이름('강남구'와 '강남')과 세부 유형까지.
+ * 주소가 '일원동615-1'처럼 구 없이 오므로 구 이름을 따로 넣는다.
  */
-export function matchesFilters(project, filters, todayYm, bucket = bucketOf(project, todayYm)) {
+export function searchText(project) {
+  const p = project ?? {};
+  return normalizeText([p.name, p.address, p.roadAddress, p.district, shortDistrict(p.district), p.subKind].filter(Boolean).join(' '));
+}
+
+/**
+ * 필터에 맞는지. filters = { area, kind, stage('seoul:이주' 형식 또는 ''), when, district, q }
+ * bucket·검색 글자(searchText)를 미리 계산해 두었으면 넘겨서 다시 계산하지 않는다.
+ */
+export function matchesFilters(project, filters, todayYm, bucket = bucketOf(project, todayYm), hay = null) {
   const f = filters ?? {};
   if (f.area && f.area !== 'all' && project.region !== f.area) return false;
   if (f.kind && f.kind !== 'all' && project.kind !== f.kind) return false;
@@ -118,13 +127,81 @@ export function matchesFilters(project, filters, todayYm, bucket = bucketOf(proj
   if (!whenMatches(bucket, f.when)) return false;
   if (f.q) {
     const q = normalizeText(f.q);
-    const hay = normalizeText([project.name, project.address, project.roadAddress].join(' '));
-    if (!hay.includes(q)) return false;
+    if (!(hay ?? searchText(project)).includes(q)) return false;
   }
   return true;
 }
 
-/** 목록 순서: 구간(공고 나옴 먼저), 예상 시작 달, 이름 */
+export const DEFAULT_FILTERS = Object.freeze({ area: 'all', kind: 'all', stage: '', when: 'all', district: null, q: '' });
+// 폭에 따라 저절로 접고 펴는 <details class="fold auto"> 의 id(index.html). 휴대폰 폭에서만 접는다(initFolds)
+export const AUTO_FOLD_IDS = Object.freeze(['disclaimer', 'filters-box']);
+// 경기는 공공주택지구뿐이라 지역이 경기면 유형(재개발·재건축) 필터는 쓸 수 없다
+export const TOWN_AREA = '경기';
+
+/** 유형 필터를 쓸 수 없는지(지역이 경기) */
+export function kindLocked(filters) {
+  return filters?.area === TOWN_AREA;
+}
+
+/**
+ * 필터 하나를 바꾼 새 필터. 지역을 경기로 바꾸면 서울 구 선택과 유형을 풀고,
+ * 경기만 보는 중에 서울 구를 고르면 지역을 전체로 되돌린다. 유형이 잠겨 있으면 유형은 바꾸지 않는다.
+ */
+export function nextFilters(filters, key, value) {
+  const next = { ...DEFAULT_FILTERS, ...filters };
+  if (key === 'kind' && kindLocked(next)) return next;
+  next[key] = value;
+  if (key === 'area' && value === TOWN_AREA) {
+    next.district = null;
+    next.kind = 'all';
+  }
+  if (key === 'district' && value && next.area === TOWN_AREA) next.area = 'all';
+  return next;
+}
+
+const stageName = (stage) => String(stage ?? '').slice(String(stage ?? '').indexOf(':') + 1);
+
+/** 필터 상자 안의 조건(지역·유형·시기·단계·검색어) 중 기본값이 아닌 수. 구 선택은 지도에서 하므로 세지 않는다 */
+export function activeFilterCount(filters) {
+  const f = { ...DEFAULT_FILTERS, ...filters };
+  return [f.area !== 'all', f.kind !== 'all', f.when !== 'all', Boolean(f.stage), Boolean(f.q)].filter(Boolean).length;
+}
+
+/** 좁은 화면에서 접힌 필터 상자의 제목 */
+export function filterSummary(filters) {
+  const n = activeFilterCount(filters);
+  return n ? `필터 (${n}개 적용)` : '필터';
+}
+
+/** 지금 걸린 조건을 사람이 읽는 말로: ['서울', '1년 안', '단계 이주', '강남구', '검색 ‘개포’'] */
+export function filterConditions(filters) {
+  const f = { ...DEFAULT_FILTERS, ...filters };
+  const out = [];
+  if (f.area !== 'all') out.push(f.area === TOWN_AREA ? '경기 공공주택지구' : f.area);
+  if (f.kind !== 'all') out.push(f.kind);
+  if (f.when === '12') out.push('1년 안');
+  else if (f.when === '36') out.push('3년 안');
+  if (f.stage) out.push(`단계 ${stageName(f.stage)}`);
+  if (f.district) out.push(f.district);
+  if (f.q) out.push(`검색 ‘${f.q}’`);
+  return out;
+}
+
+/**
+ * 결과가 없을 때 한 곳에만 보여 줄 안내: { title, conditions, clearQuery(검색어 지우기 버튼), reset(필터 초기화 버튼) }.
+ * 검색어만 걸려 있으면 초기화 버튼 없이 검색어 지우기만 둔다.
+ */
+export function emptyState(filters) {
+  const f = { ...DEFAULT_FILTERS, ...filters };
+  const conditions = filterConditions(f);
+  const others = conditions.length - (f.q ? 1 : 0);
+  let title = '표시할 사업이 없습니다.';
+  if (f.q) title = `‘${f.q}’에 맞는 사업이 없습니다.`;
+  else if (conditions.length) title = '지금 조건에 맞는 사업이 없습니다.';
+  return { title, conditions, clearQuery: Boolean(f.q), reset: others > 0 };
+}
+
+/** 목록 순서: 구간(공고 중 먼저), 예상 시작 달, 이름 */
 export function compareProjects(a, b, todayYm) {
   const ra = BUCKET_ORDER.indexOf(bucketOf(a, todayYm));
   const rb = BUCKET_ORDER.indexOf(bucketOf(b, todayYm));
@@ -172,10 +249,24 @@ export function dataFile(search) {
   return new URLSearchParams(String(search ?? '')).get('sample') === '1' ? 'sample-projects.json' : 'projects.json';
 }
 
+/**
+ * 목록·상세·타임라인에 보여 줄 예상 범위. 1년 안·3년 안인데 시작 달이 이번 달보다 앞이면(이미 시작된 범위)
+ * 지난 시작 달 대신 '지금~끝 달'로 보여 준다(자료는 그대로, 보이는 말만). 범위가 없으면 null
+ */
+export function windowRangeLabel(project, todayYm) {
+  const range = windowRange(project);
+  if (!range) return null;
+  const bucket = bucketOf(project, todayYm);
+  const from = toYm(project.window.from);
+  const now = toYm(todayYm);
+  if ((bucket === 'soon' || bucket === 'mid') && now && from < now) return `지금~${toYm(project.window.to) ?? from}`;
+  return range;
+}
+
 /** 상세·목록에 보여줄 예상 청약 문구 */
 export function windowLabel(project, todayYm) {
   const bucket = bucketOf(project, todayYm);
-  const range = windowRange(project);
+  const range = windowRangeLabel(project, todayYm);
   if (bucket === 'done') return '준공';
   if (bucket === 'overdue') return range ? `${range} (지남)` : '예상 지남';
   if (bucket === 'likely_sold') return range ? `${range} (지남, 분양했을 가능성)` : '분양했을 가능성';
@@ -183,7 +274,7 @@ export function windowLabel(project, todayYm) {
     const latest = latestAnnounce(project);
     return latest ? `공고 있었음(${latest})` : '공고 있었음';
   }
-  if (bucket === 'live') return range ?? '공고 나옴';
+  if (bucket === 'live') return range ?? '공고 중';
   return range ?? '3년 뒤·미정';
 }
 
@@ -328,15 +419,17 @@ export function latestSale(project) {
 export const BLOCK_STATUS_ORDER = [
   '접수 중', '본청약 공고', '임대 공고', '다음 예정(보도)', '예정 지남(보도)', '착공', '사업승인', '계획 보도', '미정',
 ];
+// 칩 색: 사업 목록의 칩(BUCKET_INFO)과 뜻이 같은 상태만 같은 클래스를 쓰고(공고 중·지난 공고·지남·미정),
+// 나머지는 블록 전용 클래스(b-*)를 써서 한 색이 두 가지 뜻이 되지 않게 한다.
 export const BLOCK_STATUS_CLASS = {
   '접수 중': 'c-live',
-  '본청약 공고': 'c-sold',
+  '본청약 공고': 'c-ann',
   '임대 공고': 'c-rent',
-  '다음 예정(보도)': 'c-mid',
+  '다음 예정(보도)': 'b-plan',
   '예정 지남(보도)': 'c-over',
-  착공: 'c-ann',
-  사업승인: 'c-appr',
-  '계획 보도': 'c-pre',
+  착공: 'b-build',
+  사업승인: 'b-appr',
+  '계획 보도': 'b-report',
   미정: 'c-far',
 };
 export const UNKNOWN_BLOCK_TYPE = '유형 미확인';
@@ -653,7 +746,7 @@ export function dayFraction(ymd) {
 }
 
 /**
- * 구별 집계: 서울 사업만, 구 이름 → { n: 전체, soon: 공고 나옴·1년 안, mid: 3년 안 }
+ * 구별 집계: 서울 사업만, 구 이름 → { n: 전체, soon: 공고 중·1년 안, mid: 3년 안 }
  * bucketFn(project) 로 구간을 받는다(화면에서는 미리 계산한 값을 넘김).
  */
 export function tileStats(projects, bucketFn) {
@@ -670,7 +763,7 @@ export function tileStats(projects, bucketFn) {
   return stats;
 }
 
-/** 타일 색 3단계: 1년 안(공고 나옴 포함) 3곳 이상 → hot, 1~2곳이거나 3년 안이 있으면 → has, 그 밖 → '' */
+/** 타일 색 3단계: 1년 안(공고 중 포함) 3곳 이상 → hot, 1~2곳이거나 3년 안이 있으면 → has, 그 밖 → '' */
 export function tileClass(stat) {
   const soon = stat?.soon ?? 0;
   if (soon >= 3) return 'hot';
@@ -678,15 +771,57 @@ export function tileClass(stat) {
   return '';
 }
 
+/**
+ * 타일에 쓰는 숫자: 크게 보일 main 은 1년 안(공고 중 포함) 수로 색(tileClass)과 같은 질문에 답하고,
+ * total 은 그 구의 전체 사업 수(작게 '/36').
+ */
+export function tileCount(stat) {
+  return { main: stat?.soon ?? 0, total: stat?.n ?? 0 };
+}
+
+/**
+ * 주소 해시에서 화면 상태를 꺼낸다: '#p=<id>'(상세), '#gu=<구>'(구 선택), 둘 다면 '#gu=<구>&p=<id>'.
+ * 값은 decodeURIComponent 로 풀고, 깨졌거나 빈 값은 null. 모르는 해시('#sources' 등)면 둘 다 null.
+ * 같은 키가 두 번 나오면 뒤의 값을 쓴다('#p=a&p=b' → 'b').
+ */
+export function parseHash(hash) {
+  const out = { id: null, district: null };
+  for (const part of String(hash ?? '').replace(/^#/, '').split('&')) {
+    const eq = part.indexOf('=');
+    if (eq < 1) continue;
+    let value;
+    try {
+      value = decodeURIComponent(part.slice(eq + 1));
+    } catch {
+      continue;
+    }
+    if (!value) continue;
+    const key = part.slice(0, eq);
+    if (key === 'p') out.id = value;
+    else if (key === 'gu') out.district = value;
+  }
+  return out;
+}
+
+/** parseHash 의 반대: { id, district } → '#gu=…&p=…'. 둘 다 없으면 '' */
+export function hashFor({ id = null, district = null } = {}) {
+  const parts = [];
+  if (district) parts.push(`gu=${encodeURIComponent(district)}`);
+  if (id) parts.push(`p=${encodeURIComponent(id)}`);
+  return parts.length ? `#${parts.join('&')}` : '';
+}
+
+/** 화면 상태를 담은 해시인지('#p=…'·'#gu=…'). 빈 해시도 상태(목록)로 본다. '#sources' 같은 문서 안 이동은 false */
+export function isStateHash(hash) {
+  const h = String(hash ?? '');
+  if (h === '' || h === '#') return true;
+  const { id, district } = parseHash(h);
+  return Boolean(id || district);
+}
+
 /** '#p=<id>' 에서 id 를 꺼낸다 */
 export function idFromHash(hash) {
-  const m = /^#p=(.+)$/.exec(String(hash ?? ''));
-  if (!m) return null;
-  try {
-    return decodeURIComponent(m[1]);
-  } catch {
-    return null;
-  }
+  return parseHash(hash).id;
 }
 
 // --- 화면 테마: 시스템(기기 설정, 기본) · 라이트 · 다크 -----------------------
@@ -759,8 +894,7 @@ const TILE_LAYOUT = [
   ['구로구', '동작구', '서초구', '강남구', '송파구', null],
   ['금천구', '관악구', null, null, null, null],
 ];
-
-const DEFAULT_FILTERS = Object.freeze({ area: 'all', kind: 'all', stage: '', when: 'all', district: null, q: '' });
+const SEOUL_DISTRICTS = new Set(TILE_LAYOUT.flat().filter(Boolean));
 
 const state = {
   data: null,
@@ -769,12 +903,16 @@ const state = {
   projects: [], // 정렬된 전체 목록
   byId: new Map(),
   bucket: new Map(), // id → 구간
+  hay: new Map(), // id → 검색 글자(searchText)
   stages: DEFAULT_STAGES,
   filters: { ...DEFAULT_FILTERS },
   base: [], // 구 선택을 뺀 필터 결과(타일·지구 목록용)
+  visibleIds: new Set(),
   visible: [], // 구 선택까지 적용한 결과(목록·타임라인용)
   shown: PAGE_SIZE,
   selected: null,
+  quietPop: false, // toggleDistrict 가 부른 history.back() 의 popstate 인지
+  hashId: null, // 주소 해시에 들어 있는 상세 id(좁은 화면에서는 '상세를 보는 중'이라는 뜻)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -875,10 +1013,14 @@ function showError(kind) {
     status.setAttribute('role', 'status');
     load();
   });
+  // 파일 이름·HTTP 코드는 화면 첫 줄에 두지 않고 접힌 '자세한 오류'와 콘솔에만 남긴다
+  const detail = `${dataFile(location.search)} · ${kind}`;
+  console.warn(`사업 목록을 불러오지 못함: ${detail}`);
   status.replaceChildren(
-    h('b', {}, `사업 목록(${dataFile(location.search)})을 불러오지 못했습니다.`),
-    h('span', {}, ` 잠시 뒤 다시 시도해 주세요. (${kind})`),
+    h('b', {}, '사업 목록을 불러오지 못했습니다.'),
+    h('span', {}, '연결을 확인하고 다시 시도해 주세요.'),
     h('div', {}, retry),
+    h('details', { class: 'err-detail' }, h('summary', {}, '자세한 오류'), h('p', {}, detail)),
   );
   $('app').hidden = true;
   $('asof').textContent = '기준일 정보를 불러오지 못했습니다.';
@@ -897,17 +1039,23 @@ function start(data) {
   state.projects = sortProjects(valid, state.todayYm);
   state.byId = new Map(state.projects.map((p) => [p.id, p]));
   state.bucket = new Map(state.projects.map((p) => [p.id, bucketOf(p, state.todayYm)]));
+  state.hay = new Map(state.projects.map((p) => [p.id, searchText(p)]));
 
   renderHeader();
   renderSources();
   buildStageSelect();
   $('sample-banner').hidden = data.sample !== true;
   $('app').hidden = false;
+
+  // '#p=<id>'(상세)·'#gu=<구>'(구 선택) 링크로 들어오면 그 상태로 연다
+  const fromHash = parseHash(location.hash);
+  if (fromHash.district && SEOUL_DISTRICTS.has(fromHash.district)) state.filters = nextFilters(state.filters, 'district', fromHash.district);
   applyFilters();
 
-  const fromHash = idFromHash(location.hash);
-  if (fromHash) select(fromHash, { fromHash: true, scroll: true });
-  else if (state.visible[0]) select(state.visible[0].id, { fromHash: true });
+  if (fromHash.id) {
+    state.hashId = fromHash.id;
+    select(fromHash.id, { fromHash: true, scroll: true });
+  } else if (state.visible[0]) select(state.visible[0].id, { fromHash: true });
   else renderDetail(null);
 }
 
@@ -918,7 +1066,7 @@ function renderHeader() {
   const parts = [];
   if (s.seoul?.asOf) parts.push(`서울 정비사업 자료 ${s.seoul.asOf} 기준`);
   if (s.newtowns?.asOf) parts.push(`신도시 목록 ${s.newtowns.asOf} 확인`);
-  if (state.data.generatedAt) parts.push(`생성 ${state.data.generatedAt}`);
+  if (state.data.generatedAt) parts.push(`업데이트 ${state.data.generatedAt}`);
   $('asof').textContent = parts.length ? parts.join(' · ') : '기준일 정보 없음';
 }
 
@@ -940,7 +1088,7 @@ function renderSources() {
   }
   if (s.newtowns || townSources.size) {
     items.push(h('li', {},
-      h('span', {}, '경기 공공주택지구: 저장소에서 직접 관리하는 목록'),
+      h('span', {}, '경기 공공주택지구: 보도·지자체 자료로 정리한 목록'),
       h('span', { class: 'muted' }, s.newtowns?.asOf ? ` · ${s.newtowns.asOf} 확인` : '', typeof s.newtowns?.count === 'number' ? ` · ${s.newtowns.count}곳` : ''),
       townSources.size
         ? h('ul', {}, [...townSources.values()].map((src) => h('li', {}, extLink(src.url, src.title || src.url), src.date ? h('span', { class: 'muted' }, ` · ${src.date}`) : null)))
@@ -971,37 +1119,120 @@ function buildStageSelect() {
 
 function applyFilters({ keepPage = false } = {}) {
   const { district, ...rest } = state.filters;
-  state.base = state.projects.filter((p) => matchesFilters(p, rest, state.todayYm, state.bucket.get(p.id)));
+  state.base = state.projects.filter((p) => matchesFilters(p, rest, state.todayYm, state.bucket.get(p.id), state.hay.get(p.id)));
   state.visible = district ? state.base.filter((p) => p.district === district) : state.base;
+  state.visibleIds = new Set(state.visible.map((p) => p.id));
   if (!keepPage) state.shown = PAGE_SIZE;
   syncFilterControls();
   keepFocus($('tiles'), renderTiles);
   keepFocus($('towns'), renderTowns);
   keepFocus($('list'), renderList);
   keepFocus($('gantt'), renderGantt);
+  syncStale();
 }
 
 function syncFilterControls() {
   for (const btn of document.querySelectorAll('[data-filter]')) {
     btn.setAttribute('aria-pressed', String(state.filters[btn.dataset.filter] === btn.dataset.value));
   }
+  // 경기는 공공주택지구뿐이라 유형(재개발·재건축)을 고를 수 없다
+  const locked = kindLocked(state.filters);
+  // disabled 대신 aria-disabled: 포커스가 남고 화면 읽기 프로그램이 이유(kind-locked-note)를 읽는다. 누르면 nextFilters 가 무시한다
+  for (const btn of document.querySelectorAll('[data-filter="kind"]')) {
+    if (locked) {
+      btn.setAttribute('aria-disabled', 'true');
+      btn.setAttribute('aria-describedby', 'kind-locked-note');
+    } else {
+      btn.removeAttribute('aria-disabled');
+      btn.removeAttribute('aria-describedby');
+    }
+  }
   $('f-stage').value = state.filters.stage;
   if ($('f-q').value !== state.filters.q) $('f-q').value = state.filters.q;
+  $('filters-summary').textContent = filterSummary(state.filters);
 }
 
 function setFilter(key, value) {
-  state.filters[key] = value;
-  // 경기만 보는데 서울 구를 고른 상태면 구 선택은 의미가 없다
-  if (key === 'area' && value === '경기') state.filters.district = null;
+  state.filters = nextFilters(state.filters, key, value);
   applyFilters();
+  writeHash();
+}
+
+function resetFilters() {
+  state.filters = { ...DEFAULT_FILTERS };
+  applyFilters();
+  writeHash();
+  announce(`필터 초기화, ${state.visible.length}곳`);
+}
+
+function clearQuery() {
+  state.filters = nextFilters(state.filters, 'q', '');
+  applyFilters();
+  $('list-title').focus({ preventScroll: true });
+  announce(`검색어를 지웠습니다, ${state.visible.length}곳`);
 }
 
 function toggleDistrict(district) {
   const next = state.filters.district === district ? null : district;
-  state.filters.district = next;
-  if (next && state.filters.area === '경기') state.filters.area = 'all';
+  state.filters = nextFilters(state.filters, 'district', next);
   applyFilters();
+  // 좁은 화면: 구를 고르면 기록을 하나 남기고(뒤로 가기 → 지도) 바로 그 구 목록으로 내려간다.
+  // 그 기록에서 다시 풀면 기록을 하나 되돌린다(켜기·끄기·켜기를 반복해도 같은 기록이 쌓이지 않게). 화면은 이미 바꿨으니 popstate 는 조용히
+  const phone = narrow.matches;
+  if (phone && !next && history.state?.pushed === 'district') {
+    state.quietPop = true;
+    history.back();
+  } else {
+    writeHash({ id: phone ? null : state.hashId, push: phone && next ? 'district' : null });
+  }
+  if (phone && next) {
+    $('list-title').scrollIntoView({ block: 'start' });
+    $('list-title').focus({ preventScroll: true });
+  }
   announce(next ? `${shortDistrict(next)} 사업 ${state.visible.length}곳` : `구 선택 해제, ${state.visible.length}곳`);
+}
+
+// --- 주소 기록(뒤로 가기) -----------------------------------------------------
+
+/**
+ * 지금 상태(상세 id·구 선택)를 주소 해시에 쓴다. push 를 주면 새 기록을 남겨 휴대폰 뒤로 가기가 앞 화면(목록·지도)으로
+ * 돌아오게 하고, 아니면 지금 기록을 바꿔 쓴다(넓은 화면, 처음 자동 선택, 필터 변경).
+ */
+function writeHash({ id = state.hashId, push = null } = {}) {
+  const hash = hashFor({ id, district: state.filters.district });
+  state.hashId = id ?? null;
+  if (hash === location.hash || (!hash && !location.hash)) return;
+  const url = hash || `${location.pathname}${location.search}`;
+  if (push) history.pushState({ pushed: push }, '', url);
+  else history.replaceState(history.state, '', url);
+}
+
+/** 뒤로·앞으로 가기나 주소를 바꿨을 때 해시를 화면에 맞춘다. 같은 상태면 아무것도 하지 않는다(두 번 불려도 됨) */
+function syncFromHash() {
+  if (!state.data || !isStateHash(location.hash)) return; // '#sources' 같은 문서 안 이동은 그대로 둔다
+  const { id, district } = parseHash(location.hash);
+  const gu = district && SEOUL_DISTRICTS.has(district) ? district : null;
+  const prevId = state.hashId;
+  state.hashId = id;
+  // 우리가 부른 history.back()(toggleDistrict)이면 화면은 이미 맞췄으니 스크롤·포커스를 옮기지 않는다
+  const phone = narrow.matches && !state.quietPop;
+  state.quietPop = false;
+  if (gu !== state.filters.district) {
+    state.filters = nextFilters(state.filters, 'district', gu);
+    applyFilters();
+    if (!id && !prevId && phone) {
+      // 구 목록으로 돌아오면 구를 눌렀을 때(toggleDistrict)처럼 목록 제목으로, 구 선택이 풀리면 지도로
+      const target = $(gu ? 'list-title' : 'browse');
+      target.scrollIntoView({ block: 'start' });
+      if (gu) target.focus({ preventScroll: true });
+    }
+  }
+  if (id) {
+    if (id !== state.selected) select(id, { fromHash: true, scroll: phone });
+    else if (id !== prevId && phone) showDetail();
+  } else if (prevId && phone) {
+    backToList();
+  }
 }
 
 // --- 타일 지도·지구 목록 -----------------------------------------------------
@@ -1013,14 +1244,21 @@ function renderTiles() {
     const st = stats.get(district) ?? { n: 0, soon: 0, mid: 0 };
     const cls = ['tile', tileClass(st), st.n ? '' : 'zero'].filter(Boolean).join(' ');
     const label = `${district} ${st.n}곳${st.soon ? `, 1년 안 ${st.soon}곳` : ''}${st.mid ? `, 3년 안 ${st.mid}곳` : ''}`;
+    const { main, total } = tileCount(st);
     return h('button', {
       type: 'button', class: cls, 'data-key': district, 'data-district': district,
       'aria-pressed': String(state.filters.district === district), 'aria-label': label, title: label,
-    }, h('span', { class: 'tile-name' }, shortDistrict(district)), h('b', {}, String(st.n)));
+    },
+    h('span', { class: 'tile-name' }, shortDistrict(district)),
+    h('span', { class: 'tile-num' }, h('b', {}, String(main)), total ? h('small', {}, `/${total}`) : null));
   }));
 }
 
 function renderTowns() {
+  // 결과가 아예 없으면 안내는 목록 한 곳에만 둔다(지구 제목도 숨김)
+  const none = state.base.length === 0;
+  $('towns-title').hidden = none;
+  $('towns').hidden = none;
   const towns = state.base.filter((p) => p.region !== '서울');
   if (!towns.length) {
     $('towns').replaceChildren(h('p', { class: 'note' }, '조건에 맞는 지구가 없습니다.'));
@@ -1036,7 +1274,7 @@ function renderTowns() {
 // --- 목록 -------------------------------------------------------------------
 
 function listItem(p) {
-  const range = windowRange(p);
+  const range = windowRangeLabel(p, state.todayYm);
   const sold = stageGroup(p) === 'town' ? latestSale(p) : null;
   return h('button', {
     type: 'button', class: 'item', 'data-key': p.id, 'data-select': p.id, 'aria-current': String(state.selected === p.id),
@@ -1051,17 +1289,28 @@ function listItem(p) {
     sold ? h('span', {}, `최근 분양 ${sold}`) : null));
 }
 
+/** 결과가 없을 때의 안내 하나: 걸린 조건과 되돌릴 버튼 */
+function emptyBlock() {
+  const e = emptyState(state.filters);
+  return h('div', { class: 'no-results' },
+    h('p', { class: 'no-results-title' }, e.title),
+    e.conditions.length ? h('p', { class: 'note' }, `걸린 조건: ${e.conditions.join(' · ')}`) : null,
+    e.clearQuery || e.reset
+      ? h('div', { class: 'no-results-actions' },
+        e.clearQuery ? h('button', { type: 'button', class: 'btn', 'data-empty': 'clear-q' }, '검색어 지우기') : null,
+        e.reset ? h('button', { type: 'button', class: e.clearQuery ? 'btn ghost' : 'btn', 'data-empty': 'reset' }, '필터 초기화') : null)
+      : null);
+}
+
 function renderList() {
   const f = state.filters;
   const total = state.visible.length;
   const shown = state.visible.slice(0, state.shown);
-  const areaLabel = f.area === '서울' ? '서울 사업' : f.area === '경기' ? '경기 공공주택지구' : '전체 사업';
+  const areaLabel = f.area === '서울' ? '서울 사업' : f.area === TOWN_AREA ? '경기 공공주택지구' : '전체 사업';
   $('list-title').textContent = f.district ? `${f.district} 사업` : areaLabel;
   $('list-count').textContent = `${total.toLocaleString('ko-KR')}곳`;
   $('clear-district').hidden = !f.district;
-  $('list').replaceChildren(...(total
-    ? shown.map(listItem)
-    : [h('p', { class: 'note' }, '조건에 맞는 사업이 없습니다. 필터를 줄여 보세요.')]));
+  $('list').replaceChildren(...(total ? shown.map(listItem) : [emptyBlock()]));
   const more = $('more');
   const rest = total - shown.length;
   more.hidden = rest <= 0;
@@ -1106,7 +1355,7 @@ function saleSection(p) {
           what ? h('span', {}, what) : null,
           r.stage === PRE_SUBSCRIPTION ? h('span', { class: 'chip c-pre' }, '사전청약') : null,
           r.rental ? h('span', { class: 'chip c-rent' }, '임대') : null,
-          open ? h('span', { class: 'chip c-live' }, '접수 중') : null),
+          open ? h('span', { class: 'chip c-live' }, '공고 중') : null),
         r.title ? h('span', { class: 'sale-title' }, r.title) : null,
         r.sources.length
           ? h('span', { class: 'sale-src' }, '출처 ', r.sources.flatMap((src, i) => (i ? [' · ', sourceLink(src)] : [sourceLink(src)])))
@@ -1152,7 +1401,7 @@ function performanceBox(block, perf) {
 
 /**
  * 블록별 현황(블록별 분양 지구만): 상태별 개수, 지구 전체 블록 수(출처 있을 때), 블록 표.
- * 넓은 화면은 표, 좁은 화면(≤480px)은 CSS 로 줄마다 카드처럼 쌓는다(칸 이름은 data-label). 줄이 없으면 null.
+ * 상세 칸이 넓으면 표, 좁으면(컨테이너 쿼리, style.css) 줄마다 카드처럼 쌓는다(칸 이름은 data-label). 줄이 없으면 null.
  */
 function blockSection(p) {
   if (!isBlockTownProject(p)) return null;
@@ -1198,12 +1447,15 @@ function blockSection(p) {
             ? [main, h('tr', { class: 'block-perf-row' }, h('td', { colspan: '6', 'data-label': '분양 성과' }, performanceBox(r.block, r.performance)))]
             : main;
         })))),
-    h('p', { class: 'note' }, '출처로 확인한 블록만 보여 줍니다. 사업승인 날짜는 승인일을 모르면 보도일이고, 유형이 출처에 없으면 "유형 미확인"입니다. '
-      + '분양과 임대가 함께 있는 블록은 줄을 나눕니다.'
-      + (rows.some((r) => r.performance)
-        ? ' 분양 성과의 시세 비교는 주변 단지 실거래로 추정한 신축 환산 값이며, 신뢰도가 낮거나 차익 공유 유형이면 숫자를 보이지 않습니다.'
-        : '')
-      + (totalText ? ' 위 전체 블록 수 문구는 그 출처가 보도한 수치라 표의 상태별 줄 수와 같은 기준이 아닙니다.' : '')));
+    // 표 읽는 법은 한 줄만 보이고 나머지는 '자세히'로 접는다(문구는 그대로)
+    h('details', { class: 'fold note' },
+      h('summary', {}, '출처로 확인한 블록만 보여 줍니다. ', h('span', { class: 'fold-more' }, '자세히')),
+      h('p', {}, '사업승인 날짜는 승인일을 모르면 보도일이고, 유형이 출처에 없으면 "유형 미확인"입니다. '
+        + '분양과 임대가 함께 있는 블록은 줄을 나눕니다.'
+        + (rows.some((r) => r.performance)
+          ? ' 분양 성과의 시세 비교는 주변 단지 실거래로 추정한 신축 환산 값이며, 신뢰도가 낮거나 차익 공유 유형이면 숫자를 보이지 않습니다.'
+          : '')
+        + (totalText ? ' 위 전체 블록 수 문구는 그 출처가 보도한 수치라 표의 상태별 줄 수와 같은 기준이 아닙니다.' : ''))));
 }
 
 function renderDetail(p, missingId) {
@@ -1232,9 +1484,16 @@ function renderDetail(p, missingId) {
     fact('총 세대', fmtCount(p.households)),
     seoul ? fact('분양 세대(조합원 포함)', fmtCount(p.saleHouseholds)) : null,
     seoul && typeof p.rentalHouseholds === 'number' ? fact('임대', fmtCount(p.rentalHouseholds)) : null,
-    fact('일반분양 예상', fmtCount(p.generalSupply)),
-    fact(windowFactLabel(p), windowLabel(p, state.todayYm)),
+    // 일반분양 수는 자료에 있을 때만(없으면 '미정' 칸을 만들지 않는다)
+    typeof p.generalSupply === 'number' ? fact('일반분양 예상', fmtCount(p.generalSupply)) : null,
   ];
+
+  // 사람들이 찾아오는 답(예상 청약 시기)을 제목 바로 아래에 크게. 이미 시작된 범위면 원래 추정 범위를 작게 덧붙인다
+  const range = windowRange(p);
+  const answer = h('div', { class: 'answer' },
+    h('small', { class: 'answer-label' }, windowFactLabel(p)),
+    h('p', { class: 'answer-line' }, h('b', {}, windowLabel(p, state.todayYm)), chip(bucket)),
+    range && windowRangeLabel(p, state.todayYm) !== range ? h('small', { class: 'answer-extra' }, `추정 범위 ${range}`) : null);
 
   const steps = h('ol', { class: 'steps', 'aria-label': '사업 단계' }, stages.map((name, i) => {
     const cls = i < idx ? 'done' : i === idx ? 'now' : '';
@@ -1259,7 +1518,7 @@ function renderDetail(p, missingId) {
             n?.typeLabel ? ` · ${n.typeLabel}` : '',
             n?.announceDate ? ` · 공고 ${n.announceDate}` : '',
             n?.end ? ` · 마감 ${n.end}` : ''),
-          open ? h('span', { class: 'chip c-live' }, '접수 중') : null);
+          open ? h('span', { class: 'chip c-live' }, '공고 중') : null);
       })))
     : null;
 
@@ -1277,22 +1536,39 @@ function renderDetail(p, missingId) {
   box.replaceChildren(...[
     back,
     h('div', { class: 'detail-head' },
-      h('h2', { class: 'detail-name', tabindex: '-1', id: 'detail-title' }, p.name ?? ''),
-      chip(bucket)),
+      h('h2', { class: 'detail-name', tabindex: '-1', id: 'detail-title' }, p.name ?? '')),
+    // 필터를 바꿔 목록에서 빠진 사업이면 알려 준다(syncStale)
+    h('p', { class: 'stale-note', id: 'stale-note', hidden: true }, '지금 목록에는 없는 사업입니다. 필터나 구 선택을 바꾸면 다시 보입니다.'),
+    answer,
+    h('p', { class: 'why' }, h('b', {}, '예상 근거 '), p.windowBasis || '근거 정보 없음'),
     h('div', { class: 'facts' }, facts),
     h('div', { class: 'steps-wrap', tabindex: '0', 'aria-label': '사업 단계, 가로로 스크롤' }, steps),
-    h('p', { class: 'why' }, h('b', {}, '예상 근거 '), p.windowBasis || '근거 정보 없음'),
     typeof p.notes === 'string' && p.notes.trim() ? h('details', { class: 'memo' }, h('summary', {}, '조사 메모'), h('p', {}, p.notes)) : null,
     town ? blockSection(p) : null,
     town ? saleSection(p) : noticeBlock,
     sourceBlock,
   ].filter(Boolean));
+  syncStale();
   // 단계가 많아 가로로 넘치면 현재 단계가 보이도록 스크롤
   const wrap = box.querySelector('.steps-wrap');
   const now = box.querySelector('.steps li.now');
   if (wrap && now && wrap.scrollWidth > wrap.clientWidth) {
     wrap.scrollLeft = Math.max(0, now.offsetLeft - (wrap.clientWidth - now.offsetWidth) / 2);
   }
+  // 가로로 넘칠 때만 양 끝을 흐리게(style.css .scrolls). 화면 폭이 바뀌어도 맞춘다
+  stepsObserver?.disconnect();
+  if (wrap && typeof ResizeObserver === 'function') {
+    stepsObserver = new ResizeObserver(() => wrap.classList.toggle('scrolls', wrap.scrollWidth > wrap.clientWidth + 1));
+    stepsObserver.observe(wrap);
+  }
+}
+
+let stepsObserver = null;
+
+/** 보고 있는 사업이 지금 목록(필터와 구 선택을 모두 적용한 결과)에 없으면 상세에 알림을 띄운다 */
+function syncStale() {
+  const note = document.getElementById('stale-note');
+  if (note) note.hidden = !state.selected || state.visibleIds.has(state.selected);
 }
 
 const narrow = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(max-width: 820px)') : { matches: false };
@@ -1309,12 +1585,26 @@ function select(id, { fromHash = false, focus = false, scroll = false } = {}) {
     el.setAttribute('aria-current', String(el.getAttribute('data-select') === id));
   }
   renderDetail(p);
-  if (!fromHash) history.replaceState(null, '', `#p=${encodeURIComponent(id)}`);
+  // 좁은 화면에서 사업을 고르면 새 기록을 남긴다: 휴대폰 뒤로 가기가 사이트를 떠나지 않고 목록으로 돌아오게.
+  // 넓은 화면(목록과 상세가 함께 보임)과 처음 자동 선택은 기록을 늘리지 않고 바꿔 쓴다.
+  if (!fromHash) writeHash({ id, push: narrow.matches && state.hashId !== id ? 'detail' : null });
   if (focus) announce(`${p.name} 상세`);
-  if ((focus || scroll) && narrow.matches) {
-    $('detail').scrollIntoView({ block: 'start' });
-    $('detail-title').focus({ preventScroll: true });
+  if ((focus || scroll) && narrow.matches) showDetail();
+}
+
+function showDetail() {
+  $('detail').scrollIntoView({ block: 'start' });
+  $('detail-title').focus({ preventScroll: true });
+}
+
+/** 상세의 '← 목록으로': 우리가 남긴 기록이면 브라우저 뒤로 가기와 같게(popstate 가 목록으로), 아니면 해시만 지우고 목록으로 */
+function leaveDetail() {
+  if (history.state?.pushed === 'detail' && state.hashId) {
+    history.back();
+    return;
   }
+  writeHash({ id: null });
+  backToList();
 }
 
 function backToList() {
@@ -1359,8 +1649,8 @@ function renderGantt() {
   const pct = (n) => `${(n / GANTT_MONTHS) * 100}%`;
   const cells = [h('div', { class: 'g-corner' }), axis];
   for (const [p, bars] of rows) {
-    const range = windowRange(p);
-    const said = [range ? `${windowPrefix(p)} ${range}` : '', ...bars.filter((b) => b.kind === 'live').map((b) => `공고 나옴 ${b.label}`)].filter(Boolean).join(', ');
+    const range = windowRangeLabel(p, state.todayYm);
+    const said = [range ? `${windowPrefix(p)} ${range}` : '', ...bars.filter((b) => b.kind === 'live').map((b) => `공고 중 ${b.label}`)].filter(Boolean).join(', ');
     cells.push(
       h('button', {
         type: 'button', class: 'g-label', 'data-key': p.id, 'data-select': p.id, 'aria-current': String(state.selected === p.id), title: p.name ?? '',
@@ -1375,6 +1665,8 @@ function renderGantt() {
     );
   }
   $('gantt').replaceChildren(...cells);
+  // 목록이 비었으면 안내는 목록에만 두고 타임라인 칸은 숨긴다
+  $('gantt-panel').hidden = state.visible.length === 0;
   const note = $('gantt-note');
   if (!total) note.textContent = '조건에 맞는 사업 중 앞으로 36개월 안에 예상되거나 공고가 난 곳이 없습니다.';
   else if (total > rows.length) note.textContent = `36개월 안에 걸친 ${total.toLocaleString('ko-KR')}곳 중 앞의 ${rows.length}곳만 그렸습니다. 나머지 ${(total - rows.length).toLocaleString('ko-KR')}곳은 필터를 좁히거나 목록에서 보세요.`;
@@ -1442,22 +1734,35 @@ function initTheme() {
 
 // --- 이벤트 -----------------------------------------------------------------
 
+/**
+ * 휴대폰 폭(≤520px)에서는 필터와 안내문을 접어 첫 화면에 지도가 보이게 하고, 그보다 넓으면 펼쳐 둔다
+ * (index.html 은 open 으로 두어 스크립트가 없어도 펼쳐져 있고, 넓은 화면에서는 CSS 가 .fold.auto 의 접기 제목을 숨긴다).
+ */
+function initFolds() {
+  const phone = window.matchMedia('(max-width: 520px)');
+  const folds = AUTO_FOLD_IDS.map((id) => $(id));
+  const sync = () => {
+    for (const el of folds) el.open = !phone.matches;
+  };
+  sync();
+  phone.addEventListener('change', sync);
+}
+
 function init() {
   initTheme();
+  initFolds();
   document.addEventListener('click', (e) => {
     const btn = e.target instanceof Element ? e.target.closest('button') : null;
     if (!btn || !state.data) return;
-    if (btn.hasAttribute('data-filter')) setFilter(btn.dataset.filter, btn.dataset.value);
+    if (btn.getAttribute('aria-disabled') === 'true') announce($('kind-locked-note').textContent); // 잠긴 유형 버튼
+    else if (btn.hasAttribute('data-filter')) setFilter(btn.dataset.filter, btn.dataset.value);
     else if (btn.hasAttribute('data-district')) toggleDistrict(btn.dataset.district);
     else if (btn.hasAttribute('data-select')) select(btn.getAttribute('data-select'), { focus: true });
-    else if (btn.hasAttribute('data-back')) backToList();
+    else if (btn.hasAttribute('data-back')) leaveDetail();
+    else if (btn.dataset.empty === 'clear-q') clearQuery();
+    else if (btn.dataset.empty === 'reset' || btn.id === 'f-reset') resetFilters();
     else if (btn.id === 'more') showMore();
     else if (btn.id === 'clear-district') toggleDistrict(state.filters.district);
-    else if (btn.id === 'f-reset') {
-      state.filters = { ...DEFAULT_FILTERS };
-      applyFilters();
-      announce(`필터 초기화, ${state.visible.length}곳`);
-    }
   });
   $('f-stage').addEventListener('change', (e) => setFilter('stage', e.target.value));
   let timer = 0;
@@ -1465,15 +1770,14 @@ function init() {
     clearTimeout(timer);
     const value = e.target.value;
     timer = setTimeout(() => {
-      state.filters.q = value.trim();
+      state.filters = nextFilters(state.filters, 'q', value.trim());
       applyFilters();
       announce(`검색 결과 ${state.visible.length}곳`);
     }, 150);
   });
-  window.addEventListener('hashchange', () => {
-    const id = idFromHash(location.hash);
-    if (id && state.data && id !== state.selected) select(id, { fromHash: true, scroll: true });
-  });
+  // 뒤로·앞으로 가기(popstate)와 주소창에서 해시를 바꾼 경우(hashchange). 둘 다 와도 syncFromHash 는 한 번만 바꾼다
+  window.addEventListener('popstate', syncFromHash);
+  window.addEventListener('hashchange', syncFromHash);
   load();
 }
 
