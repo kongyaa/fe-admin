@@ -69,6 +69,10 @@
 - 첫 화면 '블록별로 분양 중인 신도시'(`sellingTowns`): 블록별 분양 단계이거나, 이어진 공고의 접수가 열려 있거나 14일(`SELLING_SOON_DAYS`) 안에 시작하는 공공주택지구만 보인다. 접수 중인 지구가 먼저, 그다음 다음 블록 예상 시기(`window.from`) 순. 없으면 `지금 블록별로 분양 중인 신도시가 없습니다.`
 - 지역 필터 `경기·인천`은 지역(`region`)이 경기 또는 인천인 사업(공공주택지구)을 함께 본다(인천계양은 `region: 인천`, `district: 계양구`).
 - 지구 화면(`#t=`)은 블록별 분양 지구와, 분양 전이라도 출처가 있는 블록이 있는 공공주택지구(광명시흥)에 쓴다(`isTownView`). 그 밖은 사업 화면(`#p=`).
+- `briefs`: 지역 브리핑(`src/pipeline/briefs.js`). `{ "<구 이름>": brief, "<지구 사업 id>": brief }`, brief는 `{ headline, paras: [[{ t, b?, note? }]], foot: [{ label, url|null }], basis }`(`b` 굵게, `note` 각주 번호 조각).
+  서울 구(사업이 있는 구)는 정해진 틀에 숫자만 넣는다: 1년 안·3년 안 수와 1년 안 순위(더 많은 구 수 + 1), 관리처분인가 이후·초기 단계 수, 1년 안 중 세대가 가장 큰 곳과 예상 시기가 가장 이른 곳, 도시정비형 비중 또는 모두 재건축, 가장 최근 청약홈 공고, 가장 최근 네이버 기사(`<사업> 관련 소식(<언론사>, <MM.DD>)`, 약관상 제목은 옮기지 않는다).
+  공공주택지구는 watchlist에서 추적 중인 곳만, newtowns.yaml·news.yaml의 출처 있는 사실로 쓰고 문장마다 출처 번호를 단다: 1문단 가장 최근 본청약(세대·경쟁률·같은 블록의 분양가 기사), 2문단 공고 전 계획(기간이 지난 계획은 뒤에 '시기가 지났다')과 사전청약만 한 블록의 최근 기사, 3문단 지구 전체 기사 최근 2건. 블록이 없는 지구는 지정·계획 세대와 첫 청약 예상(보도된 계획 또는 규칙) 두 문단.
+  사이트는 지역 현황에서 구나 관심 지구 칸을 고르면 사업 목록 위에 보인다(관심 지구 칸은 고르면 브리핑과 지구 화면 링크가 펼쳐진다). 모든 글자는 textContent, 각주 주소는 safeHttpUrl.
 - `watchlist`: 지역 현황의 신도시 칸. `[{ name, kind, region, tracked, projectId }]`(`data/newtowns.yaml`의 `watchlist`). `tracked: false`인 지구에는 아무 사실도 싣지 않는다(화면은 '아직 추적하지 않음').
 - `sources.curatedNews`: 손으로 고른 기사 `{ asOf, count, skipped, unmatched }`. `sources.news`: 네이버 관련 소식 수집 결과 `{ checked, matched, projects, skipped, errors, stopped }`(아래 "사업별 최근 뉴스"). `sources.performance`: 분양 성과(아래). `sources.previous`: `{ skipped }`.
 

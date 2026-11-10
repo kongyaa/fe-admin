@@ -1464,6 +1464,34 @@ export function cleanWatchlist(list) {
   }));
 }
 
+/**
+ * 지역 브리핑(projects.json의 briefs[구 이름 | 지구 사업 id]) 한 건을 화면 형태로 고른다. 형식이 틀리면 null.
+ * { eyebrow: '지역 브리핑 · 2026-11-11', headline, paras: [[{ text, bold, note }]], foot: [{ n, label, url }], basis }
+ * - 조각은 { t, b?, note? }. note 조각의 t 는 각주 번호이고 foot 안의 번호일 때만 남긴다.
+ * - 각주 주소는 safeHttpUrl 을 거친다(아니면 글자만).
+ */
+export function briefView(brief, generatedAt) {
+  if (!brief || typeof brief !== 'object' || !textOrNull(brief.headline)) return null;
+  const foot = entriesOf(brief.foot).filter((f) => textOrNull(f.label))
+    .map((f, i) => ({ n: i + 1, label: f.label.trim(), url: safeHttpUrl(f.url) }));
+  const paras = (Array.isArray(brief.paras) ? brief.paras : []).map((para) => entriesOf(para).flatMap((seg) => {
+    if (typeof seg.t !== 'string' || !seg.t) return [];
+    if (seg.note === true) {
+      const n = Number(seg.t);
+      return Number.isInteger(n) && n >= 1 && n <= foot.length ? [{ text: String(n), bold: false, note: true }] : [];
+    }
+    return [{ text: seg.t, bold: seg.b === true, note: false }];
+  })).filter((para) => para.some((seg) => !seg.note && seg.text.trim()));
+  const date = parseStamp(generatedAt)?.date ?? null;
+  return {
+    eyebrow: date ? `지역 브리핑 · ${date}` : '지역 브리핑',
+    headline: brief.headline.trim(),
+    paras,
+    foot,
+    basis: textOrNull(brief.basis),
+  };
+}
+
 /** 사업 화면·지구 화면 주소: 블록별 분양 지구는 '#t=…'(블록이 있으면 '&b=…'), 그 밖은 '#p=…'. district 는 첫 화면의 구 선택 */
 export function linkFor(project, { block = null, district = null } = {}) {
   if (!project) return hashFor({ district });
@@ -1518,6 +1546,7 @@ const state = {
   feedFilter: { kind: 'all', onlyNew: false },
   feedShown: FEED_PAGE,
   soonGu: null,
+  regionTown: null, // 지역 현황에서 고른 관심 지구 이름(구를 고르면 풀린다)
   route: null,
   townBlock: null,
   quietPop: false, // toggleDistrict 가 부른 history.back() 의 popstate 인지
@@ -1930,31 +1959,87 @@ function renderRegion() {
     st.live ? h('span', { class: 'gu-live' }, '공고 중') : null);
   }));
 
-  const watch = state.watch.length ? state.watch : state.projects.filter((p) => p.region !== '서울')
-    .map((p) => ({ name: p.name, kind: p.subKind ?? p.kind ?? '', region: p.district ?? '', tracked: true, projectId: p.id }));
-  $('watch-grid').replaceChildren(...watch.map((w) => {
+  // 관심 지구 칸: 누르면 구처럼 골라져 아래에 지역 브리핑과 지구 화면 링크가 보인다
+  $('watch-grid').replaceChildren(...watchEntries().map((w) => {
     const p = w.tracked && w.projectId ? state.byId.get(w.projectId) : null;
+    const on = String(state.regionTown === w.name);
+    const kind = [w.kind, w.region].filter(Boolean).join(', ');
     if (!p) {
-      return h('div', { class: 'watch-cell untracked', role: 'listitem' },
-        h('span', { class: 'watch-name' }, w.name),
-        h('span', { class: 'watch-kind' }, [w.kind, w.region].filter(Boolean).join(', ')),
-        h('span', { class: 'watch-state' }, w.tracked ? '자료 없음' : '아직 추적하지 않음'));
+      return h('div', { role: 'listitem' }, h('button', {
+        type: 'button', class: 'watch-cell untracked', 'data-watch-town': w.name, 'data-key': `w:${w.name}`, 'aria-pressed': on,
+      },
+      h('span', { class: 'watch-name' }, w.name),
+      h('span', { class: 'watch-kind' }, kind),
+      h('span', { class: 'watch-state' }, w.tracked ? '자료 없음' : '아직 추적하지 않음')));
     }
     const head = townHeadline(p, state.calendar, state.today, state.todayYm);
     const fresh = freshProjects.has(p.id);
-    return h('div', { role: 'listitem' }, h('a', {
-      class: 'watch-cell', href: linkFor(p, { district: state.filters.district }), 'data-nav': '', 'data-key': `w:${p.id}`, 'data-back': '첫 화면으로',
+    return h('div', { role: 'listitem' }, h('button', {
+      type: 'button', class: 'watch-cell', 'data-watch-town': w.name, 'data-key': `w:${w.name}`, 'aria-pressed': on,
     },
     h('span', { class: 'watch-top' }, h('span', { class: 'watch-name' }, w.name), fresh ? h('span', { class: 'new-tag' }, 'NEW') : null),
-    h('span', { class: 'watch-kind' }, [w.kind, w.region].filter(Boolean).join(', ')),
-    h('span', { class: `watch-state tone-${head.tone}` }, head.tone === 'live' && head.label === '지금 접수 중' ? `접수 중: ${head.text}` : `${head.label} ${head.text}`)));
+    h('span', { class: 'watch-kind' }, kind),
+    h('span', { class: `watch-state tone-${head.tone}` }, headText(head))));
   }));
   renderRegionPanel();
+}
+
+const headText = (head) => (head.tone === 'live' && head.label === '지금 접수 중' ? `접수 중: ${head.text}` : `${head.label} ${head.text}`);
+
+/** 관심 지구 칸 목록: 자료의 watchlist, 없으면 서울 밖 사업 */
+function watchEntries() {
+  return state.watch.length ? state.watch : state.projects.filter((p) => p.region !== '서울')
+    .map((p) => ({ name: p.name, kind: p.subKind ?? p.kind ?? '', region: p.district ?? '', tracked: true, projectId: p.id }));
+}
+
+/** 지역 브리핑 글(briefView). 없으면 null. 글자는 모두 textContent */
+function briefArticle(key) {
+  const briefs = state.data?.briefs && typeof state.data.briefs === 'object' ? state.data.briefs : {};
+  const v = briefView(Object.hasOwn(briefs, key) ? briefs[key] : null, state.data?.generatedAt);
+  if (!v) return null;
+  return h('article', { class: 'brief', 'aria-label': '지역 브리핑' },
+    h('span', { class: 'brief-eyebrow' }, v.eyebrow),
+    h('h4', { class: 'brief-head' }, v.headline),
+    v.paras.map((para) => h('p', { class: 'brief-para' }, para.map((seg) => {
+      if (seg.note) return h('sup', { class: 'brief-note' }, h('span', { class: 'visually-hidden' }, '출처 '), seg.text);
+      return seg.bold ? h('b', {}, seg.text) : seg.text;
+    }))),
+    v.foot.length ? h('ol', { class: 'brief-foot', 'aria-label': '출처' }, v.foot.map((f) => h('li', {}, f.url ? extLink(f.url, f.label) : f.label))) : null,
+    v.basis ? h('p', { class: 'brief-basis' }, v.basis) : null);
+}
+
+/** 고른 관심 지구: 제목, 지역 브리핑, 지구(사업) 화면 링크 */
+function renderTownPanel(panel, name) {
+  const w = watchEntries().find((x) => x.name === name);
+  const p = w?.tracked && w.projectId ? state.byId.get(w.projectId) : null;
+  const town = p ? isTownView(p) : false;
+  let note = '아직 출처가 있는 일정 자료를 모으지 않았습니다. 신도시 목록에 추가하면 브리핑과 블록, 뉴스가 여기에 나옵니다.';
+  if (p) note = town ? '블록별 현황과 블록별 뉴스는 지구 화면에서 봅니다.' : '단계와 소식은 사업 화면에서 봅니다. 블록은 지구계획 승인 뒤 정해집니다.';
+  const head = p ? townHeadline(p, state.calendar, state.today, state.todayYm) : null;
+  const link = p ? h('ul', { class: 'rp-list' }, h('li', {}, h('a', {
+    class: 'rp-item', href: linkFor(p, { district: state.filters.district }), 'data-nav': '', 'data-key': `rp:${p.id}`, 'data-back': '첫 화면으로',
+  },
+  h('span', { class: 'rp-name' }, town ? `${name} 블록별 현황` : `${name} 사업 화면`),
+  h('span', { class: `rp-when tone-${head.tone}` }, headText(head)),
+  h('span', { class: 'rp-meta' }, [w.kind, p.stage].filter(Boolean).join(', '))))) : null;
+  panel.hidden = false;
+  panel.replaceChildren(...[
+    h('div', { class: 'rp-head' },
+      h('h3', { id: 'rp-title', tabindex: '-1' }, name),
+      h('button', { type: 'button', class: 'linkish', 'data-close-region': '', 'data-key': 'rp-close' }, '닫기')),
+    p ? briefArticle(p.id) : null,
+    h('p', { class: 'note' }, note),
+    link,
+  ].filter(Boolean));
 }
 
 function renderRegionPanel() {
   const panel = $('region-panel');
   const district = state.filters.district;
+  if (!district && state.regionTown) {
+    renderTownPanel(panel, state.regionTown);
+    return;
+  }
   if (!district) {
     panel.hidden = true;
     panel.replaceChildren();
@@ -1968,6 +2053,7 @@ function renderRegionPanel() {
     h('div', { class: 'rp-head' },
       h('h3', { id: 'rp-title', tabindex: '-1' }, `${district} 정비사업 ${all.length}곳 중 1년 안 ${soon}곳`),
       h('button', { type: 'button', class: 'linkish', 'data-close-region': '', 'data-key': 'rp-close' }, '닫기')),
+    briefArticle(district),
     h('p', { class: 'note' }, all.length
       ? '예상 시기가 빠른 순입니다. 누르면 사업 화면으로 갑니다.'
       : '이 구에는 지금 자료에 잡힌 정비사업이 없습니다.'),
@@ -2411,8 +2497,25 @@ function syncFromHash() {
  * 구 칸을 누르면 그 구의 사업 목록을 펼친다(다시 누르면 접음). 좁은 화면에서는 펼칠 때 기록을 하나 남겨
  * 뒤로 가기가 목록을 접게 하고, 그 기록에서 접으면 기록을 하나 되돌린다(켜고 끄기를 반복해도 기록이 쌓이지 않게).
  */
+/** 관심 지구 칸: 같은 지구를 다시 누르면 닫는다. 지구를 고르면 서울 구 선택은 푼다 */
+function toggleTown(name) {
+  const next = state.regionTown === name ? null : name;
+  state.regionTown = next;
+  if (state.filters.district) {
+    state.filters = nextFilters(state.filters, 'district', null);
+    applyFilters();
+    writeMainHash();
+  } else keepFocus($('region-box'), renderRegion);
+  if (next && narrow.matches) {
+    $('region-panel').scrollIntoView({ block: 'start' });
+    $('rp-title')?.focus({ preventScroll: true });
+  }
+  announce(next ? `${next} 지역 브리핑을 펼쳤습니다` : '지구 브리핑을 닫았습니다');
+}
+
 function toggleDistrict(district) {
   const next = state.filters.district === district ? null : district;
+  if (next) state.regionTown = null;
   state.filters = nextFilters(state.filters, 'district', next);
   applyFilters();
   const phone = narrow.matches;
@@ -2863,7 +2966,11 @@ function onClick(e) {
   if (btn.getAttribute('aria-disabled') === 'true' && btn.hasAttribute('data-filter')) announce($('kind-locked-note').textContent); // 잠긴 유형 버튼
   else if (btn.hasAttribute('data-filter')) setFilter(d.filter, d.value);
   else if (btn.hasAttribute('data-district')) toggleDistrict(d.district);
-  else if (btn.hasAttribute('data-close-region')) toggleDistrict(state.filters.district);
+  else if (btn.hasAttribute('data-watch-town')) toggleTown(d.watchTown);
+  else if (btn.hasAttribute('data-close-region')) {
+    if (state.filters.district) toggleDistrict(state.filters.district);
+    else if (state.regionTown) toggleTown(state.regionTown);
+  }
   else if (btn.hasAttribute('data-show-list')) jumpTo('list-title');
   else if (btn.hasAttribute('data-tile')) pickTile(d.tile);
   else if (btn.hasAttribute('data-kind')) {

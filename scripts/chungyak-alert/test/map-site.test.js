@@ -1323,3 +1323,41 @@ test('index.html: 블록별로 분양 중인 신도시 section stays', () => {
   assert.ok(html.includes('<h2 id="towns-title">블록별로 분양 중인 신도시</h2>'));
   assert.ok(readFileSync(new URL('../site/app.js', import.meta.url), 'utf8').includes('지금 블록별로 분양 중인 신도시가 없습니다.'));
 });
+
+test('briefView: picks headline, bold spans, in-range footnotes and safe links; bad input is null', () => {
+  const brief = {
+    headline: ' 하남교산, 다음 차례는 A9·A11 공공분양 ',
+    paras: [
+      [{ t: '최근 본청약은 ' }, { t: 'A2', b: true }, { t: '입니다.' }, { t: '1', note: true }, { t: '9', note: true }, { t: '' }, 'x', null],
+      [{ t: '2', note: true }], // 각주만 있는 문단은 버린다
+      [{ t: '다음은 ' }, { t: 'A9', b: true }, { t: '2', note: true }],
+    ],
+    foot: [
+      { label: '뉴시스 2025-05-09', url: 'https://mobile.newsis.com/view/1' },
+      { label: '악성', url: 'javascript:alert(1)' },
+      { label: '', url: 'https://x.example' },
+    ],
+    basis: '신도시 목록에 출처와 함께 적은 블록·계획·보도로 작성했습니다.',
+  };
+  const v = app.briefView(brief, '2026-11-11T07:30:00+09:00');
+  assert.equal(v.eyebrow, '지역 브리핑 · 2026-11-11');
+  assert.equal(v.headline, '하남교산, 다음 차례는 A9·A11 공공분양');
+  assert.deepEqual(v.paras, [
+    [{ text: '최근 본청약은 ', bold: false, note: false }, { text: 'A2', bold: true, note: false }, { text: '입니다.', bold: false, note: false }, { text: '1', bold: false, note: true }],
+    [{ text: '다음은 ', bold: false, note: false }, { text: 'A9', bold: true, note: false }, { text: '2', bold: false, note: true }],
+  ]);
+  assert.deepEqual(v.foot, [{ n: 1, label: '뉴시스 2025-05-09', url: 'https://mobile.newsis.com/view/1' }, { n: 2, label: '악성', url: null }]);
+  assert.equal(v.basis, '신도시 목록에 출처와 함께 적은 블록·계획·보도로 작성했습니다.');
+  assert.equal(app.briefView({ ...brief, basis: 3 }, null).eyebrow, '지역 브리핑');
+  assert.equal(app.briefView({ ...brief, basis: 3 }, null).basis, null);
+  assert.equal(app.briefView(null, null), null);
+  assert.equal(app.briefView({ headline: '  ' }, null), null);
+  assert.deepEqual(app.briefView({ headline: '중구' }, '2026-11-11').paras, []);
+});
+
+test('app.js: watchlist cells select a town brief instead of navigating, and the brief uses textContent only', () => {
+  const src = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  assert.ok(src.includes("'data-watch-town': w.name"));
+  assert.ok(src.includes("h('article', { class: 'brief', 'aria-label': '지역 브리핑' }"));
+  assert.ok(!/innerHTML\s*=/.test(src));
+});

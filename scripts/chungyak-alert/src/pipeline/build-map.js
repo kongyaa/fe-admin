@@ -7,6 +7,7 @@ import {
 } from '../util.js';
 import { attachPerformance, buildPerformance, performanceTargets } from './block-performance.js';
 import { blockSummary, publicBlockTotal, townBlocks } from './blocks.js';
+import { buildBriefs } from './briefs.js';
 import { buildCalendar, buildFeed, carriedStageItems, kstDateTime } from './feed.js';
 import {
   BUCKETS, LIKELY_SOLD_STAGES, applyWindow, bucketOf, isBlockTown, onOrAfter,
@@ -314,6 +315,10 @@ export async function buildMap({
     today,
     sourceFor: stageSourceFor(seoul),
   });
+  // 지역 브리핑(서울 구·추적 중인 지구). 내부 사업(계획·이력 출처, 관련 소식)과 손으로 고른 기사로 만든다
+  const briefs = buildBriefs({
+    projects: internal, watchlist: towns?.watchlist ?? [], curated: curated.items, today, seoulAsOf: seoul.asOf,
+  });
   const projects = internal.map(toPublic);
 
   return {
@@ -345,6 +350,7 @@ export async function buildMap({
     calendar: buildCalendar(internal, today),
     feed,
     changes,
+    briefs,
     projects,
   };
 }
