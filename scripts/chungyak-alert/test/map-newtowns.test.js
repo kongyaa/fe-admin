@@ -68,6 +68,8 @@ test('a valid file is parsed and normalized', () => {
     sources: [],
     history: [],
     plans: [],
+    blocks: [],
+    blockTotal: null,
   });
 });
 
@@ -187,6 +189,70 @@ test('bad block entries stop the build', () => {
   assert.throws(() => parseNewtowns(entry('plans', ['blocks: [A1]', 'expected: "2026-07"', 'source: { title: 주소 없음 }'])), { kind: 'newtowns_source' });
 });
 
+test('blocks and blockTotal are parsed, checked and passed to the project', () => {
+  const { asOf, towns } = parseNewtowns(withTown(`    stage: 블록별 분양
+    blockTotal:
+      total: 39
+      approved: "16"
+      date: "2025-11-24"
+      source: { title: "기사 (시티뉴스)", url: "http://example.com/ct", date: "2025-11-24" }
+    blocks:
+      - { block: A5, type: 공공분양, households: "492", status: 사업승인, statusDate: "2025-11", sources: { url: "https://example.com/a5" }, extra: 무시 }
+      - block: A3
+        rental: true
+        status: 사업승인
+        statusDate: "2026-04-23"
+        note: 메모
+        source:
+          - { title: 나쁜 링크, url: "javascript:alert(1)" }
+          - { title: 기사, outlet: 글로벌이코노믹, url: "https://example.com/a3", date: "2026-04-27" }
+      - { block: S-1, households: 734, sources: { url: "https://example.com/s1" } }
+      - { block: A-5, rental: true, status: 계획 보도, sources: { url: "https://example.com/a5r" } }`));
+  const [town] = towns;
+  assert.deepEqual(town.blocks[0], {
+    block: 'A5', type: '공공분양', households: 492, rental: false, status: '사업승인', statusDate: '2025-11', note: null,
+    sources: [{ title: 'https://example.com/a5', url: 'https://example.com/a5', date: null }],
+  });
+  assert.deepEqual(town.blocks[1].sources, [{ title: '기사', url: 'https://example.com/a3', date: '2026-04-27', outlet: '글로벌이코노믹' }]);
+  assert.deepEqual([town.blocks[1].rental, town.blocks[1].note], [true, '메모']);
+  // 상태를 비우면 미정, 유형을 비우면 null
+  assert.deepEqual([town.blocks[2].status, town.blocks[2].type, town.blocks[2].statusDate], ['미정', null, null]);
+  // 같은 블록이라도 분양 줄과 임대 줄은 따로 적을 수 있다
+  assert.equal(town.blocks[3].block, 'A-5');
+  assert.deepEqual(town.blockTotal, {
+    total: 39, approved: 16, date: '2025-11-24', sources: [{ title: '기사 (시티뉴스)', url: 'http://example.com/ct', date: '2025-11-24' }],
+  });
+  const project = townToProject(town, asOf);
+  assert.deepEqual([project.blockEntries, project.blockTotal], [town.blocks, town.blockTotal]);
+  const plain = parseNewtowns(VALID).towns[0];
+  assert.deepEqual([plain.blocks, plain.blockTotal], [[], null]);
+  assert.deepEqual([townToProject(plain, asOf).blockEntries, townToProject(plain, asOf).blockTotal], [[], null]);
+});
+
+test('bad blocks and blockTotal stop the build', () => {
+  const block = (lines) => withTown(`    stage: 블록별 분양\n    blocks:\n      - ${lines.join('\n        ')}`);
+  const src = 'sources: { url: "https://example.com/a" }';
+  assert.throws(() => parseNewtowns(block(['type: 공공분양', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(block(['block: A1', 'status: 분양', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(block(['block: A1', 'status: 사업승인', 'statusDate: "2025-11-31"', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(block(['block: A1', 'statusDate: 작년', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(block(['block: A1', 'rental: 네', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(block(['block: A1', 'households: 많음', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(block(['block: A1'])), { kind: 'newtowns_source' });
+  assert.throws(() => parseNewtowns(block(['block: A1', 'sources: { url: "ftp://example.com/a" }'])), { kind: 'newtowns_source' });
+  assert.throws(() => parseNewtowns(withTown('    stage: 블록별 분양\n    blocks: 많음')), { kind: 'newtowns_field' });
+  // 같은 블록의 분양 줄(또는 임대 줄)이 두 번이면 멈춘다. 'A-1'과 'A1'은 같은 블록
+  assert.throws(() => parseNewtowns(withTown(`    stage: 블록별 분양\n    blocks:\n      - { block: A-1, ${src} }\n      - { block: A1BL, ${src} }`)),
+    { kind: 'newtowns_duplicate' });
+  const total = (lines) => withTown(`    stage: 블록별 분양\n    blockTotal:\n      ${lines.join('\n      ')}`);
+  assert.throws(() => parseNewtowns(total(['approved: 3', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(total(['total: 10', 'approved: 11', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(total(['total: 10.5', src])), { kind: 'newtowns_field' });
+  assert.throws(() => parseNewtowns(total(['total: 10', 'date: 작년', src])), { kind: 'newtowns_date' });
+  assert.throws(() => parseNewtowns(total(['total: 10'])), { kind: 'newtowns_source' });
+  assert.throws(() => parseNewtowns(withTown('    stage: 블록별 분양\n    blockTotal: 39')), { kind: 'newtowns_field' });
+});
+
 test('the real newtowns.yaml parses', () => {
   const loaded = loadNewtowns(new URL('../data/newtowns.yaml', import.meta.url));
   const byId = Object.fromEntries(loaded.projects.map((p) => [p.id, p]));
@@ -201,6 +267,12 @@ test('the real newtowns.yaml parses', () => {
   assert.ok(byId['town-guri-galmae-station'].history.some((e) => e.rental));
   assert.ok(byId['town-guri-galmae-station'].history.some((e) => e.stage === '사전청약'));
   assert.deepEqual(byId['town-guri-topyeong-hangang'].history, []);
+  // 블록별 현황: 모든 블록에 출처, 교산은 지구 전체 블록 수(시티뉴스)
+  for (const project of loaded.projects) assert.ok(project.blockEntries.every((b) => b.sources.length > 0), project.id);
+  assert.deepEqual([gyosan.blockTotal.total, gyosan.blockTotal.approved], [39, 16]);
+  assert.equal(gyosan.blockEntries.filter((b) => b.status === '사업승인').length, 16);
+  assert.equal(byId['town-guri-galmae-station'].blockTotal, null);
+  assert.equal(byId['town-guri-galmae-station'].blockEntries.find((b) => b.block === 'S-1').type, null);
 });
 
 test('towns become map projects', () => {

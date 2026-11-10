@@ -3,6 +3,7 @@ import { basename, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectApplyhome } from '../sources/applyhome.js';
 import { AppError, decodeServiceKey, kstToday, maskServiceKey, safeError, safeHttpUrl } from '../util.js';
+import { blockSummary, publicBlockTotal, townBlocks } from './blocks.js';
 import {
   BUCKETS, LIKELY_SOLD_STAGES, applyWindow, bucketOf, isBlockTown, onOrAfter,
 } from './expected-window.js';
@@ -39,10 +40,28 @@ function publicHistory(entry) {
   };
 }
 
-// 공고 연결과 예상 시기 계산에만 쓰는 내부 값(noticeMatch, expected, plans)은 출력에서 뺀다.
-// 공공주택지구는 history(분양 이력)를 늘 배열로 내보낸다.
+// 공공주택지구의 블록별 현황. 공고 연결 뒤에 부른다(접수 중·끝난 공고가 블록 상태에 들어감). 서울 사업은 그대로.
+export function withBlocks(project, today) {
+  if (!Array.isArray(project.blockEntries)) return project;
+  const blocks = townBlocks({
+    entries: project.blockEntries,
+    history: project.history,
+    plans: project.plans,
+    notices: project.notices,
+    stageDate: project.stageDates?.[project.stage] ?? null,
+    today,
+  });
+  return {
+    ...project, blocks, blockSummary: blockSummary(blocks), blockTotal: publicBlockTotal(project.blockTotal),
+  };
+}
+
+// 공고 연결과 예상 시기 계산에만 쓰는 내부 값(noticeMatch, expected, plans, blockEntries)은 출력에서 뺀다.
+// 공공주택지구는 history(분양 이력)와 blocks(블록별 현황)를 늘 배열로 내보낸다.
 function toPublic(project) {
-  const { noticeMatch, expected, plans, history, ...rest } = project;
+  const {
+    noticeMatch, expected, plans, history, blockEntries, ...rest
+  } = project;
   return {
     ...rest,
     ...(Array.isArray(history) ? { history: history.map(publicHistory) } : {}),
@@ -129,7 +148,7 @@ export async function buildMap({
     ? { projects: base, linked: 0, checked: 0 }
     : linkNotices(base, notices.notices, today);
   const projects = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLive(project, today)))
-    .map((project) => toPublic({ ...project, bucket: bucketOf(project, today) }));
+    .map((project) => toPublic({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
 
   return {
     generatedAt: today,

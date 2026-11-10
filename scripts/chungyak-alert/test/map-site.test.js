@@ -547,3 +547,80 @@ test('sourceOutlet matches the pipeline rule and never trusts a non-http url', (
   for (const source of cases) assert.equal(app.sourceOutlet(source), pipeline.sourceOutlet(source));
   assert.equal(app.sourceOutlet({ title: '괄호 없음', url: 'javascript:alert(1)' }), '출처');
 });
+
+// --- 블록별 현황 ---
+const blocksPipeline = await import('../src/pipeline/blocks.js');
+
+test('block status order and nameHasBlock match the pipeline', () => {
+  assert.deepEqual(app.BLOCK_STATUS_ORDER, blocksPipeline.BLOCK_STATUS_ORDER);
+  for (const status of app.BLOCK_STATUS_ORDER) assert.ok(app.BLOCK_STATUS_CLASS[status], status);
+  for (const [name, block] of [['하남교산 A-2BL', 'A2'], ['하남교산 A20', 'A2'], ['하남교산 A2-1', 'A2'], ['갈매 B-1블록', 'B-1']]) {
+    assert.equal(app.nameHasBlock(name, block), blocksPipeline.nameHasBlock(name, block), name);
+  }
+});
+
+test('isBlockTownProject: only 공공주택지구 at 블록별 분양', () => {
+  assert.equal(app.isBlockTownProject({ kind: '공공주택지구', stage: '블록별 분양' }), true);
+  assert.equal(app.isBlockTownProject({ kind: '공공주택지구', stage: '지구지정' }), false);
+  assert.equal(app.isBlockTownProject({ kind: '재개발', stage: '블록별 분양' }), false);
+  assert.equal(app.isBlockTownProject(null), false);
+});
+
+test('blockStatusNow: a 접수 중 row whose deadline passed after the build becomes 분양 끝남 or 임대 공고', () => {
+  const live = { status: '접수 중', statusDate: '2026-11-11', timeline: [{ stage: '사전청약', date: '2021-01-01' }, { stage: '본청약', date: '2026-10-30' }, { stage: '접수 중', date: '2026-11-11' }] };
+  assert.deepEqual(app.blockStatusNow(live, '2026-11-11'), { status: '접수 중', date: '2026-11-11' });
+  assert.deepEqual(app.blockStatusNow(live, '2026-11-12'), { status: '분양 끝남', date: '2026-10-30' });
+  assert.deepEqual(app.blockStatusNow({ ...live, rental: true }, '2026-11-12'), { status: '임대 공고', date: '2026-10-30' });
+  assert.deepEqual(app.blockStatusNow({ status: '사업승인', statusDate: '2025-11' }, '2026-11-12'), { status: '사업승인', date: '2025-11' });
+  assert.deepEqual(app.blockStatusNow({ status: '이상한 값', statusDate: '내일' }, '2026-11-12'), { status: '미정', date: null });
+});
+
+test('blockRows cleans rows, keeps only http(s) links and sorts by status then block name', () => {
+  const rows = app.blockRows({
+    blocks: [
+      { block: 'S10', status: '사업승인', statusDate: '2025-11-24', households: 541, sources: [{ title: 'a', url: 'http://www.ctnews.co.kr/39834', date: '2025-11-24' }] },
+      { block: 'A9', type: '공공분양', status: '다음 예정(보도)', statusDate: '2026-03-08', households: 244,
+        plan: { expected: '2026-하반기', from: '2026-07', to: '2026-12', source: { title: 'x', outlet: '하남일보', url: 'javascript:alert(1)', date: '2026-03-08' } },
+        sources: [{ title: '나쁨', url: 'javascript:alert(1)' }] },
+      { block: 'S9', status: '사업승인', statusDate: '2025-11-24', note: '  메모 ' },
+      { block: 'A-1', type: '행복주택', rental: true, status: '임대 공고', statusDate: '2026-10-27',
+        timeline: [{ stage: '본청약', date: '2026-10-27' }, { stage: '무순위', date: '2026-10-28' }, { stage: '사전청약', date: '날짜 아님' }] },
+      '문자열',
+      null,
+    ],
+  }, '2026-11-10');
+  assert.deepEqual(rows.map((r) => [r.block, r.status]), [['A-1', '임대 공고'], ['A9', '다음 예정(보도)'], ['S9', '사업승인'], ['S10', '사업승인']]);
+  const [a1, a9, s9, s10] = rows;
+  assert.deepEqual(a1.timeline, [{ stage: '본청약', date: '2026-10-27' }]);
+  assert.equal(a1.rental, true);
+  assert.deepEqual(a9.sources, []);
+  assert.deepEqual(a9.plan, { expected: '2026-하반기', from: '2026-07', to: '2026-12', source: null });
+  assert.deepEqual([s9.type, s9.households, s9.note, s9.date], [null, null, '메모', '2025-11-24']);
+  assert.equal(s10.sources[0].url, 'http://www.ctnews.co.kr/39834');
+  assert.deepEqual(app.blockStatusCounts(rows), [
+    { status: '임대 공고', count: 1 }, { status: '다음 예정(보도)', count: 1 }, { status: '사업승인', count: 2 },
+  ]);
+  assert.deepEqual(app.blockRows({}, '2026-11-10'), []);
+});
+
+test('block labels: total, type, date, timeline and plan', () => {
+  const total = { total: 39, approved: 16, date: '2025-11-24', outlet: '시티뉴스', sources: [{ title: 't', url: 'http://www.ctnews.co.kr/39834' }] };
+  assert.equal(app.blockTotalText(total), '전체 39개 블록 중 16개 사업승인(2025-11, 시티뉴스)');
+  assert.equal(app.blockTotalText({ total: 39 }), '전체 39개 블록');
+  assert.equal(app.blockTotalText({ total: 39, sources: [{ title: '기사 (시티뉴스)', url: 'http://x.kr/1' }] }), '전체 39개 블록(시티뉴스)');
+  assert.equal(app.blockTotalText(null), null);
+  assert.equal(app.blockTotalText({ total: '39' }), null);
+  assert.equal(app.blockTypeLabel({ type: '공공분양' }), '공공분양');
+  assert.equal(app.blockTypeLabel({ type: ' ' }), '유형 미확인');
+  assert.equal(app.blockDateLabel({ status: '접수 중', date: '2026-11-11' }), '마감 2026-11-11');
+  assert.equal(app.blockDateLabel({ status: '사업승인', date: '2025-11-24' }), '2025-11-24');
+  assert.equal(app.blockDateLabel({ status: '미정', date: null }), '');
+  assert.equal(app.blockTimelineLabel({ stage: '사전청약', date: '2021-11-18' }), '사전청약 2021-11-18');
+  assert.equal(app.blockTimelineLabel({ stage: '본청약', date: '2026-10-27' }, true), '공고 2026-10-27');
+  assert.equal(app.blockTimelineLabel({ stage: '접수 중', date: '2026-11-11' }), '접수 중(마감 2026-11-11)');
+  const plan = { expected: '2026-하반기', from: '2026-07', to: '2026-12', source: { title: 'x', outlet: '하남일보', url: 'http://m.hanamilbo.net/1', date: '2026-03-08' } };
+  assert.equal(app.blockPlanLabel(plan, '2026-11'), '2026-하반기 (하남일보 2026-03-08)');
+  assert.equal(app.blockPlanLabel({ ...plan, expected: '2026-상반기', to: '2026-06' }, '2026-11'), '2026-상반기 (하남일보 2026-03-08) · 지남');
+  assert.equal(app.blockPlanLabel({ expected: '2027-09', source: null }, '2026-11'), '2027-09');
+  assert.equal(app.blockPlanLabel(null, '2026-11'), null);
+});

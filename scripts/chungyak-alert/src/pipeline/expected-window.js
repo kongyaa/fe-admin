@@ -144,8 +144,8 @@ function isOfficialSource(source) {
   }
 }
 
-// 계획 보도일: 출처 중 가장 이른 날짜. 날짜 있는 출처가 없으면 null.
-function reportDate(plan) {
+// 계획 보도일: 출처 중 가장 이른 날짜. 날짜 있는 출처가 없으면 null. 블록별 현황(blocks.js)도 쓴다.
+export function reportDate(plan) {
   return (plan.sources ?? []).map((source) => source?.date).filter((date) => toMonth(date)).sort()[0] ?? null;
 }
 

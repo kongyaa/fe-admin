@@ -357,6 +357,9 @@ towns:
     plans:
       - { blocks: [A5], expected: "2027-09", source: { title: 일정표, outlet: 하남도시공사, url: "https://example.com/a5" } }
       - { blocks: [A9, A11], expected: "2026-하반기", source: { title: "기사 (하남Times)", url: "http://example.com/a9", date: "2025-12-13" } }
+    blockTotal: { total: 39, approved: 16, date: "2025-11-24", source: { title: "기사 (시티뉴스)", url: "http://example.com/ct", date: "2025-11-24" } }
+    blocks:
+      - { block: S-1, status: 사업승인, statusDate: "2025-11-24", sources: { url: "https://example.com/s1" } }
   - id: guri-galmae-station
     name: 구리갈매역세권
     district: 구리
@@ -385,8 +388,37 @@ towns:
     sources: [{ title: 'LH 공고', url: 'https://example.com/a2', date: '2025-03-31', outlet: 'LH' }],
   });
   assert.deepEqual(gyosan.history.map((e) => [e.block, e.stage, e.rental]), [['A2', '사전청약', false], ['A2', '본청약', false], ['A20', '본청약', true]]);
-  for (const key of ['plans', 'blockPlans', 'blockHistory', 'preSubscriptions', 'noticeMatch', 'expected']) assert.equal(key in gyosan, false, key);
+  for (const key of ['plans', 'blockPlans', 'blockHistory', 'preSubscriptions', 'noticeMatch', 'expected', 'blockEntries']) {
+    assert.equal(key in gyosan, false, key);
+  }
+  // 블록별 현황: 이력·계획만 있는 블록도 줄이 되고, 상태 순서대로 나온다
+  assert.deepEqual(gyosan.blocks.map((b) => [b.block, b.rental, b.status, b.statusDate]), [
+    ['A2', false, '분양 끝남', '2025-03-31'],
+    ['A20', true, '임대 공고', '2026-09-01'],
+    ['A5', false, '다음 예정(보도)', null],
+    ['A9', false, '다음 예정(보도)', '2025-12-13'],
+    ['A11', false, '다음 예정(보도)', '2025-12-13'],
+    ['S-1', false, '사업승인', '2025-11-24'],
+  ]);
+  assert.deepEqual(gyosan.blocks[0], {
+    block: 'A2', type: '공공분양', households: 1115, rental: false, status: '분양 끝남', statusDate: '2025-03-31',
+    timeline: [{ stage: '사전청약', date: '2021-11-18' }, { stage: '본청약', date: '2025-03-31' }],
+    plan: null,
+    note: null,
+    sources: [
+      { title: 'https://example.com/pre', url: 'https://example.com/pre', date: null },
+      { title: 'LH 공고', url: 'https://example.com/a2', date: '2025-03-31', outlet: 'LH' },
+    ],
+  });
+  assert.deepEqual(gyosan.blockSummary, { '분양 끝남': 1, '임대 공고': 1, '다음 예정(보도)': 3, 사업승인: 1 });
+  assert.deepEqual(gyosan.blockTotal, {
+    total: 39, approved: 16, date: '2025-11-24', outlet: '시티뉴스',
+    sources: [{ title: '기사 (시티뉴스)', url: 'http://example.com/ct', date: '2025-11-24' }],
+  });
   const galmae = byId['town-guri-galmae-station'];
+  assert.deepEqual(galmae.blocks.map((b) => [b.block, b.rental, b.status]), [['B2', true, '다음 예정(보도)']]);
+  assert.equal(galmae.blockTotal, null);
+  assert.equal('blocks' in byId['seoul-1441'], false);
   assert.deepEqual(galmae.window, { from: '2026-11', to: '2028-11' });
   assert.equal(galmae.windowBasis, '다음 블록 예상(규칙): 오늘부터 0~2년');
   assert.equal(galmae.windowLabel, '다음 블록 예상');
