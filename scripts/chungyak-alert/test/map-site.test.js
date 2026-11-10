@@ -7,8 +7,8 @@ import vm from 'node:vm';
 const app = await import('../site/app.js');
 const pipeline = await import('../src/pipeline/expected-window.js');
 const {
-  BUCKET_ORDER, BUCKET_INFO, bucketOf, compareProjects, dataFile, ganttBars, idFromHash, kstYmd, latestAnnounce, matchesFilters,
-  monthsBetween, safeHttpUrl, shortDistrict, sortProjects, spanOf, tileClass, tileStats, whenMatches, windowLabel, windowRange,
+  BUCKET_ORDER, BUCKET_INFO, bucketOf, compareProjects, dataFile, idFromHash, kstYmd, latestAnnounce, matchesFilters,
+  monthsBetween, safeHttpUrl, shortDistrict, sortProjects, tileClass, tileStats, whenMatches, windowLabel, windowRange,
   THEME_KEY, THEME_CHOICES, normalizeTheme, colorSchemeFor, readTheme, writeTheme, applyTheme, isThemeStorageKey,
 } = app;
 
@@ -130,26 +130,10 @@ test('safeHttpUrl allows only absolute http(s)', () => {
   assert.equal(safeHttpUrl(null), null);
 });
 
-test('windowRange and ganttBars clip to the 36-month range', () => {
+test('windowRange', () => {
   assert.equal(windowRange(win('2027-01', '2028-01')), '2027-01~2028-01');
   assert.equal(windowRange(win('2027-01', '2027-01')), '2027-01');
   assert.equal(windowRange({ window: { from: null, to: null } }), null);
-
-  assert.deepEqual(ganttBars(win('2026-04', '2027-04'), today), [{ kind: 'est', start: 0, end: 6, cutStart: true, cutEnd: false }]);
-  assert.deepEqual(ganttBars(win('2029-06', '2031-06'), today), [{ kind: 'est', start: 31, end: 36, cutStart: false, cutEnd: true }]);
-  assert.deepEqual(ganttBars(win('2027-01', '2027-12'), today), [{ kind: 'est', start: 2, end: 14, cutStart: false, cutEnd: false }]);
-  assert.deepEqual(ganttBars(win('2023-01', '2024-01'), today), []); // 다 지난 범위
-  assert.deepEqual(ganttBars(win('2029-11', '2031-01'), today), []); // 36개월 뒤 시작
-  assert.deepEqual(ganttBars({ window: { from: null, to: null } }, today), []);
-  assert.equal(spanOf('2029-10', '2029-10', today).end, 36);
-  assert.equal(spanOf('2029-11', '2029-11', today), null);
-
-  // 공고 나옴: 예상 범위(빗금)와 공고 기간(초록)을 함께
-  const live = { ...win('2026-11', '2028-11'), live: true, notices: [{ announceDate: '2026-11-05', end: '2026-11-25' }] };
-  assert.deepEqual(ganttBars(live, today).map((b) => [b.kind, b.start, b.end]), [['est', 0, 25], ['live', 0, 1]]);
-  // 예상 범위 없이 공고만 있어도 그린다
-  const onlyNotice = { window: { from: null, to: null }, live: true, notices: [{ announceDate: '2026-12-01', end: '2027-01-10' }] };
-  assert.deepEqual(ganttBars(onlyNotice, today).map((b) => [b.kind, b.start, b.end]), [['live', 1, 3]]);
 });
 
 test('idFromHash reads #p=<id> only', () => {
@@ -162,7 +146,7 @@ test('idFromHash reads #p=<id> only', () => {
   assert.equal(idFromHash(''), null);
 });
 
-test('tile map: per-구 counts and 3-step colour', () => {
+test('tile map: per-구 counts (with 공고 중) and 3-step colour: 6+ hot, 1+ has', () => {
   const p = (district, bucket, region = '서울') => ({ district, region, bucket });
   const stats = tileStats([
     p('종로구', 'soon'), p('종로구', 'live'), p('종로구', 'soon'), p('종로구', 'mid'),
@@ -171,12 +155,14 @@ test('tile map: per-구 counts and 3-step colour', () => {
     p('도봉구', 'far'),
     p('하남시', 'soon', '경기'),
   ], (x) => x.bucket);
-  assert.deepEqual(stats.get('종로구'), { n: 4, soon: 3, mid: 1 });
+  assert.deepEqual(stats.get('종로구'), { n: 4, soon: 3, mid: 1, live: 1 });
   assert.equal(stats.has('하남시'), false);
-  assert.equal(tileClass(stats.get('종로구')), 'hot');
+  assert.equal(tileClass(stats.get('종로구')), 'has');
+  assert.equal(tileClass({ n: 9, soon: 6, mid: 0 }), 'hot');
+  assert.equal(tileClass({ n: 9, soon: 5, mid: 0 }), 'has');
   assert.equal(tileClass(stats.get('중구')), 'has');
   assert.equal(tileClass({ n: 2, soon: 2, mid: 0 }), 'has');
-  assert.equal(tileClass(stats.get('용산구')), 'has');
+  assert.equal(tileClass(stats.get('용산구')), ''); // 3년 안만 있으면 1년 안 숫자(0)와 같은 색
   assert.equal(tileClass(stats.get('도봉구')), '');
   assert.equal(tileClass(undefined), '');
   assert.equal(shortDistrict('종로구'), '종로');
@@ -219,7 +205,7 @@ test('likely_sold and announced: labels, filters, tile stats', () => {
     { region: '서울', district: '종로구', b: 'announced' },
     { region: '서울', district: '종로구', b: 'soon' },
   ], (p) => p.b);
-  assert.deepEqual(stats.get('종로구'), { n: 3, soon: 1, mid: 0 });
+  assert.deepEqual(stats.get('종로구'), { n: 3, soon: 1, mid: 0, live: 0 });
 });
 
 test('sort order puts announced after far, likely_sold after overdue', () => {
@@ -656,7 +642,7 @@ test('tileCount: the big number is the 1년 안 count (same question as the colo
     { region: '서울', district: '중구', b: 'far' }, { region: '서울', district: '중구', b: 'mid' },
   ], (p) => p.b);
   assert.deepEqual(app.tileCount(stats.get('중구')), { main: 2, total: 4 });
-  assert.equal(tileClass(stats.get('중구')), 'has'); // 큰 숫자 2 → 1~2곳 색
+  assert.equal(tileClass(stats.get('중구')), 'has'); // 큰 숫자 2 → 1곳 이상 색
   assert.deepEqual(app.tileCount({ n: 36, soon: 12, mid: 3 }), { main: 12, total: 36 });
   assert.equal(tileClass({ n: 36, soon: 12, mid: 3 }), 'hot');
   assert.deepEqual(app.tileCount(undefined), { main: 0, total: 0 });
@@ -716,14 +702,14 @@ test('emptyState: one message with the active conditions and the right way out',
 });
 
 test('parseHash / hashFor: detail and 구 selection round-trip; old #p= links still work', () => {
-  assert.deepEqual(app.parseHash('#p=seoul-1441'), { id: 'seoul-1441', district: null });
-  assert.deepEqual(app.parseHash('#gu=%EA%B0%95%EB%82%A8%EA%B5%AC'), { id: null, district: '강남구' });
-  assert.deepEqual(app.parseHash('#gu=%EA%B0%95%EB%82%A8%EA%B5%AC&p=seoul-1012'), { id: 'seoul-1012', district: '강남구' });
-  assert.deepEqual(app.parseHash('#p=%E0&gu=%EC%A4%91%EA%B5%AC'), { id: null, district: '중구' }); // 깨진 값만 버린다
-  assert.deepEqual(app.parseHash('#sources'), { id: null, district: null });
-  assert.deepEqual(app.parseHash('#=x&p='), { id: null, district: null });
-  assert.deepEqual(app.parseHash(undefined), { id: null, district: null });
-  for (const s of [{ id: 'seoul-1441', district: null }, { id: null, district: '강남구' }, { id: 'a&b=c', district: '중구' }, { id: '예시', district: null }]) {
+  assert.deepEqual(app.parseHash('#p=seoul-1441'), { id: 'seoul-1441', district: null, town: null, block: null });
+  assert.deepEqual(app.parseHash('#gu=%EA%B0%95%EB%82%A8%EA%B5%AC'), { id: null, district: '강남구', town: null, block: null });
+  assert.deepEqual(app.parseHash('#gu=%EA%B0%95%EB%82%A8%EA%B5%AC&p=seoul-1012'), { id: 'seoul-1012', district: '강남구', town: null, block: null });
+  assert.deepEqual(app.parseHash('#p=%E0&gu=%EC%A4%91%EA%B5%AC'), { id: null, district: '중구', town: null, block: null }); // 깨진 값만 버린다
+  assert.deepEqual(app.parseHash('#sources'), { id: null, district: null, town: null, block: null });
+  assert.deepEqual(app.parseHash('#=x&p='), { id: null, district: null, town: null, block: null });
+  assert.deepEqual(app.parseHash(undefined), { id: null, district: null, town: null, block: null });
+  for (const s of [{ id: 'seoul-1441', district: null, town: null, block: null }, { id: null, district: '강남구', town: null, block: null }, { id: 'a&b=c', district: '중구', town: null, block: null }, { id: '예시', district: null, town: null, block: null }]) {
     assert.deepEqual(app.parseHash(app.hashFor(s)), s);
   }
   assert.equal(app.hashFor({ id: 'seoul-1441' }), '#p=seoul-1441');
@@ -774,8 +760,8 @@ test('index.html: merged 지역/유형 filters, collapsible filter box, skip lin
   const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
   assert.equal(html.includes('data-filter="kind" data-value="공공주택지구"'), false);
   assert.ok(html.includes('data-filter="area" data-value="경기" aria-pressed="false">경기</button>'));
-  for (const id of ['filters-box', 'filters-summary', 'kind-group', 'disclaimer', 'towns-title', 'gantt-panel']) assert.ok(html.includes(`id="${id}"`), id);
-  assert.ok(html.includes('href="#list-title"'));
+  for (const id of ['filters-box', 'filters-summary', 'kind-group', 'disclaimer', 'towns-title', 'list-title', 'feed-title', 'dash-tiles', 'gu-grid', 'watch-grid', 'region-panel', 'cal', 'agenda', 'refresh', 'refresh-text', 'mark-read', 'main-view', 'view']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('href="#feed-title"'));
   assert.ok(html.includes('placeholder="구역명·구·동"'));
   // 잠긴 유형 버튼의 이유(aria-describedby 대상)
   assert.ok(html.includes('id="kind-locked-note"'));
@@ -800,12 +786,353 @@ test('edge cases: year boundary range, duplicate hash keys, district-only empty 
   assert.equal(app.windowRangeLabel(win('2025-12', '2026-06'), '2026-01'), '지금~2026-06');
   assert.equal(app.windowRangeLabel(win('2026-01', '2026-06'), '2026-01'), '2026-01~2026-06');
   // 같은 키가 두 번이면 뒤의 값
-  assert.deepEqual(app.parseHash('#p=a&p=b'), { id: 'b', district: null });
-  assert.deepEqual(app.parseHash('#gu=%EC%A4%91%EA%B5%AC&gu=%EA%B0%95%EB%82%A8%EA%B5%AC&p=x'), { id: 'x', district: '강남구' });
+  assert.deepEqual(app.parseHash('#p=a&p=b'), { id: 'b', district: null, town: null, block: null });
+  assert.deepEqual(app.parseHash('#gu=%EC%A4%91%EA%B5%AC&gu=%EA%B0%95%EB%82%A8%EA%B5%AC&p=x'), { id: 'x', district: '강남구', town: null, block: null });
   // 구만 골랐는데 결과가 없으면 초기화 버튼(구 선택도 푼다)
   assert.deepEqual(app.emptyState({ ...ALL, district: '중구' }), {
     title: '지금 조건에 맞는 사업이 없습니다.', conditions: ['중구'], clearQuery: false, reset: true,
   });
+});
+
+// --- 새 화면(요약판·새 소식·지구 화면) ------------------------------------------------
+
+test('generatedAt: date-only and ISO with KST offset both read as Korea time', () => {
+  assert.deepEqual(app.parseStamp('2026-11-10'), { date: '2026-11-10', time: null });
+  assert.deepEqual(app.parseStamp('2026-11-10T07:30:00+09:00'), { date: '2026-11-10', time: '07:30' });
+  assert.deepEqual(app.parseStamp('2026-11-09T22:30:00Z'), { date: '2026-11-10', time: '07:30' });
+  assert.deepEqual(app.parseStamp('2026-11-10T19:05'), { date: '2026-11-10', time: '19:05' }); // 오프셋 없으면 한국 시간
+  for (const bad of ['', null, undefined, '2026-11', 'yesterday', '2026-11-10 07:30']) assert.equal(app.parseStamp(bad), null, String(bad));
+  assert.equal(app.stampLabel('2026-11-10T07:30:00+09:00'), '11-10 07:30');
+  assert.equal(app.stampLabel('2026-11-10'), '2026-11-10');
+  assert.equal(app.stampLabel(null), null);
+  assert.equal(app.shortDate('2026-11-08', '2026-11-10'), '11.08');
+  assert.equal(app.shortDate('2025-12-24', '2026-11-10'), '25.12.24');
+  assert.equal(app.monthLabel('2026-06'), '2026년 6월');
+  assert.equal(app.addDays('2026-12-30', 3), '2027-01-02');
+  assert.equal(app.weekdayOf('2026-11-10'), 2); // 화요일
+});
+
+test('seen storage: first visit marks only the last 7 days NEW, later visits mark ids not seen; blocked storage never throws', () => {
+  const s = fakeStorage();
+  assert.equal(app.readSeen(s), null);
+  const first = app.visitBaseline(app.readSeen(s), '2026-11-10');
+  assert.deepEqual(first, { ids: null, since: '2026-11-04', lastVisit: null });
+  assert.equal(app.isNewItem({ id: 'a', date: '2026-11-04' }, first), true);
+  assert.equal(app.isNewItem({ id: 'a', date: '2026-11-03' }, first), false);
+  assert.equal(app.isNewItem({ id: 'a', date: '2026-11-17' }, first), true); // 곧 시작하는 접수
+  assert.equal(app.writeSeen(s, { ids: ['a', 'b'], lastVisit: '2026-11-10T08:00:00.000Z' }), true);
+  assert.equal(s.map.get(app.SEEN_KEY), '{"ids":["a","b"],"lastVisit":"2026-11-10T08:00:00.000Z"}');
+  const next = app.visitBaseline(app.readSeen(s), '2026-11-12');
+  assert.deepEqual([...next.ids], ['a', 'b']);
+  assert.equal(next.lastVisit, '2026-11-10T08:00:00.000Z');
+  assert.equal(app.isNewItem({ id: 'a', date: '2026-11-12' }, next), false);
+  assert.equal(app.isNewItem({ id: 'c', date: '2020-01-01' }, next), true);
+  assert.equal(app.isNewItem(null, next), false);
+  // 깨진 값·막힌 저장소
+  assert.equal(app.readSeen(fakeStorage({ [app.SEEN_KEY]: '{oops' })), null);
+  assert.equal(app.readSeen(fakeStorage({ [app.SEEN_KEY]: '{"ids":"a"}' })), null);
+  assert.deepEqual(app.readSeen(fakeStorage({ [app.SEEN_KEY]: '{"ids":["a",3,null,""]}' })), { ids: ['a'], lastVisit: null });
+  assert.equal(app.readSeen(fakeStorage({}, { blocked: true })), null);
+  assert.equal(app.writeSeen(fakeStorage({}, { blocked: true }), { ids: ['a'] }), false);
+  assert.equal(app.writeSeen(null, { ids: ['a'] }), false);
+  // 한 방문(탭) 동안의 기준은 sessionStorage 에 둔다
+  const tab = fakeStorage();
+  assert.equal(app.writeVisit(tab, next), true);
+  assert.deepEqual([...app.readVisit(tab).ids], ['a', 'b']);
+  app.writeVisit(tab, first);
+  assert.deepEqual(app.readVisit(tab), { ids: null, since: '2026-11-04', lastVisit: null });
+  assert.equal(app.readVisit(fakeStorage({ [app.VISIT_KEY]: '{"ids":null}' })), null);
+  assert.equal(app.readVisit(fakeStorage({}, { blocked: true })), null);
+});
+
+const FEED = [
+  { id: 'n1', date: '2026-11-08', kind: '뉴스', projectId: 'town-g', block: 'B-1', title: 'B-1 기사', source: { title: '스트레이트뉴스', url: 'https://example.com/1', date: '2026-11-08' } },
+  { id: 'a1', date: '2026-11-10', kind: '접수', projectId: 'town-g', block: 'B-1', title: '1순위 접수 (2026-11-10 마감)', source: { title: '청약홈', url: 'https://www.applyhome.co.kr/x' } },
+  { id: 'r1', date: '2026-10-27', kind: '뉴스', projectId: 'town-g', block: 'A-1', rental: true, title: 'A-1 행복주택', source: { title: '메트로신문', url: 'javascript:alert(1)' } },
+  { id: 's1', date: '2025-08-05', kind: '뉴스', projectId: 'town-g', block: 'A-1', title: 'A-1 신혼희망타운', source: { title: 'LH, 갈매 공급 (한국경제)', url: 'https://www.hankyung.com/a' } },
+  { id: 'p1', date: '2026-03-08', kind: '일정', projectId: 'town-h', block: 'A9·A11', title: 'A9·A11 하반기 (지역지)', source: { title: '하남일보', url: 'http://m.hanamilbo.net/x', local: true } },
+  { id: 'w1', date: '2025-12-24', kind: '뉴스', projectId: 'town-g', block: null, title: 'GTX-B', source: { title: '뉴시스', url: 'https://www.newsis.com/x' } },
+  { id: 'n1', date: '2026-11-09', kind: '뉴스', projectId: 'x', title: '같은 id 는 처음 것만' },
+  { id: 'bad', date: '2026-11', kind: '뉴스', title: '날짜 형식 틀림' },
+  { id: 'bad2', date: '2026-11-01', kind: '광고', title: '모르는 종류' },
+  { id: 'bad3', date: '2026-11-01', kind: '뉴스', title: '  ' },
+  null,
+];
+
+test('cleanFeed keeps valid items newest first, http(s) links only; filterFeed by kind, NEW, project, block', () => {
+  const feed = app.cleanFeed(FEED);
+  assert.deepEqual(feed.map((f) => f.id), ['a1', 'n1', 'r1', 'p1', 'w1', 's1']);
+  assert.equal(feed.find((f) => f.id === 'r1').source.url, null);
+  assert.equal(feed.find((f) => f.id === 'r1').rental, true);
+  assert.equal(feed.find((f) => f.id === 'p1').source.local, true);
+  assert.deepEqual(app.cleanFeed(undefined), []);
+  const fresh = new Set(['a1', 'n1']);
+  const isNew = (f) => fresh.has(f.id);
+  assert.deepEqual(app.filterFeed(feed, { kind: '뉴스' }).map((f) => f.id), ['n1', 'r1', 'w1', 's1']);
+  assert.deepEqual(app.filterFeed(feed, { onlyNew: true }, isNew).map((f) => f.id), ['a1', 'n1']);
+  assert.deepEqual(app.filterFeed(feed, { kind: '접수', onlyNew: true }, isNew).map((f) => f.id), ['a1']);
+  assert.deepEqual(app.filterFeed(feed, { projectId: 'town-h' }).map((f) => f.id), ['p1']);
+  assert.deepEqual(app.filterFeed(feed, { block: 'B1' }).map((f) => f.id), ['a1', 'n1']); // 'B1' 과 'B-1' 은 같은 블록
+  assert.deepEqual(app.filterFeed(feed, { block: 'A11' }).map((f) => f.id), ['p1']); // 'A9·A11' 은 두 블록
+  assert.deepEqual(app.filterFeed(feed, { projectId: 'town-g', block: app.WHOLE_TOWN }).map((f) => f.id), ['w1']);
+  assert.deepEqual(app.feedKindCounts(feed), { all: 6, 공고: 0, 접수: 1, 뉴스: 4, 일정: 1, 단계: 0 });
+  assert.equal(app.kindBreakdown(feed.filter(isNew)), '접수 일정 1, 뉴스 1');
+  assert.equal(app.kindBreakdown([]), '');
+});
+
+test('blocks with both sale and rental rows split the block filter by the item rental flag', () => {
+  const rows = [{ block: 'A-1', rental: false }, { block: 'A-1', rental: true }, { block: 'B-1', rental: false }, { block: 'A-2', rental: true }];
+  const split = app.splitBlocks(rows);
+  assert.deepEqual([...split], ['A1']);
+  assert.equal(app.blockSel(rows[0], split), 'A-1');
+  assert.equal(app.blockSel(rows[1], split), 'A-1 임대');
+  assert.equal(app.blockSel(rows[3], split), 'A-2'); // 임대 줄뿐이면 꼬리 없음
+  const feed = app.cleanFeed(FEED);
+  assert.deepEqual(app.filterFeed(feed, { block: 'A-1', split }).map((f) => f.id), ['s1']);
+  assert.deepEqual(app.filterFeed(feed, { block: 'A-1 임대', split }).map((f) => f.id), ['r1']);
+  assert.deepEqual(app.filterFeed(feed, { block: 'A-1' }).map((f) => f.id), ['r1', 's1']); // 나누지 않으면 둘 다
+  assert.equal(app.sameBlock('A-1', 'A1'), true);
+  assert.equal(app.sameBlock('A-1 임대', 'A-1'), false);
+  assert.equal(app.sameBlock(null, ''), true);
+  assert.equal(app.sameBlock(app.WHOLE_TOWN, 'A-1'), false);
+  assert.deepEqual(app.feedBlocks({ block: 'A9·A11' }), ['A9', 'A11']);
+  assert.deepEqual(app.feedBlocks({ block: null }), []);
+});
+
+test('feedSourceLabel: outlet, title in parentheses, short title, then host; never a non-http host', () => {
+  assert.equal(app.feedSourceLabel({ title: '메트로신문', url: 'https://www.metroseoul.co.kr/a', date: '2026-11-03' }), '메트로신문 2026-11-03');
+  assert.equal(app.feedSourceLabel({ title: 'LH, 4분기 전국 4663가구 공공임대 공급 (메트로신문)', url: 'https://x.kr', date: '2026-10-27' }), '메트로신문 2026-10-27');
+  assert.equal(app.feedSourceLabel({ title: '아주 긴 제목이라 매체 이름을 알 수 없는 기사 제목입니다 정말로', url: 'https://www.newsis.com/view/1' }), 'newsis.com');
+  assert.equal(app.feedSourceLabel({ title: '', url: 'javascript:alert(1)' }), '출처');
+  assert.equal(app.feedSourceLabel({ title: '청약홈', url: 'https://www.applyhome.co.kr/', date: null }), '청약홈');
+});
+
+const galmae = {
+  id: 'town-g', name: '구리갈매역세권', kind: '공공주택지구', stage: '블록별 분양', region: '경기', district: '구리시',
+  window: { from: '2026-12', to: '2028-12' }, windowStatus: 'estimated', windowLabel: '다음 블록 예상', live: true,
+  notices: [
+    {
+      name: '구리갈매역세권 B-1블록 신안인스빌 디센트', announceDate: '2026-10-30', end: '2026-11-11', typeLabel: 'APT',
+      stages: [{ name: '특별공급', start: '2026-11-09', end: '2026-11-09' }, { name: '1순위 해당', start: '2026-11-10', end: '2026-11-10' }, { name: '2순위', start: '2026-11-11', end: '2026-11-11' }, { name: '당첨자 발표', start: '2026-11-17' }],
+      winnerDate: '2026-11-17',
+    },
+    { name: '구리갈매역세권 A-4블록 6년 분양전환공공임대주택(본청약)', announceDate: '2025-12-29', end: '2026-01-16', stages: [] },
+  ],
+  blocks: [
+    { block: 'B-1', type: '민간분양', households: 213, status: '접수 중', statusDate: '2026-11-11', timeline: [{ stage: '본청약', date: '2026-10-30' }, { stage: '접수 중', date: '2026-11-11' }] },
+    { block: 'S-1', households: 734, status: '계획 보도', statusDate: '2026-05-06', timeline: [] },
+    { block: 'B-2', type: '실버스테이', rental: true, status: '다음 예정(보도)', statusDate: '2025-05-04', plan: { expected: '2029-하반기', from: '2029-07', to: '2029-12', source: { url: 'https://news.mtn.co.kr/x', date: '2025-05-04' } } },
+    { block: 'A-1', type: '신혼희망타운', status: '본청약 공고', statusDate: '2025-07-29', timeline: [{ stage: '사전청약', date: '2021-12-29' }, { stage: '본청약', date: '2025-07-29' }] },
+  ],
+};
+const gyosan = {
+  id: 'town-h', name: '하남교산', kind: '공공주택지구', stage: '블록별 분양', region: '경기', district: '하남시',
+  window: { from: '2026-11', to: '2026-12' }, windowStatus: 'estimated', windowLabel: '다음 블록 예상', notices: [],
+  blocks: [
+    { block: 'A9', type: '공공분양', status: '다음 예정(보도)', statusDate: '2026-03-08', plan: { expected: '2026-하반기', from: '2026-07', to: '2026-12', source: { url: 'http://m.hanamilbo.net/x', date: '2026-03-08' } } },
+    { block: 'A11', type: '공공분양', status: '다음 예정(보도)', statusDate: '2026-03-08', plan: { expected: '2026-하반기', from: '2026-07', to: '2026-12' } },
+    { block: 'D2', type: '민간분양', status: '다음 예정(보도)', statusDate: '2025-12-13', plan: { expected: '2026-상반기', from: '2026-01', to: '2026-06' } },
+    { block: 'A5', type: '나눔형 공공분양', status: '사업승인', statusDate: '2025-11-24', timeline: [{ stage: '사전청약', date: '2023-09-25' }] },
+  ],
+};
+
+test('receivingNow: a notice is 접수 중 when today is inside a reception stage (not 당첨자 발표)', () => {
+  assert.equal(app.noticeBlock('구리갈매역세권 B-1블록 신안인스빌 디센트'), 'B-1');
+  assert.equal(app.noticeBlock('교산 푸르지오 더 퍼스트(하남교산 A-2BL)'), 'A-2');
+  assert.equal(app.noticeBlock('중화역 라온프라이빗 센트로'), null);
+  assert.equal(app.stageShort('1순위 해당'), '1순위');
+  assert.equal(app.stageShort('2순위 기타지역'), '2순위');
+  assert.deepEqual(app.receptionStages(galmae.notices[0]).map((s) => s.name), ['특별공급', '1순위 해당', '2순위']);
+  const now = app.receivingNow([galmae, gyosan], '2026-11-10');
+  assert.equal(now.length, 1);
+  assert.deepEqual({ block: now[0].block, stage: now[0].stage, start: now[0].start, end: now[0].end, rental: now[0].rental, winnerDate: now[0].winnerDate },
+    { block: 'B-1', stage: '1순위', start: '2026-11-10', end: '2026-11-11', rental: false, winnerDate: '2026-11-17' });
+  assert.equal(app.receivingText(now[0]), '구리갈매역세권 B-1 1순위, 11-11 마감');
+  assert.equal(app.receivingNow([galmae], '2026-11-08').length, 0); // 공고 중이지만 접수 전
+  assert.equal(app.receivingNow([galmae], '2026-11-12').length, 0); // 접수 끝, 당첨자 발표 전
+  assert.equal(app.isRentalNotice(galmae.notices[1]), true);
+  assert.equal(app.isRentalNotice({ name: 'x', typeLabel: '민간임대' }), true);
+});
+
+test('dashboard: planned non-rental blocks and Seoul 1년 안 by 구', () => {
+  const planned = app.plannedBlocks([galmae, gyosan], '2026-11-10');
+  // D2 는 계획 기간이 지나 예정 지남, B-2 는 임대라 뺀다
+  assert.deepEqual(planned.map((x) => `${x.project.name} ${x.block}`), ['구리갈매역세권 S-1', '하남교산 A9', '하남교산 A11']);
+  assert.equal(app.plannedText(planned), '구리갈매역세권 S-1, 하남교산 A9·A11 (2026-하반기)');
+  const seoul = [
+    { id: '1', region: '서울', district: '중구', b: 'soon' }, { id: '2', region: '서울', district: '중구', b: 'live' },
+    { id: '3', region: '서울', district: '송파구', b: 'soon' }, { id: '4', region: '서울', district: '강남구', b: 'mid' },
+    { id: '5', region: '경기', district: '하남시', b: 'soon' },
+  ];
+  assert.deepEqual(app.seoulSoon(seoul, (p) => p.b), { total: 3, byDistrict: [['중구', 2], ['송파구', 1]] });
+});
+
+test('calendar: 21 days from today, today and weekends marked, tones, short labels and the text agenda', () => {
+  const cal = app.cleanCalendar([
+    { date: '2026-11-17', projectId: 'town-g', block: 'B-1', label: '당첨자 발표', title: 'B-1', rental: false, url: 'https://www.applyhome.co.kr/' },
+    { date: '2026-11-10', projectId: 'town-g', block: 'B-1', label: '1순위', title: 'B-1', rental: false, url: 'javascript:x' },
+    { date: '2026-11-10', projectId: 'town-g', block: 'A-1', label: '접수', title: 'A-1 행복주택', rental: true },
+    { date: '2026-12-31', projectId: 'seoul-1', block: null, label: '1순위' },
+    { date: 'soon', label: '1순위' },
+  ]);
+  assert.deepEqual(cal.map((e) => `${e.date} ${e.label}`), ['2026-11-10 1순위', '2026-11-10 접수', '2026-11-17 당첨자 발표', '2026-12-31 1순위']);
+  assert.equal(cal[0].url, null);
+  const days = app.calendarDays(cal, '2026-11-10');
+  assert.equal(days.length, 21);
+  assert.deepEqual([days[0].date, days[0].isToday, days[0].label, days[0].dow], ['2026-11-10', true, '11/10', 2]);
+  assert.equal(days[20].date, '2026-11-30');
+  assert.deepEqual(days.filter((d) => d.weekend).map((d) => d.date.slice(8)), ['14', '15', '21', '22', '28', '29']);
+  assert.equal(days[1].label, '11');
+  assert.equal(app.calendarDays([], '2026-11-25').find((d) => d.date === '2026-12-01').label, '12/1');
+  assert.deepEqual(days[0].events.map(app.calendarTone), ['live', 'rent']);
+  assert.equal(app.calendarTone(days[7].events[0]), 'win');
+  const nameOf = (id) => ({ 'town-g': '구리갈매역세권' })[id] ?? null;
+  assert.equal(app.calendarShort(days[7].events[0], nameOf), 'B-1 당첨');
+  assert.equal(app.calendarShort({ projectId: 'town-g', label: '1순위' }, nameOf), '구리갈매역세권 1순위');
+  assert.deepEqual(app.agendaItems(days, nameOf), [
+    { date: '11/10', text: '구리갈매역세권 B-1 1순위, 구리갈매역세권 A-1 접수(임대)' },
+    { date: '11/17', text: '구리갈매역세권 B-1 당첨자 발표' },
+  ]);
+});
+
+test('town blocks: groups for the bar, small progress steps, and the headline', () => {
+  const rows = app.blockRows(galmae, '2026-11-10');
+  assert.deepEqual(rows.map((r) => [r.block, app.townGroupOf(r)]), [['B-1', 'live'], ['A-1', 'sold'], ['B-2', 'other'], ['S-1', 'plan']]);
+  assert.deepEqual(app.townGroupCounts(rows).map((g) => `${g.label} ${g.n}`), ['분양 끝남 1', '접수 중 1', '다음 예정 1', '임대·기타 1']);
+  assert.equal(app.townGroupOf({ status: '예정 지남(보도)' }), 'late');
+  assert.equal(app.townGroupOf({ status: '사업승인' }), 'approved');
+  assert.equal(app.townGroupOf({ status: '접수 중', rental: true }), 'live');
+  assert.deepEqual(app.blockSteps(rows[0]), [{ label: '본청약', date: '2026-10-30', state: 'done' }, { label: '접수 중', date: '~11-11', state: 'now' }]);
+  assert.deepEqual(app.blockSteps(rows[1]).map((s) => s.label), ['사전청약', '본청약']);
+  assert.deepEqual(app.blockSteps(rows[3]), [{ label: '보도', date: '2026-05-06', state: 'done' }, { label: '공고', date: '미정', state: 'next' }]);
+  const hRows = app.blockRows(gyosan, '2026-11-10');
+  const a5 = hRows.find((r) => r.block === 'A5');
+  assert.deepEqual(app.blockSteps(a5), [
+    { label: '사전청약', date: '2023-09-25', state: 'done' }, { label: '사업승인', date: '2025-11-24', state: 'done' }, { label: '본청약', date: '미정', state: 'next' },
+  ]);
+  const d2 = hRows.find((r) => r.block === 'D2');
+  assert.equal(d2.status, '예정 지남(보도)');
+  assert.deepEqual(app.blockSteps(d2).at(-1), { label: '공고', date: '2026-상반기 예정', state: 'late' });
+  assert.deepEqual(app.blockSteps(hRows.find((r) => r.block === 'A9')), [
+    { label: '보도', date: '2026-03-08', state: 'done' }, { label: '공고', date: '2026-하반기 예정', state: 'next' },
+  ]);
+  // 지금 상태 한 줄: 접수 중 → 다음 일정 → 예상 시기
+  assert.deepEqual(app.townHeadline(galmae, [], '2026-11-10', '2026-11'), { tone: 'live', label: '지금 접수 중', text: 'B-1 1순위 오늘, 당첨 발표 11-17' });
+  const cal = [{ date: '2026-11-17', projectId: 'town-g', block: 'B-1', label: '당첨자 발표', rental: false }];
+  assert.deepEqual(app.townHeadline(galmae, cal, '2026-11-13', '2026-11'), { tone: 'win', label: '다음 일정', text: 'B-1 당첨자 발표 11-17' });
+  assert.deepEqual(app.townHeadline(gyosan, [], '2026-11-10', '2026-11'), { tone: 'plan', label: '다음 블록 예상', text: '2026-11~2026-12' });
+});
+
+test('deep links: #t=<town>&b=<block>, routes and links', () => {
+  assert.deepEqual(app.parseHash('#t=town-g&b=B-1'), { id: null, district: null, town: 'town-g', block: 'B-1' });
+  assert.deepEqual(app.parseHash('#b=B-1'), { id: null, district: null, town: null, block: null }); // 지구 없는 블록은 버린다
+  assert.deepEqual(app.parseHash('#gu=%EC%A4%91%EA%B5%AC&t=town-g&b=A-1%20%EC%9E%84%EB%8C%80'), { id: null, district: '중구', town: 'town-g', block: 'A-1 임대' });
+  assert.equal(app.hashFor({ town: 'town-g', block: 'B-1' }), '#t=town-g&b=B-1');
+  assert.equal(app.hashFor({ block: 'B-1' }), '');
+  const s = { id: null, district: '중구', town: 'town-g', block: app.WHOLE_TOWN };
+  assert.deepEqual(app.parseHash(app.hashFor(s)), s);
+  assert.equal(app.isStateHash('#t=town-g'), true);
+  assert.equal(app.isStateHash('#feed-title'), false);
+  const isTown = (id) => id === 'town-g';
+  assert.deepEqual(app.routeOf(app.parseHash('#t=town-g&b=B-1'), isTown), { kind: 'town', id: 'town-g', block: 'B-1' });
+  assert.deepEqual(app.routeOf(app.parseHash('#p=town-g'), isTown), { kind: 'town', id: 'town-g', block: null });
+  assert.deepEqual(app.routeOf(app.parseHash('#t=town-topyeong'), isTown), { kind: 'project', id: 'town-topyeong' });
+  assert.deepEqual(app.routeOf(app.parseHash('#gu=%EC%A4%91%EA%B5%AC&p=seoul-1'), isTown), { kind: 'project', id: 'seoul-1' });
+  assert.deepEqual(app.routeOf(app.parseHash('#gu=%EC%A4%91%EA%B5%AC'), isTown), { kind: 'main' });
+  assert.equal(app.linkFor(galmae, { block: 'B-1' }), '#t=town-g&b=B-1');
+  assert.equal(app.linkFor({ id: 'seoul-1', kind: '재개발' }, { block: 'B-1', district: '중구' }), '#gu=%EC%A4%91%EA%B5%AC&p=seoul-1');
+});
+
+test('watchlist: untracked towns carry no project, tracked ones keep their id', () => {
+  assert.deepEqual(app.cleanWatchlist([
+    { name: '남양주왕숙', kind: '3기 신도시', region: '경기', tracked: false, projectId: 'x' },
+    { name: '하남교산', kind: '3기 신도시', region: '경기', tracked: true, projectId: 'town-hanam-gyosan' },
+    { name: ' ', tracked: true },
+    'bad',
+  ]), [
+    { name: '남양주왕숙', kind: '3기 신도시', region: '경기', tracked: false, projectId: null },
+    { name: '하남교산', kind: '3기 신도시', region: '경기', tracked: true, projectId: 'town-hanam-gyosan' },
+  ]);
+});
+
+test('sample-projects.json follows the new data contract', () => {
+  const sample = JSON.parse(readFileSync(new URL('../site/sample-projects.json', import.meta.url), 'utf8'));
+  const st = app.parseStamp(sample.generatedAt);
+  assert.ok(st?.time, 'generatedAt has a time');
+  assert.match(sample.generatedAt, /\+09:00$/);
+  const ids = new Set(sample.projects.map((p) => p.id));
+  // 서울은 가짜 '예시' 이름만, 지구는 실제 세 곳
+  for (const p of sample.projects.filter((x) => x.region === '서울')) assert.match(p.name, /^예시 /, p.name);
+  assert.deepEqual(sample.projects.filter((x) => x.region !== '서울').map((p) => p.id).sort(), ['town-guri-galmae-station', 'town-guri-topyeong-hangang', 'town-hanam-gyosan']);
+  for (const p of sample.projects) {
+    for (const n of p.notices ?? []) {
+      assert.ok(Array.isArray(n.stages), `${p.id} notice stages`);
+      assert.ok(n.winnerDate === null || app.isYmd(n.winnerDate));
+    }
+  }
+  const feed = app.cleanFeed(sample.feed);
+  assert.equal(feed.length, sample.feed.length, 'every feed item is valid');
+  for (const f of sample.feed) assert.ok(f.projectId === null || ids.has(f.projectId), f.id);
+  assert.deepEqual(sample.feed.map((f) => f.date), [...sample.feed.map((f) => f.date)].sort().reverse(), 'newest first');
+  const cal = app.cleanCalendar(sample.calendar);
+  assert.equal(cal.length, sample.calendar.length);
+  const last = app.addDays(st.date, 44);
+  for (const e of sample.calendar) {
+    assert.ok(e.date >= st.date && e.date <= last, e.date);
+    assert.ok(['1순위', '2순위', '특별공급', '접수', '당첨자 발표'].includes(e.label), e.label);
+  }
+  assert.deepEqual(sample.calendar.map((e) => e.date), [...sample.calendar.map((e) => e.date)].sort());
+  assert.ok(Array.isArray(sample.changes.items));
+  const watch = app.cleanWatchlist(sample.watchlist);
+  assert.equal(watch.length, 8);
+  for (const w of watch.filter((x) => x.tracked)) assert.ok(ids.has(w.projectId), w.name);
+  assert.ok(watch.some((w) => !w.tracked));
+});
+
+test('index.html: Google Fonts allowed by the CSP and nothing else external', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)[1];
+  assert.match(csp, /style-src 'self' https:\/\/fonts\.googleapis\.com;/);
+  assert.match(csp, /font-src https:\/\/fonts\.gstatic\.com;/);
+  assert.match(csp, /script-src 'self';/);
+  assert.ok(html.includes('family=IBM+Plex+Sans+KR:wght@400;500;700'));
+  const css = readFileSync(new URL('../site/style.css', import.meta.url), 'utf8');
+  for (const token of ['--sheet', '--paper', '--ink', '--muted', '--rule', '--grid', '--survey', '--survey-soft', '--bound', '--bound-soft', '--zone', '--zone-soft', '--green', '--green-soft']) {
+    assert.ok(css.includes(`${token}: `), token);
+  }
+  // 앱 코드는 HTML 문자열을 넣지 않는다(textContent 만)
+  assert.equal(/\.(innerHTML|outerHTML)\s*\+?=|insertAdjacentHTML\(|document\.write\(/.test(readFileSync(new URL('../site/app.js', import.meta.url), 'utf8')), false);
+});
+
+test('noticeBlock reads block names with the pipeline parseBlock rule', async () => {
+  const { parseBlock } = await import('../src/pipeline/feed.js');
+  const names = [
+    '구리갈매역세권 B-1블록 신안인스빌 디센트', '하남교산 A2 푸르지오', 'A-4BL 공공분양', '교산 푸르지오 더 퍼스트(하남교산 A-2BL)',
+    '구리갈매역세권 A-1블록 행복주택', '중화역 라온프라이빗 센트로', 'e편한세상 84A', 'S-1블록', '', null,
+  ];
+  for (const name of names) assert.equal(app.noticeBlock(name), parseBlock(name), String(name));
+  assert.equal(app.noticeBlock('하남교산 A2 푸르지오'), 'A2');
+  assert.equal(app.noticeBlock('A-4BL 공공분양'), 'A-4');
+});
+
+test('one rental rule: isRentalNotice matches the pipeline and saleHistory uses it', async () => {
+  const pipe = await import('../src/pipeline/expected-window.js');
+  const notices = [
+    { name: '구리갈매역세권 A-1블록 행복주택', typeLabel: 'APT' },
+    { name: '구리갈매역세권 A-4블록 6년 분양전환공공임대주택(본청약)', typeLabel: 'APT' },
+    { name: '어떤 단지', typeLabel: '공공지원민간임대' },
+    { name: '어떤 단지', typeLabel: '민간임대' },
+    { name: '교산 푸르지오 더 퍼스트', typeLabel: 'APT' },
+  ];
+  for (const n of notices) assert.equal(app.isRentalNotice(n), pipe.isRentalNotice(n), n.name);
+  const rows = app.saleHistory({ notices: notices.map((n, i) => ({ ...n, announceDate: `2026-0${i + 1}-01` })) });
+  assert.deepEqual(rows.map((r) => r.rental), [false, true, true, true, true]);
+});
+
+test('footer says fonts come from Google Fonts and that reading marks stay in this browser', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('글꼴은 Google Fonts에서 불러옵니다.'));
+  assert.ok(html.includes('읽은 소식 표시는 이 브라우저에만 남습니다'));
 });
 
 // --- 관련 소식 ---
@@ -860,4 +1187,74 @@ test('news display limits match the pipeline and the note says 2 weeks', () => {
   assert.equal(app.newsMetaText({ outlet: '뉴시스', date: '2026-11-09' }), '뉴시스 · 2026-11-09');
   assert.equal(app.newsMetaText({ outlet: null, date: '2026-11-09' }), '2026-11-09');
   assert.equal(app.newsMetaText({}), '');
+});
+
+// --- 두 뉴스 출처(손으로 고른 기사 + 네이버 관련 소식) ------------------------------------
+
+test('Naver feed items keep their provider, hide after 21 days, and count toward 소식 N with curated news', () => {
+  const naver = (id, date, extra = {}) => ({
+    id, date, kind: '뉴스', projectId: 'seoul-1', block: null, title: `기사 ${id}`, source: { title: '뉴시스', url: `https://www.newsis.com/${id}`, date, provider: 'naver' }, ...extra,
+  });
+  const feed = app.cleanFeed([
+    naver('n-edge', '2026-10-20'), // 21일 전: 보임
+    naver('n-old', '2026-10-19'), // 22일 전: 숨김
+    naver('n-future', '2026-11-11'),
+    naver('n-new', '2026-11-09'),
+    naver('n-fake', '2026-11-09', { source: { title: 'x', url: 'https://a.com/1', provider: 'other' } }),
+    {
+      id: 'c1', date: '2025-01-01', kind: '뉴스', projectId: 'seoul-1', title: '오래된 우리 요약', source: { title: '스트레이트뉴스', url: 'https://a.com/c1' },
+    },
+    {
+      id: 'g1', date: '2026-11-01', kind: '공고', projectId: 'seoul-1', title: '청약홈 공고: x', source: { title: '청약홈', url: 'https://a.com/g1' },
+    },
+  ]);
+  assert.equal(app.NAVER_PROVIDER, 'naver');
+  assert.equal(feed.find((f) => f.id === 'n-new').source.provider, 'naver');
+  assert.equal(feed.find((f) => f.id === 'n-fake').source.provider, null);
+  assert.equal(app.isNaverItem(feed.find((f) => f.id === 'n-new')), true);
+  assert.equal(app.isNaverItem(feed.find((f) => f.id === 'c1')), false);
+  const visible = app.visibleFeed(feed, '2026-11-10');
+  // 네이버 기사만 기간으로 거른다. 손으로 고른 오래된 기사와 공고는 그대로
+  assert.deepEqual(visible.map((f) => f.id), ['n-new', 'n-fake', 'g1', 'n-edge', 'c1']);
+  assert.deepEqual(app.visibleFeed(feed, '').filter(app.isNaverItem), []);
+  assert.deepEqual(app.visibleFeed(undefined, '2026-11-10'), []);
+  assert.equal(app.projectNewsCount(visible, 'seoul-1'), 4);
+  assert.equal(app.projectNewsCount(visible, 'seoul-2'), 0);
+  assert.equal(app.projectNewsCount(null, 'seoul-1'), 0);
+});
+
+test('Naver items show outlet/date and the 검색: NAVER credit; footer says news titles come from Naver search with links to the original', () => {
+  const js = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("h('small', { class: 'news-credit' }, NEWS_CREDIT)"));
+  assert.ok(js.includes('state.feed = visibleFeed(cleanFeed(data.feed), state.today);'));
+  // 블록 카드 안에 분양 성과
+  assert.ok(js.includes('r.performance ? performanceBox(r.block, r.performance) : null'));
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('"검색: NAVER" 표시 뉴스는 네이버 뉴스 검색으로 찾은 기사의 제목·언론사·날짜만 보여 주고 원문으로 연결'));
+});
+
+test('block card latest line never shows a Naver headline without attribution', () => {
+  const naver = (date, title, outlet = '뉴시스') => ({ date, kind: '뉴스', title, source: { title: outlet, url: 'https://a.com/n', provider: 'naver' } });
+  const own = (date, title) => ({ date, kind: '공고', title, source: { title: '청약홈', url: 'https://a.com/o', provider: null } });
+  const today = '2026-11-10';
+  assert.equal(app.blockLatestText([], today), '아직 모은 소식 없음');
+  assert.equal(app.blockLatestText(undefined, today), '아직 모은 소식 없음');
+  // 네이버가 더 최신이어도 네이버가 아닌 가장 최근 소식의 제목
+  assert.equal(app.blockLatestText([naver('2026-11-09', '헤드라인'), own('2026-10-30', '청약홈 공고: B-1')], today),
+    `최근 ${app.shortDate('2026-10-30', today)} 청약홈 공고: B-1`);
+  // 네이버 기사뿐이면 제목 없이 언론사와 표시
+  const onlyNaver = app.blockLatestText([naver('2026-11-09', '헤드라인')], today);
+  assert.equal(onlyNaver, `최근 ${app.shortDate('2026-11-09', today)} 뉴시스 기사 (검색: NAVER)`);
+  assert.ok(!onlyNaver.includes('헤드라인'));
+  assert.equal(app.blockLatestText([naver('2026-11-09', '헤드라인', null)], today), `최근 ${app.shortDate('2026-11-09', today)} 기사 (검색: NAVER)`);
+});
+
+test('town header basis reads "다음 블록 예상 근거 · 규칙: …" without doubling the label', () => {
+  const town = { windowLabel: '다음 블록 예상', windowBasis: '규칙: 접수 중인 공고(마감 2026-11-11) 뒤 0~2년' };
+  assert.equal(app.windowBasisNote(town), '다음 블록 예상 근거 · 규칙: 접수 중인 공고(마감 2026-11-11) 뒤 0~2년');
+  assert.equal(app.windowBasisNote({ windowBasis: '사업시행인가 뒤 2~4년' }), '예상 청약 근거 · 사업시행인가 뒤 2~4년');
+  assert.equal(app.windowBasisNote({ windowBasis: ' ' }), null);
+  assert.equal(app.windowBasisNote(null), null);
+  const sample = JSON.parse(readFileSync(new URL('../site/sample-projects.json', import.meta.url), 'utf8'));
+  for (const p of sample.projects) assert.ok(!String(p.windowBasis ?? '').startsWith(String(p.windowLabel ?? '-')), p.id);
 });

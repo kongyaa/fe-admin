@@ -326,7 +326,7 @@ test('structural errors have their own kinds', () => {
 });
 
 test('an empty town list is fine', () => {
-  assert.deepEqual(parseNewtowns('asOf: "2026-11-10"\ntowns: []'), { asOf: '2026-11-10', towns: [] });
+  assert.deepEqual(parseNewtowns('asOf: "2026-11-10"\ntowns: []'), { asOf: '2026-11-10', towns: [], watchlist: [] });
 });
 
 test('date and district helpers', () => {

@@ -286,6 +286,24 @@ export function validateTown(town) {
   };
 }
 
+// 지역 현황 칸에 보이는 지구 목록(watchlist)의 구분. 화면이 이 값으로 칸을 묶는다.
+export const WATCH_KINDS = ['3기 신도시', '공공주택지구'];
+
+// watchlist 한 건: { name, kind, region, town }. town은 위 towns의 id(추적 중)이고, 비우면 아직 추적하지 않는 지구다.
+// 추적하지 않는 지구에는 이름·구분·지역 말고는 아무 사실도 싣지 않는다(화면은 '아직 추적하지 않음').
+// towns에 없는 town id는 newtowns_watchlist로 멈춘다.
+export function watchEntry(raw, townIds) {
+  const entry = entryObject(raw);
+  const name = text(entry.name);
+  const kind = text(entry.kind);
+  if (!name || !WATCH_KINDS.includes(kind)) throw new AppError('newtowns_field');
+  const town = text(entry.town);
+  if (town && !townIds.has(town)) throw new AppError('newtowns_watchlist');
+  return {
+    name, kind, region: text(entry.region) ?? '경기', tracked: Boolean(town), projectId: town ? `town-${town}` : null,
+  };
+}
+
 export function parseNewtowns(source) {
   let doc;
   try {
@@ -300,7 +318,9 @@ export function parseNewtowns(source) {
     if (ids.has(town.id)) throw new AppError('newtowns_duplicate');
     ids.add(town.id);
   }
-  return { asOf: townDate(doc.asOf), towns };
+  const watchlist = list(doc.watchlist).map((entry) => watchEntry(entry, ids));
+  if (new Set(watchlist.map((entry) => entry.name)).size !== watchlist.length) throw new AppError('newtowns_duplicate');
+  return { asOf: townDate(doc.asOf), towns, watchlist };
 }
 
 // 지도 사업 형태. noticeMatch, expected, plans는 공고 연결·예상 시기 계산에만 쓰고 출력 전에 뺀다.
@@ -341,6 +361,6 @@ export function townToProject(town, asOf) {
 // 파일이 없으면 null. 형식 오류는 AppError로 멈춘다(손으로 고치는 파일이라 PR 실행에서 드러나게).
 export function loadNewtowns(path, { exists = existsSync, read = (p) => readFileSync(p, 'utf8') } = {}) {
   if (!exists(path)) return null;
-  const { asOf, towns } = parseNewtowns(read(path));
-  return { asOf, projects: towns.map((town) => townToProject(town, asOf)) };
+  const { asOf, towns, watchlist } = parseNewtowns(read(path));
+  return { asOf, projects: towns.map((town) => townToProject(town, asOf)), watchlist };
 }

@@ -492,6 +492,8 @@ test('buildPerformance isolates a block that throws and keeps counting', async (
 // --- 지도 빌드 통합 ---------------------------------------------------------------
 
 const townsFile = join(dir, 'newtowns.yaml');
+// 손으로 고른 기사(data/news.yaml)는 실제 지구 블록을 가리켜 이 시험 지구와 맞지 않는다. 없는 파일로 건너뛴다.
+const noNews = join(dir, 'no-news.yaml');
 writeFileSync(townsFile, `
 asOf: "2026-11-10"
 towns:
@@ -615,7 +617,7 @@ const perfOf = (data, id, block) => data.projects.find((p) => p.id === id).block
 test('buildMap attaches 분양 성과 to announced sale blocks, caches MOLIT months and counts calls', async () => {
   const log = [];
   const data = await buildMap({
-    fetch: cityFetch({ log }), env: { DATA_GO_KR_KEY: 'k' }, today, seoulFile, newtownsFile: townsFile, sleep: noSleep,
+    fetch: cityFetch({ log }), env: { DATA_GO_KR_KEY: 'k' }, today, seoulFile, newtownsFile: townsFile, newsFile: noNews, sleep: noSleep,
   });
   const a2 = perfOf(data, 'town-hanam-gyosan', 'A2');
   assert.equal(a2.noticeKey, '2025000101-2025000101');
@@ -679,6 +681,7 @@ test('buildMap keeps going when the competition API is not approved and a model 
     today,
     seoulFile,
     newtownsFile: townsFile,
+    newsFile: noNews,
     sleep: noSleep,
   });
   // 403 뒤에는 경쟁률 API를 다시 부르지 않는다
@@ -705,6 +708,7 @@ test('buildMap without a key shows cited competition only and makes no performan
     today,
     seoulFile,
     newtownsFile: townsFile,
+    newsFile: noNews,
     sleep: noSleep,
   });
   assert.deepEqual(log, []);
@@ -723,6 +727,7 @@ test('buildMap never fails because of the performance step', async () => {
     today,
     seoulFile,
     newtownsFile: townsFile,
+    newsFile: noNews,
     sleep: noSleep,
     performance: async () => {
       throw new Error('boom');

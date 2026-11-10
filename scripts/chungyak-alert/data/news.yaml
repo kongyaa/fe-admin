@@ -1,0 +1,157 @@
+# 지구·사업별 기사 (손으로 관리하는 데이터). 새 소식(feed)의 '뉴스'로 보인다.
+# - town: newtowns.yaml의 지구 id(예: guri-galmae-station) 또는 서울 사업 id(예: seoul-1673)
+# - block: 선택. 그 지구의 블록(blocks·history·plans)에 있는 이름만(A1과 A-1은 같은 블록). 지구 전체 기사는 비운다.
+#   여러 블록 기사는 한 건으로 'A9·A11'처럼 가운뎃점(·)으로 잇는다(모든 블록이 그 지구에 있어야 한다).
+# - date: 기사 날짜 YYYY-MM-DD, url: 기사 주소(http(s)), outlet: 매체 이름
+# - title: 기사 제목이 아니라 우리가 쓴 한 줄 요약. 기사에 적힌 사실만 쓰고 추정은 넣지 않는다.
+# - local: 지역지(하남일보·하남Times 등)면 true. rental: 임대 블록 기사면 true(같은 블록의 분양 줄과 구분).
+# - kind: 비우면 뉴스. 공급 계획 보도는 일정으로 적을 수 있다.
+# 2026-11-10 조사 자료(구리갈매역세권·하남교산 조사 노트)에 출처와 날짜가 적힌 기사만 넣었다.
+asOf: "2026-11-10"
+items:
+  # 구리갈매역세권
+  - town: guri-galmae-station
+    block: B-1
+    date: "2026-11-08"
+    title: "84㎡ 평균 분양가 7억7,356만 원, 인근 갈매역아이파크 84㎡ 평균 8억9,300만 원(국토부 기준)과 비교. 소규모 단지·중도금 20% 자납·거주의무 3년은 단점으로 꼽음"
+    outlet: 스트레이트뉴스
+    url: https://www.straightnews.co.kr/news/articleView.html?idxno=314854
+  - town: guri-galmae-station
+    block: B-1
+    date: "2026-11-03"
+    title: "신안인스빌 디센트 견본주택 10월 30일 개관. 특별공급 11월 9일, 1순위 10일, 2순위 11일, 당첨자 발표 17일"
+    outlet: 메트로신문
+    url: https://www.metroseoul.co.kr/article/20261103500089
+  - town: guri-galmae-station
+    block: B-1
+    date: "2026-11-02"
+    title: "최고 분양가 75㎡ 6억9,580만 원, 84㎡ 7억8,500만 원(모집공고 기준)"
+    outlet: 투어코리아
+    url: https://www.tournews21.com/news/articleView.html?idxno=147323
+  - town: guri-galmae-station
+    block: A-1
+    rental: true
+    date: "2026-10-27"
+    title: "A-1 행복주택 609가구 공급, 11월 10~12일 접수. LH 4분기 공공임대 공급 계획에 포함"
+    outlet: 메트로신문
+    url: https://www.metroseoul.co.kr/article/20261027500075
+  - town: guri-galmae-station
+    date: "2026-10-15"
+    title: "(가칭)갈매역세권1초는 2027년 중앙투자심사, 2031년 개교 목표(구리남양주교육지원청 자료 인용)"
+    outlet: 선데이뉴스신문
+    url: https://www.newssunday.co.kr/news/view.php?no=254703
+  - town: guri-galmae-station
+    block: B-1
+    date: "2026-10-05"
+    title: "B-1블록 신안인스빌 디센트 213가구 공급 예정, 분양가상한제 적용"
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202610021332429533
+  - town: guri-galmae-station
+    block: S-1
+    kind: 일정
+    date: "2026-05-06"
+    title: "S-1블록 734가구 우미린 2026년 하반기 공급 예정"
+    outlet: 한국경제
+    url: https://www.hankyung.com/article/2026050694481
+  - town: guri-galmae-station
+    date: "2026-04-23"
+    title: "GTX-B 갈매역 추가 정차: 구리시 자체 용역에서 B/C 1.0을 넘었다며 국토부에 재검증을 요청할 계획"
+    outlet: 이코노미스트
+    url: https://economist.co.kr/article/view/ecn202604230054
+  - town: guri-galmae-station
+    date: "2026-04-22"
+    title: "구리시, 갈매동 경춘선 약 3km 구간을 교통소음 관리지역으로 지정(GTX-B 개통 뒤 운행 증가 대비)"
+    outlet: 뉴시스
+    url: https://www.newsis.com/view/NISX20260422_0003601951
+  - town: guri-galmae-station
+    block: A-4
+    date: "2026-02-06"
+    title: "A-4 공공분양 본청약 92가구에 1만71명 신청(109.47 대 1). 사전청약 당첨자 189명 중 149명이 본청약으로 전환"
+    outlet: 한국경제
+    url: https://www.hankyung.com/article/2026020697301
+  # A-4 본청약 공고(2025-12-29, 공공분양 251·6년 분양전환 공공임대 310)는 청약홈 공고·분양 이력 소식으로 이미 보여 기사를 따로 넣지 않는다.
+  - town: guri-galmae-station
+    date: "2025-12-24"
+    title: "국토부, GTX-B 갈매역 추가 정차에 '사업타당성 부족' 통보(별내역과 1.4km 거리, 수요 등)"
+    outlet: 뉴시스
+    url: https://www.newsis.com/view/NISX20251224_0003454066
+  - town: guri-galmae-station
+    block: A-2
+    rental: true
+    date: "2025-12-04"
+    title: "A-2 공공임대 362가구 아파트 3공구 시공사 입찰, 금강주택 컨소시엄이 종합심사 1순위(최종 낙찰은 미확인)"
+    outlet: 헤럴드경제
+    url: https://www.heraldk.com/article/2025120416454851370
+  - town: guri-galmae-station
+    block: A-1
+    date: "2025-08-05"
+    title: "A-1 신혼희망타운 1,182가구 본청약 공급. 사전청약 당첨자 8월 11~12일, 신규 신청자 13~14일 접수"
+    outlet: 한국경제
+    url: https://www.hankyung.com/article/2025080530681
+
+  # 하남교산
+  - town: hanam-gyosan
+    date: "2026-10-27"
+    title: "송파하남선(3호선 연장) 공구별 시공사 선정 단계, 2공구는 남광토건 컨소시엄 수주 눈앞. 착공 2027년·개통 2032년 목표"
+    outlet: 머니투데이방송
+    url: https://news.mtn.co.kr/article/2026102715442934162
+  - town: hanam-gyosan
+    date: "2026-08-12"
+    title: "하남시의회, 송파하남선 조속 추진 촉구. 둔촌오륜역 연결 논의가 사업을 늦춰서는 안 된다는 입장"
+    outlet: 서울신문
+    url: https://m.go.seoul.co.kr/news/2026/08/12/20260812500136
+  - town: hanam-gyosan
+    date: "2026-08-04"
+    title: "교산3고(가칭) 교육부 중앙투자심사 통과, 2030년 3월 개교 목표. 교산 첫 고등학교"
+    outlet: 한국교육신문
+    url: https://hangyo.com/mobile/article.html?no=108727
+  - town: hanam-gyosan
+    block: A5
+    date: "2026-07-24"
+    title: "A5 사전청약 당첨자 대출 조건 갈등: 시의회가 나눔형 전용 모기지 원안 이행을 요구. 본청약 공고는 아직"
+    outlet: 서울신문
+    url: https://m.go.seoul.co.kr/news/2026/07/24/20260724500252
+  - town: hanam-gyosan
+    block: A5
+    date: "2026-07-23"
+    title: "시의원들이 A5 본청약 공고 전 주민설명회와 나눔형 모기지 원안 유지를 요구(이 날까지 본청약 공고 전)"
+    outlet: 오마이뉴스
+    url: https://www.ohmynews.com/NWS_Web/View/at_pg.aspx?CNTN_CD=A0003253568
+  - town: hanam-gyosan
+    date: "2026-07-09"
+    title: "하남시, 교산 현안 해결 촉구: 하남 거주자 우선공급 30%→50% 상향 요청(확정 아님), 광역교통대책 변경 협의 중단 지적"
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202607091343262181
+  - town: hanam-gyosan
+    block: A3
+    rental: true
+    date: "2026-04-27"
+    title: "A3 통합공공임대 1,100가구(GH) 사업계획 승인(2026-04-23)"
+    outlet: 글로벌이코노믹
+    url: https://www.g-enews.com/article/General-News/2026/04/2026042710544162568fbfc802b3_1
+  - town: hanam-gyosan
+    block: A9·A11
+    kind: 일정
+    date: "2026-03-08"
+    title: "A9·A11 공공분양 2026년 하반기 공급 예정(교산 공급 로드맵 보도)"
+    outlet: 하남일보
+    url: http://m.hanamilbo.net/news/articleView.html?idxno=11888
+    local: true
+  - town: hanam-gyosan
+    date: "2025-11-24"
+    title: "교산 39개 블록 중 16개 블록(1만4,339세대) 주택건설사업 승인"
+    outlet: 시티뉴스
+    url: http://www.ctnews.co.kr/39834
+    local: true
+  - town: hanam-gyosan
+    block: A2
+    date: "2025-05-09"
+    title: "A2 본청약 일반공급 201가구에 263.3 대 1, 특별공급 186가구에 134.5 대 1(사전청약 당첨자 몫 제외)"
+    outlet: 뉴시스
+    url: https://mobile.newsis.com/view/NISX20250509_0003170095
+  - town: hanam-gyosan
+    block: A2
+    date: "2025-03-31"
+    title: "A2 교산 푸르지오 더 퍼스트 본청약 분양가, 사전청약 추정가보다 약 17% 올라"
+    outlet: 뉴시스
+    url: https://www.newsis.com/view/NISX20250331_0003120514

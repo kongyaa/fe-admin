@@ -25,7 +25,7 @@ export const WINDOW_RULES = {
     '부지조성 착공': { from: 12, to: 24, note: '블록별 순차 공고' },
     // 설계 표에 없는 확장 규칙이다. 단계 날짜가 아니라 오늘부터 잡는다.
     // 보도된 블록 계획(newtowns.yaml plans)이 있으면 그쪽을 먼저 쓴다(townPlanWindow).
-    '블록별 분양': { from: 0, to: 24, fromToday: true, basis: '다음 블록 예상(규칙): 오늘부터 0~2년' },
+    '블록별 분양': { from: 0, to: 24, fromToday: true, basis: '규칙: 오늘부터 0~2년' },
     준공: { done: '준공되어 남은 분양 없음으로 봄' },
   },
 };
@@ -167,7 +167,10 @@ export function nameHasBlock(name, block) {
 // 청약홈 공고 유형 중 임대와 사전청약. site/app.js의 RENTAL_NOTICE_TYPES·NOTICE_PRE_SUBSCRIPTION과 같은 값.
 export const RENTAL_NOTICE_TYPES = ['민간임대', '공공지원민간임대'];
 export const NOTICE_PRE_SUBSCRIPTION = '민간사전청약';
-export const isRentalNotice = (notice) => RENTAL_NOTICE_TYPES.includes(notice?.typeLabel);
+// 임대 공고: 청약홈 임대 유형이거나, 유형·공고명에 '임대'·'행복주택'이 있는 공고('A-1블록 행복주택', 'A-4블록 6년 분양전환공공임대주택').
+// 블록별 현황에서 임대 공고는 그 블록의 임대 줄에만, 분양 공고는 분양 줄에만 붙는다. site/app.js isRentalNotice와 같은 규칙.
+export const isRentalNotice = (notice) => RENTAL_NOTICE_TYPES.includes(notice?.typeLabel)
+  || /임대|행복주택/.test(`${notice?.typeLabel ?? ''} ${notice?.name ?? ''}`);
 
 // 계획의 하한: 계획 보도일, 출처에 날짜가 없으면 지구의 블록별 분양 단계 날짜(stageDate), 그것도 없으면 null(하한 없음)
 export function planSince(plan, stageDate = null) {
@@ -290,7 +293,7 @@ export function expectedWindow({
       return withOverdue({
         from: start,
         to: addMonths(start, rule.to),
-        basis: `${NEXT_BLOCK_LABEL}(규칙): 접수 중인 공고(마감 ${liveEnd}) 뒤 ${span}`,
+        basis: `규칙: 접수 중인 공고(마감 ${liveEnd}) 뒤 ${span}`,
         rule: `${kind}:${stage}`,
       }, today, stage);
     }
