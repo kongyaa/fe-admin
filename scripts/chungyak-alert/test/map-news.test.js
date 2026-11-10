@@ -376,6 +376,8 @@ test('collectNews filters, trims and isolates failures', async () => {
   });
   assert.equal(result.checked, 3);
   assert.equal(result.matched, 1);
+  // 검색이 성공한 사업만(기사가 없어도). 실패한 신길2는 빠진다
+  assert.deepEqual(result.searched, ['town-hanam-gyosan', 'seoul-sindang1']);
   assert.deepEqual(result.errors, ['news_http_500']);
   assert.equal(result.stopped, null);
   // 500은 한 번 재시도한다. 사업 사이에만 쉰다.

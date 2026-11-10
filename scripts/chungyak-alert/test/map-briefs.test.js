@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  NAVER_FOOT, SEOUL_BRIEF_BASIS, TOWN_BRIEF_BASIS, buildBriefs, districtBrief, districtStats, expectedLabel, josa, townBrief,
+  NAVER_FOOT, SEOUL_BRIEF_BASIS, TOWN_BRIEF_BASIS, buildBriefs, districtBrief, districtStats, expectedLabel, josa, latestMains, titleHasBlock,
+  townBrief, windowRangeText,
 } from '../src/pipeline/briefs.js';
 
 const today = '2026-11-10';
@@ -60,55 +61,91 @@ test('josa and labels', () => {
 
 test('district stats: counts, late/early stages and shared ranks', () => {
   const stats = districtStats(seoulProjects());
-  assert.deepEqual(['t', 's', 'mid', 'late', 'early', 'rank'].map((k) => stats.get('중구')[k]), [6, 6, 0, 2, 0, 1]);
-  assert.deepEqual(['t', 's', 'mid', 'late', 'early', 'rank'].map((k) => stats.get('강남구')[k]), [3, 2, 1, 2, 0, 2]);
+  assert.deepEqual(['t', 's', 'mid', 'late', 'early', 'rank', 'tied'].map((k) => stats.get('중구')[k]), [6, 6, 0, 2, 0, 1, false]);
+  assert.deepEqual(['t', 's', 'mid', 'late', 'early', 'rank', 'tied'].map((k) => stats.get('강남구')[k]), [3, 2, 1, 2, 0, 2, false]);
   assert.equal(stats.get('중랑구').rank, 3);
   assert.equal(stats.get('도봉구').rank, 4);
   assert.equal(stats.get('종로구').rank, 4); // 0곳끼리는 같은 순위
+  assert.equal(stats.get('종로구').tied, true);
   assert.equal(stats.get('종로구').t, 0);
 });
 
+// 네이버 검색이 성공한 사업 id(관련 소식을 모은 빌드)
+const searchedAll = (projects) => new Set(projects.map((p) => p.id));
+
 test('district brief: a 구 with a 공고 중 project, latest notice and a Naver item (never its title)', () => {
-  const stats = districtStats(seoulProjects());
-  const brief = districtBrief('중랑구', stats, { seoulAsOf: '2026-06', today });
+  const projects = seoulProjects();
+  const stats = districtStats(projects);
+  const brief = districtBrief('중랑구', stats, { seoulAsOf: '2026-06', today, newsSearched: searchedAll(projects) });
   assert.equal(brief.headline, '중랑구, 중화3 청약 공고 중');
   const [p1, p2, p3] = textOf(brief);
-  assert.equal(p1, '중랑구는 정비사업 3곳 가운데 **1곳**이 1년 안, 0곳이 3년 안에 청약이 예상됩니다. '
-    + '1곳이 관리처분인가 이후(이주·착공 포함) 단계여서 아직은 초기 단계(2곳)가 더 많아 대부분은 몇 년 뒤의 일입니다.');
+  // 1년 안과 1~3년 사이를 나눠 적고, 단계는 수만 적는다(평가·전망 없음)
+  assert.equal(p1, '중랑구 정비사업 3곳 중 청약 예상 시기는 1년 안 **1곳**, 1~3년 사이 0곳입니다. '
+    + '관리처분인가 이후(이주·착공 포함) 1곳, 초기 단계(구역지정~조합설립) 2곳입니다.');
   assert.equal(p2, '1년 안 사업 중 계획 세대가 가장 큰 곳은 **중화3**(176세대, 착공)입니다. 예상 시기가 가장 이른 곳은 **중화3**입니다. '
-    + '다만 1년 안 사업 1곳 중 1곳은 도심 업무지구형(도시정비형) 재개발이라 주택 수가 적거나 정해지지 않은 곳이 많습니다.');
+    + '1년 안 사업 1곳 중 1곳은 도시정비형(도심 업무지구형) 재개발입니다.');
   assert.equal(p3, '최근 청약홈 공고는 **중화역 라온프라이빗 센트로**(중화3, 11월 6일)였습니다. 최근 2주 기사 중에는 중화3 관련 소식(뉴시스, 11.08)이 가장 최근입니다.');
   assert.ok(!JSON.stringify(brief).includes('흥행')); // 네이버 제목은 옮기지 않는다
   assert.deepEqual(brief.foot.map((f) => f.label), ['서울시 정비사업 추진현황 (2026-06 기준)', '청약홈 공고 연결 (11-10 수집)', NAVER_FOOT]);
+  assert.equal(NAVER_FOOT, '네이버 뉴스 검색 결과로 사업별 최근 기사의 언론사와 날짜만 사용');
   assert.equal(brief.foot[2].url, null);
   assert.ok(brief.foot.slice(0, 2).every((f) => /^https:\/\//.test(f.url)));
   assert.equal(brief.basis, SEOUL_BRIEF_BASIS);
+  for (const banned of ['편입니다', '몇 년 뒤', '적거나', '기대할']) assert.ok(!JSON.stringify(brief).includes(banned), banned);
 });
 
 test('district brief: a 구 with no project within a year', () => {
-  const brief = districtBrief('도봉구', districtStats(seoulProjects()), { seoulAsOf: '2026-06', today });
+  const projects = seoulProjects();
+  const brief = districtBrief('도봉구', districtStats(projects), { seoulAsOf: '2026-06', today, newsSearched: searchedAll(projects) });
   assert.equal(brief.headline, '도봉구, 1년 안 청약 없이 초기 단계 2곳');
   assert.deepEqual(textOf(brief), [
-    '도봉구는 정비사업 2곳 가운데 **0곳**이 1년 안, 0곳이 3년 안에 청약이 예상됩니다. 0곳이 관리처분인가 이후(이주·착공 포함) 단계여서 아직은 초기 단계(2곳)가 더 많아 대부분은 몇 년 뒤의 일입니다.',
-    '당장 청약을 기대할 사업은 없고, 3년 안 예상도 없습니다.',
+    '도봉구 정비사업 2곳 중 청약 예상 시기는 1년 안 **0곳**, 1~3년 사이 0곳입니다. 관리처분인가 이후(이주·착공 포함) 사업은 없고, 초기 단계(구역지정~조합설립) 2곳입니다.',
     '최근 2주 사이 모은 기사는 없습니다.',
   ]);
 });
 
-test('district brief: all-재건축 구 and the busiest 구', () => {
-  const stats = districtStats(seoulProjects());
+test('district brief: says nothing about articles unless Naver search ran for that 구', () => {
+  const projects = seoulProjects();
+  const stats = districtStats(projects);
+  // 관련 소식을 모으지 않은 빌드(키 없음 등): 기사 문장과 네이버 각주를 뺀다
+  const none = districtBrief('도봉구', stats, { today, newsSearched: null });
+  assert.equal(textOf(none).length, 1);
+  assert.ok(!JSON.stringify(none).includes('기사'));
+  assert.deepEqual(none.foot.map((f) => f.label), ['서울시 정비사업 추진현황', '청약홈 공고 연결 (11-10 수집)']);
+  // 모았지만 이 구의 사업은 하나도 검색하지 않았다(검색 대상 밖·중간에 멈춤): '없다'고 말하지 않는다
+  const other = districtBrief('도봉구', stats, { today, newsSearched: new Set(['seoul-1']) });
+  assert.ok(!textOf(other).join('').includes('모은 기사는 없습니다'));
+  // 모으지 않았으면 사업에 남은 기사가 있어도 쓰지 않는다
+  assert.ok(!textOf(districtBrief('중랑구', stats, { today, newsSearched: null })).join('').includes('관련 소식'));
+});
+
+test('district brief: all-재건축 구, the busiest 구 and shared ranks', () => {
+  const projects = seoulProjects();
+  const stats = districtStats(projects);
   const gangnam = districtBrief('강남구', stats, { today });
   assert.equal(gangnam.headline, '강남구, 1년 안 청약 2곳 대치우성1차 먼저');
   assert.equal(textOf(gangnam)[1], '1년 안 사업 중 계획 세대가 가장 큰 곳은 **대치우성1차**(1,332세대, 사업시행인가)입니다. '
     + '예상 시기가 가장 이른 곳은 **대치우성1차, 일원개포한신**입니다. 1년 안 사업은 모두 재건축입니다.');
-  assert.match(textOf(gangnam)[0], /2곳이 관리처분인가 이후\(이주·착공 포함\) 단계여서 공급이 가까운 사업이 많은 편입니다\.$/);
+  assert.equal(textOf(gangnam)[0], '강남구 정비사업 3곳 중 청약 예상 시기는 1년 안 **2곳**, 1~3년 사이 1곳입니다. '
+    + '관리처분인가 이후(이주·착공 포함) 2곳이고, 초기 단계(구역지정~조합설립) 사업은 없습니다.');
   assert.equal(gangnam.foot[0].label, '서울시 정비사업 추진현황');
 
   const jung = districtBrief('중구', stats, { today });
   assert.equal(jung.headline, '중구, 1년 안 청약 6곳으로 서울에서 가장 많다');
-  assert.match(textOf(jung)[1], /다만 1년 안 사업 6곳 중 4곳은 도심 업무지구형\(도시정비형\) 재개발/);
+  assert.match(textOf(jung)[1], /1년 안 사업 6곳 중 4곳은 도시정비형\(도심 업무지구형\) 재개발입니다\.$/);
   // 사업이 없는 구는 브리핑이 없다
   assert.equal(districtBrief('종로구', stats, { today }), null);
+
+  // 1년 안 수가 같은 구가 있으면 '공동'
+  const more = [...projects, ...[1, 2, 3, 4, 5, 6].map((i) => seoul('마포구', { name: `마포${i}`, bucket: 'soon', window: { from: '2026-12', to: '2027-12' } }))];
+  const tiedStats = districtStats(more);
+  assert.equal(districtBrief('중구', tiedStats, { today }).headline, '중구, 1년 안 청약 6곳으로 서울에서 공동으로 가장 많다');
+  const third = [...more, ...[1, 2, 3, 4, 5, 6, 7].map((i) => seoul('송파구', { name: `송파${i}`, bucket: 'soon' }))];
+  assert.equal(districtBrief('마포구', districtStats(third), { today }).headline, '마포구, 1년 안 청약 6곳으로 서울에서 공동 2번째');
+  // 관리처분인가 이후·초기 단계가 모두 0곳이면 둘 다 없다고 적는다
+  const mid = districtBrief('광진구', districtStats([seoul('광진구', { stage: '건축심의' })]), { today });
+  assert.equal(textOf(mid)[0], '광진구 정비사업 1곳 중 청약 예상 시기는 1년 안 **0곳**, 1~3년 사이 0곳입니다. '
+    + '관리처분인가 이후(이주·착공 포함) 사업과 초기 단계(구역지정~조합설립) 사업은 없습니다.');
 });
 
 // 공공주택지구(빌드 내부 형태: history·plans는 newtowns.js, blocks는 townBlocks 뒤의 줄)
@@ -164,7 +201,7 @@ test('town brief with history and plans: latest 본청약, pending plans, 사전
   const brief = townBrief(gyosan(), { curated: gyosanItems(), today });
   assert.equal(brief.headline, '하남교산, 다음 차례는 A9·A11 공공분양');
   const [p1, p2, p3] = textOf(brief);
-  assert.equal(p1, '하남교산의 가장 최근 본청약은 **A2 교산 푸르지오 더 퍼스트**(1,115세대)로 2025년 3월 공고됐습니다.[1] '
+  assert.equal(p1, '하남교산의 가장 최근 본청약은 **A2**(교산 푸르지오 더 퍼스트, 1,115세대)로 2025년 3월 공고됐습니다.[1] '
     + '일반공급 경쟁률은 263.3 대 1이었습니다.[2] A2 교산 푸르지오 더 퍼스트 본청약 분양가, 사전청약 추정가보다 약 17% 올라.[3]');
   // 기간이 남은 계획이 먼저, 지난 계획(D2·D5)은 뒤에 '시기가 지났다'로. 임대 계획(A20)은 넣지 않는다
   assert.equal(p2, '다음은 **A9(244세대)·A11(511세대)** 공공분양으로, 2026년 하반기 공급 예정이라는 지역지 보도가 있습니다.[4] '
@@ -196,7 +233,7 @@ test('town brief: open reception makes the headline the winner date; same source
   town.blocks.push({ block: 'B-1', rental: false, status: '접수 중', sources: [{ title: '청약홈', url: 'https://www.applyhome.co.kr/b1' }] });
   const brief = townBrief(town, { curated: [], today });
   assert.equal(brief.headline, '하남교산, B-1 당첨 발표는 11월 17일');
-  assert.equal(textOf(brief)[0], '하남교산의 가장 최근 본청약은 **B-1 신안인스빌 디센트**(213세대)로 2026년 10월 공고됐습니다.[1] 지금 청약 접수 중이고, 당첨자 발표는 11월 17일입니다.[1]');
+  assert.equal(textOf(brief)[0], '하남교산의 가장 최근 본청약은 **B-1**(신안인스빌 디센트, 213세대)로 2026년 10월 공고됐습니다.[1] 지금 청약 접수 중이고, 당첨자 발표는 11월 17일입니다.[1]');
   assert.equal(brief.foot[0].label, '청약홈 2026-10-30');
 });
 
@@ -222,7 +259,7 @@ test('town brief without blocks: the short 2-paragraph form', () => {
   const withPlan = {
     ...topyeong, expected: { from: '2029-01', to: '2029-12', basis: '국토부 발표(2025-12-31) 보도' }, window: { from: '2029-01', to: '2029-12' },
   };
-  assert.equal(textOf(townBrief(withPlan, { today }))[1], '아직 블록이 정해지지 않아 첫 분양은 2029년 1월에서 2029년 12월 사이 목표라는 발표·보도가 있습니다.[1]');
+  assert.equal(textOf(townBrief(withPlan, { today }))[1], '아직 블록이 정해지지 않아 첫 분양은 2029년 목표라는 발표·보도가 있습니다.[1]');
 });
 
 test('buildBriefs: every 구 with projects and tracked towns only', () => {
@@ -242,8 +279,70 @@ test('buildBriefs: every 구 with projects and tracked towns only', () => {
   assert.deepEqual(Object.keys(briefs).sort(), ['강남구', '도봉구', '중구', '중랑구', 'town-hanam-gyosan'].sort());
   assert.equal(briefs['town-other'], undefined);
   for (const brief of Object.values(briefs)) {
-    assert.ok(brief.headline && Array.isArray(brief.paras) && brief.paras.length >= 2 && brief.basis);
+    assert.ok(brief.headline && Array.isArray(brief.paras) && brief.paras.length >= 1 && brief.basis);
     assert.ok(brief.paras.every((p) => p.every((s) => typeof s.t === 'string' && s.t.length > 0)));
     assert.ok(brief.foot.every((f) => f.url === null || /^https?:\/\//.test(f.url)));
   }
+});
+
+test('town brief: same-day 본청약 blocks are listed together with per-block competition; titles that repeat the block are dropped', () => {
+  const lh = (n) => ({ title: 'LH청약플러스', outlet: 'LH청약플러스', url: `https://apply.lh.or.kr/${n}`, date: '2025-11-27' });
+  const report = { title: '경쟁률 (뉴시스)', url: 'https://www.newsis.com/b17', date: '2025-12-14' };
+  const wangsuk = {
+    id: 'town-namyangju-wangsuk', name: '남양주왕숙', kind: '공공주택지구', stage: '블록별 분양', window: { from: '2026-11', to: '2026-11' }, notices: [], sources: [],
+    history: [
+      { block: 'A-1', stage: '본청약', type: '공공분양', title: '남양주왕숙 A-01', households: 629, noticeDate: '2025-07-24', rental: false, sources: [lh('a1')] },
+      {
+        block: 'B-17', stage: '본청약', type: '공공분양', households: 491, noticeDate: '2025-11-27', rental: false, sources: [lh('b17')],
+        competition: { rate: 109.6, scope: '일반공급', source: report },
+      },
+      {
+        block: 'A-24', stage: '본청약', type: '신혼희망타운', households: 390, noticeDate: '2025-11-27', rental: false, sources: [lh('a24')],
+        competition: { rate: 24.9, scope: '일반공급', source: report },
+      },
+    ],
+    plans: [],
+    blocks: [],
+  };
+  assert.deepEqual(latestMains(wangsuk, today).map((e) => e.block), ['B-17', 'A-24']);
+  const brief = townBrief(wangsuk, { today });
+  assert.equal(brief.headline, '남양주왕숙, 최근 본청약은 B-17·A-24');
+  assert.equal(textOf(brief)[0], '남양주왕숙의 가장 최근 본청약은 **B-17**(공공분양, 491세대)·**A-24**(신혼희망타운, 390세대)로 2025년 11월 공고됐습니다.[1][2] '
+    + '일반공급 경쟁률은 B-17 109.6 대 1, A-24 24.9 대 1이었습니다.[3]');
+
+  // 제목에 블록 이름이 이미 있으면(A03 = A-3) 제목 대신 유형
+  assert.equal(titleHasBlock('남양주왕숙2 A03', 'A-3'), true);
+  assert.equal(titleHasBlock('계양신도시 카이브 유보라(AC4BL)', 'AC4'), true);
+  assert.equal(titleHasBlock('교산 푸르지오 더 퍼스트', 'A2'), false);
+  assert.equal(titleHasBlock('남양주왕숙2 A-13', 'A-3'), false);
+  const w2 = { ...wangsuk, history: [{ block: 'A-3', stage: '본청약', type: '공공분양', title: '남양주왕숙2 A03', households: 686, noticeDate: '2026-04-30', rental: false, sources: [lh('w2')] }] };
+  assert.equal(textOf(townBrief(w2, { today }))[0], '남양주왕숙의 가장 최근 본청약은 **A-3**(공공분양, 686세대)로 2026년 4월 공고됐습니다.[1]');
+});
+
+test('town brief: a 분양가 item already cited as the competition source is not repeated', () => {
+  const etoday = { title: '카이브 유보라 (이투데이)', url: 'https://www.etoday.co.kr/news/view/2644642', date: '2026-11-05' };
+  const town = {
+    id: 'town-incheon-gyeyang', name: '인천계양', kind: '공공주택지구', stage: '블록별 분양', window: { from: '2027-01', to: '2027-06' }, notices: [], sources: [], plans: [], blocks: [],
+    history: [{
+      block: 'AC4', stage: '본청약', type: '민간분양', title: '계양신도시 카이브 유보라(AC4BL)', households: 496, noticeDate: '2026-10-23', rental: false,
+      sources: [{ title: '청약홈', outlet: '청약홈', url: 'https://www.applyhome.co.kr/ac4', date: '2026-10-23' }],
+      competition: { rate: 0.97, scope: '1·2순위', source: etoday },
+    }],
+  };
+  const items = [{
+    projectId: 'town-incheon-gyeyang', block: 'AC3·AC4', date: '2026-11-05', title: '카이브 유보라 1·2순위 0.92대 1·0.97대 1, 84㎡ 최고 분양가 8억2600만 원',
+    outlet: '이투데이', url: etoday.url, local: false, rental: false, kind: '뉴스',
+  }];
+  const p1 = textOf(townBrief(town, { curated: items, today }))[0];
+  assert.equal(p1, '인천계양의 가장 최근 본청약은 **AC4**(민간분양, 496세대)로 2026년 10월 공고됐습니다.[1] 1·2순위 경쟁률은 0.97 대 1이었습니다.[2]');
+  // 경쟁률 출처가 다르면 분양가 기사를 붙인다
+  town.history[0].competition.source = { ...etoday, url: 'https://www.etoday.co.kr/other' };
+  assert.match(textOf(townBrief(town, { curated: items, today }))[0], /최고 분양가 8억2600만 원\.\[3\]$/);
+});
+
+test('window range text: a whole calendar year reads as the year', () => {
+  assert.equal(windowRangeText('2029-01', '2029-12'), '2029년');
+  assert.equal(windowRangeText('2028-12', '2030-12'), '2028년 12월에서 2030년 12월 사이');
+  assert.equal(windowRangeText('2026-11', '2026-11'), '2026년 11월');
+  assert.equal(windowRangeText('2029-01', '2030-12'), '2029년 1월에서 2030년 12월 사이');
 });

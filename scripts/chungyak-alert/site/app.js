@@ -1268,7 +1268,8 @@ export function sellingTowns(projects, today) {
   return (Array.isArray(projects) ? projects : [])
     .filter((p) => p?.kind === '공공주택지구')
     .map((p) => {
-      const states = entriesOf(p.notices).map((n) => noticeReception(n, today, limit));
+      // 임대 공고(행복주택 등)는 분양 중으로 세지 않는다
+      const states = entriesOf(p.notices).filter((n) => !isRentalNotice(n)).map((n) => noticeReception(n, today, limit));
       return { p, open: states.includes('open'), soon: states.includes('soon') };
     })
     .filter((x) => x.p.stage === '블록별 분양' || x.open || x.soon)
@@ -1492,7 +1493,7 @@ export function briefView(brief, generatedAt) {
   };
 }
 
-/** 사업 화면·지구 화면 주소: 블록별 분양 지구는 '#t=…'(블록이 있으면 '&b=…'), 그 밖은 '#p=…'. district 는 첫 화면의 구 선택 */
+/** 사업 화면·지구 화면 주소: 지구 화면으로 보는 사업(isTownView)은 '#t=…'(블록이 있으면 '&b=…'), 그 밖은 '#p=…'. district 는 첫 화면의 구 선택 */
 export function linkFor(project, { block = null, district = null } = {}) {
   if (!project) return hashFor({ district });
   return isTownView(project) ? hashFor({ district, town: project.id, block }) : hashFor({ district, id: project.id });
@@ -1500,7 +1501,7 @@ export function linkFor(project, { block = null, district = null } = {}) {
 
 /**
  * 해시 → 화면 { kind: 'main' } | { kind: 'town', id, block } | { kind: 'project', id }.
- * isTown(id) 가 참인 사업은 '#p=' 로 와도 지구 화면, 블록별 분양이 아닌 '#t=' 는 사업 화면.
+ * isTown(id) 가 참인 사업은 '#p=' 로 와도 지구 화면, 지구 화면으로 보지 않는 사업(isTownView 가 거짓)의 '#t=' 는 사업 화면.
  */
 export function routeOf(parsed, isTown = () => false) {
   const p = parsed ?? {};

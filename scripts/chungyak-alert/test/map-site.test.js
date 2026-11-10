@@ -1361,3 +1361,12 @@ test('app.js: watchlist cells select a town brief instead of navigating, and the
   assert.ok(src.includes("h('article', { class: 'brief', 'aria-label': '지역 브리핑' }"));
   assert.ok(!/innerHTML\s*=/.test(src));
 });
+
+test('sellingTowns ignores rental notices (행복주택 등) for selling and for the open-first order', () => {
+  const day = '2026-11-11';
+  const rentOpen = { key: 'r', name: '구리갈매역세권 A-1BL 신혼희망타운 행복주택', typeLabel: 'APT', end: '2026-11-12', stages: [{ name: '접수', start: '2026-11-10', end: '2026-11-12' }] };
+  const early = { id: 'e', name: '광명시흥', kind: '공공주택지구', stage: '지구계획승인', notices: [rentOpen], window: { from: '2029-01', to: '2029-12' } };
+  const a = { id: 'a', name: '가', kind: '공공주택지구', stage: '블록별 분양', notices: [rentOpen], window: { from: '2027-03', to: '2027-03' } };
+  const b = { id: 'b', name: '나', kind: '공공주택지구', stage: '블록별 분양', notices: [], window: { from: '2026-12', to: '2026-12' } };
+  assert.deepEqual(app.sellingTowns([early, a, b], day).map((p) => p.id), ['b', 'a']);
+});

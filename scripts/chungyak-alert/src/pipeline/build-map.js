@@ -124,6 +124,7 @@ async function collectMapNews(projects, {
 }) {
   const empty = (extra) => ({
     byId: {},
+    searched: null,
     stats: {
       checked: 0, matched: 0, projects: 0, skipped: null, errors: [], stopped: null, ...extra,
     },
@@ -144,6 +145,8 @@ async function collectMapNews(projects, {
     });
     return {
       byId: result.byId ?? {},
+      // 검색이 성공한 사업 id(지역 브리핑용, 출력에는 싣지 않는다). 수집 함수가 주지 않으면 null(모름)
+      searched: Array.isArray(result.searched) ? new Set(result.searched) : null,
       stats: {
         checked: result.checked ?? 0,
         matched: result.matched ?? 0,
@@ -317,7 +320,7 @@ export async function buildMap({
   });
   // 지역 브리핑(서울 구·추적 중인 지구). 내부 사업(계획·이력 출처, 관련 소식)과 손으로 고른 기사로 만든다
   const briefs = buildBriefs({
-    projects: internal, watchlist: towns?.watchlist ?? [], curated: curated.items, today, seoulAsOf: seoul.asOf,
+    projects: internal, watchlist: towns?.watchlist ?? [], curated: curated.items, today, seoulAsOf: seoul.asOf, newsSearched: newsResult.searched,
   });
   const projects = internal.map(toPublic);
 

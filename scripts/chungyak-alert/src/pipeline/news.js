@@ -358,6 +358,7 @@ const newestFirst = (a, b) => b.date.localeCompare(a.date);
 // 사업마다 한 번씩 차례로 검색한다. projects는 newsTargets()의 결과를 넘긴다.
 // maxAgeDays: 남길 기사의 최대 나이(keepRecent). 기본은 지도에 싣는 14일(NEWS_PUBLISH_DAYS).
 // byId: { [사업 id]: [{ title, outlet, date, url }] } (기사가 있는 사업만). checked: 검색한 사업 수, matched: 기사가 남은 사업 수.
+// searched: 검색이 성공한 사업 id 목록(기사가 없어도 들어간다. 지역 브리핑이 '모은 기사가 없다'고 말해도 되는지 본다).
 // 사업 하나의 실패는 errors에 kind만 남기고 넘어간다. 인증·한도 오류(NEWS_STOP_KINDS)면 stopped에 kind를 두고 멈춘다.
 // 시간 초과·네트워크 오류(NEWS_NETWORK_KINDS)가 연달아 NEWS_NETWORK_STOP_AFTER번이면 stopped에 그 kind를 두고 멈춘다.
 // budgetMs: 단계 전체 시간 한도. 다음 사업을 검색하기 전에 now()로 재어 넘었으면 stopped='news_budget'으로 멈추고
@@ -375,6 +376,7 @@ export async function collectNews({
   now = Date.now,
 }) {
   const byId = {};
+  const searched = [];
   const errors = [];
   const startedAt = now();
   let checked = 0;
@@ -410,6 +412,7 @@ export async function collectNews({
       continue;
     }
     networkStreak = 0;
+    searched.push(project.id);
     const shadows = project.kind === '공공주택지구' ? shadowKeys(project, towns) : [];
     const kept = dedupe(keepRecent(
       items.map(normalizeItem).filter((item) => item && relevant(item, project, { shadows })),
@@ -420,5 +423,7 @@ export async function collectNews({
     byId[project.id] = kept;
     matched += 1;
   }
-  return { byId, checked, matched, errors: [...new Set(errors)], failed: errors.length, stopped };
+  return {
+    byId, searched, checked, matched, errors: [...new Set(errors)], failed: errors.length, stopped,
+  };
 }

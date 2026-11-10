@@ -1,6 +1,8 @@
 import { safeHttpUrl } from '../util.js';
 import { PLANNED, PLAN_PASSED } from './blocks.js';
-import { PRE_SUBSCRIPTION, blockKey, sourceOutlet } from './expected-window.js';
+import {
+  PRE_SUBSCRIPTION, blockKey, nameHasBlock, sourceOutlet,
+} from './expected-window.js';
 import { SEOUL_DISTRICTS } from './news.js';
 import { DATASET_URL, SEOUL_STAGES } from './seoul-redevelop.js';
 
@@ -16,7 +18,7 @@ import { DATASET_URL, SEOUL_STAGES } from './seoul-redevelop.js';
 
 export const SEOUL_BRIEF_BASIS = '자동 작성: 서울시 정비사업 자료와 청약홈·뉴스 수집 결과로 문장을 만듭니다. 평가나 전망은 넣지 않습니다.';
 export const TOWN_BRIEF_BASIS = '신도시 목록에 출처와 함께 적은 블록·계획·보도로 작성했습니다. 위 숫자는 각 출처를 가리킵니다.';
-export const NAVER_FOOT = '네이버 뉴스 검색: 기사 제목과 링크만 사용, 내용은 원문에서 확인';
+export const NAVER_FOOT = '네이버 뉴스 검색 결과로 사업별 최근 기사의 언론사와 날짜만 사용';
 export const APPLYHOME_URL = 'https://www.applyhome.co.kr/';
 
 // 1년 안(공고 중 포함)과 3년 안 구간. expected-window.js의 BUCKETS 값이다.
@@ -70,8 +72,8 @@ const stageIndex = (project) => SEOUL_STAGES.indexOf(project.stage);
 const byWindow = (a, b) => String(a.window?.from ?? '9999').localeCompare(String(b.window?.from ?? '9999'))
   || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'ko');
 
-// 구별 숫자: { t, s(1년 안), mid(3년 안), late, early, rank, live(공고 중 사업), soon(1년 안 사업, 예상 시기 순) }
-// rank는 1년 안 사업 수가 더 많은 구의 수 + 1(같으면 같은 순위).
+// 구별 숫자: { t, s(1년 안), mid(1~3년 사이), late, early, rank, tied, live(공고 중 사업), soon(1년 안 사업, 예상 시기 순) }
+// rank는 1년 안 사업 수가 더 많은 구의 수 + 1, tied는 1년 안 사업 수가 같은 다른 구가 있는지(공동 순위).
 export function districtStats(projects) {
   const seoul = (projects ?? []).filter((p) => p?.region === '서울' && p.kind !== '공공주택지구');
   const stats = new Map();
@@ -89,7 +91,10 @@ export function districtStats(projects) {
       soon,
     });
   }
-  for (const st of stats.values()) st.rank = 1 + [...stats.values()].filter((other) => other.s > st.s).length;
+  for (const st of stats.values()) {
+    st.rank = 1 + [...stats.values()].filter((other) => other.s > st.s).length;
+    st.tied = [...stats.values()].filter((other) => other.s === st.s).length > 1;
+  }
   return stats;
 }
 
@@ -111,27 +116,31 @@ function latestNaver(all) {
 /**
  * 서울 구 하나의 브리핑. 사업이 없는 구는 null.
  * stats는 districtStats의 값, seoulAsOf는 서울 자료 기준 달, today는 수집일.
+ * newsSearched: 네이버 검색이 성공한 사업 id(Set). null이면 이번 빌드에서 관련 소식을 모으지 않은 것이라 기사 문장과 각주를 빼고,
+ * 이 구의 사업이 하나도 검색되지 않았으면 '모은 기사가 없다'고 말하지 않는다. 평가·전망 없이 수만 적는다.
  */
-export function districtBrief(district, stats, { seoulAsOf = null, today = null } = {}) {
+export function districtBrief(district, stats, { seoulAsOf = null, today = null, newsSearched = null } = {}) {
   const st = stats.get(district);
   if (!st || st.t === 0) return null;
   const g = district;
   const firstNames = st.soon.slice(0, 2).map((p) => p.name);
   let headline;
   if (st.live.length) headline = `${g}, ${st.live[0].name} 청약 공고 중`;
-  else if (st.s >= 6) headline = `${g}, 1년 안 청약 ${st.s}곳으로 서울에서 ${st.rank === 1 ? '가장 많다' : `${st.rank}번째`}`;
-  else if (st.s > 0) headline = `${g}, 1년 안 청약 ${st.s}곳 ${firstNames[0]} 먼저`;
+  else if (st.s >= 6) {
+    let place = st.rank === 1 ? '가장 많다' : `${st.rank}번째`;
+    if (st.tied) place = st.rank === 1 ? '공동으로 가장 많다' : `공동 ${st.rank}번째`;
+    headline = `${g}, 1년 안 청약 ${st.s}곳으로 서울에서 ${place}`;
+  } else if (st.s > 0) headline = `${g}, 1년 안 청약 ${st.s}곳 ${firstNames[0]} 먼저`;
   else if (st.early > 0) headline = `${g}, 1년 안 청약 없이 초기 단계 ${st.early}곳`;
   else headline = `${g}, 1년 안 청약 예상 없음`;
 
-  const p1 = [T(`${g}는 정비사업 ${st.t}곳 가운데 `), B(`${st.s}곳`), T(`이 1년 안, ${st.mid}곳이 3년 안에 청약이 예상됩니다. `)];
-  if (st.late > 0 && st.late >= st.early) {
-    p1.push(T(`${st.late}곳이 관리처분인가 이후(이주·착공 포함) 단계여서 공급이 가까운 사업이 많은 편입니다.`));
-  } else if (st.early > st.late) {
-    p1.push(T(`${st.late}곳이 관리처분인가 이후(이주·착공 포함) 단계여서 아직은 초기 단계(${st.early}곳)가 더 많아 대부분은 몇 년 뒤의 일입니다.`));
-  } else {
-    p1.push(T('관리처분인가 이후 단계나 초기 단계(구역지정~조합설립) 사업은 없습니다.'));
-  }
+  const p1 = [T(`${g} 정비사업 ${st.t}곳 중 청약 예상 시기는 1년 안 `), B(`${st.s}곳`), T(`, 1~3년 사이 ${st.mid}곳입니다. `)];
+  const LATE = '관리처분인가 이후(이주·착공 포함)';
+  const EARLY = '초기 단계(구역지정~조합설립)';
+  if (st.late > 0 && st.early > 0) p1.push(T(`${LATE} ${st.late}곳, ${EARLY} ${st.early}곳입니다.`));
+  else if (st.late > 0) p1.push(T(`${LATE} ${st.late}곳이고, ${EARLY} 사업은 없습니다.`));
+  else if (st.early > 0) p1.push(T(`${LATE} 사업은 없고, ${EARLY} ${st.early}곳입니다.`));
+  else p1.push(T(`${LATE} 사업과 ${EARLY} 사업은 없습니다.`));
 
   const p2 = [];
   if (st.s > 0) {
@@ -141,11 +150,8 @@ export function districtBrief(district, stats, { seoulAsOf = null, today = null 
     if (firstNames.length) p2.push(T('예상 시기가 가장 이른 곳은 '), B(firstNames.join(', ')), T('입니다. '));
     const dosi = st.soon.filter((p) => /도시정비형/.test(p.subKind ?? '')).length;
     const rebuild = st.soon.filter((p) => p.kind === '재건축').length;
-    if (dosi > 0 && dosi * 2 >= st.s) {
-      p2.push(T(`다만 1년 안 사업 ${st.s}곳 중 ${dosi}곳은 도심 업무지구형(도시정비형) 재개발이라 주택 수가 적거나 정해지지 않은 곳이 많습니다.`));
-    } else if (rebuild === st.s) p2.push(T('1년 안 사업은 모두 재건축입니다.'));
-  } else {
-    p2.push(T(st.mid ? `당장 청약을 기대할 사업은 없고, 3년 안 예상도 ${st.mid}곳입니다.` : '당장 청약을 기대할 사업은 없고, 3년 안 예상도 없습니다.'));
+    if (dosi > 0) p2.push(T(`1년 안 사업 ${st.s}곳 중 ${dosi}곳은 도시정비형(도심 업무지구형) 재개발입니다.`));
+    else if (rebuild === st.s) p2.push(T('1년 안 사업은 모두 재건축입니다.'));
   }
 
   const p3 = [];
@@ -153,12 +159,12 @@ export function districtBrief(district, stats, { seoulAsOf = null, today = null 
   if (notice) {
     p3.push(T('최근 청약홈 공고는 '), B(notice.notice.name), T(`(${notice.project.name}, ${dayLabel(notice.notice.announceDate)})였습니다. `));
   }
-  const naver = latestNaver(st.all);
+  const naver = newsSearched ? latestNaver(st.all) : null;
   if (naver) {
     const when = naver.item.date.slice(5).replace('-', '.');
     const meta = naver.item.outlet ? `${naver.item.outlet}, ${when}` : when;
     p3.push(T(`최근 2주 기사 중에는 ${naver.project.name} 관련 소식(${meta})이 가장 최근입니다.`));
-  } else p3.push(T('최근 2주 사이 모은 기사는 없습니다.'));
+  } else if (newsSearched && st.all.some((p) => newsSearched.has(p.id))) p3.push(T('최근 2주 사이 모은 기사는 없습니다.'));
 
   const collected = /^\d{4}-\d{2}-\d{2}$/.test(String(today ?? '')) ? ` (${today.slice(5)} 수집)` : '';
   return {
@@ -167,7 +173,7 @@ export function districtBrief(district, stats, { seoulAsOf = null, today = null 
     foot: [
       { label: `서울시 정비사업 추진현황${seoulAsOf ? ` (${seoulAsOf} 기준)` : ''}`, url: DATASET_URL },
       { label: `청약홈 공고 연결${collected}`, url: APPLYHOME_URL },
-      { label: NAVER_FOOT, url: null },
+      ...(newsSearched ? [{ label: NAVER_FOOT, url: null }] : []),
     ],
     basis: SEOUL_BRIEF_BASIS,
   };
@@ -237,10 +243,28 @@ function planBlocksText(plan) {
   return Number.isFinite(plan.households) ? `${joined}(${fmt(plan.households)}세대)` : joined;
 }
 
-// 가장 최근 본청약(임대 아닌 분양 이력, 오늘까지)
-function latestMain(project, today) {
-  return [...(project.history ?? [])].filter((e) => e.stage !== PRE_SUBSCRIPTION && !e.rental && String(e.noticeDate) <= today)
-    .sort((a, b) => String(a.noticeDate).localeCompare(String(b.noticeDate))).at(-1) ?? null;
+// 가장 최근 본청약 묶음: 임대 아닌 분양 이력(오늘까지) 중 공고일이 가장 늦은 날의 이력 모두(같은 날 공고된 블록들). 없으면 []
+export function latestMains(project, today) {
+  const mains = (project.history ?? []).filter((e) => e.stage !== PRE_SUBSCRIPTION && !e.rental && String(e.noticeDate) <= String(today));
+  const last = mains.map((e) => String(e.noticeDate)).sort().at(-1);
+  return last ? mains.filter((e) => String(e.noticeDate) === last) : [];
+}
+
+// 이력 제목에 블록 이름이 이미 있는지('남양주왕숙2 A03'은 A-3, '카이브 유보라(AC4BL)'는 AC4). 블록 번호 앞자리 0은 무시한다.
+export function titleHasBlock(title, block) {
+  if (!title) return false;
+  if (nameHasBlock(title, block)) return true;
+  // 공백으로 떨어진 블록 표기('남양주왕숙2 A03')는 낱말 하나씩 본다
+  const plain = (value) => blockKey(value).replace(/^([A-Z]+)0+(?=\d)/, '$1');
+  const want = plain(block);
+  return String(title).split(/[\s()[\],·/]+/).some((word) => /^[A-Za-z]{1,2}-?\d/.test(word) && plain(word) === want);
+}
+
+// 본청약 한 건의 괄호 설명: 제목에 블록 이름이 없으면 제목, 있으면 유형, 그리고 세대 수. '(교산 푸르지오 더 퍼스트, 1,115세대)'
+function mainDetail(entry) {
+  const what = entry.title && !titleHasBlock(entry.title, entry.block) ? entry.title : entry.type;
+  const parts = [what, entry.households ? `${fmt(entry.households)}세대` : null].filter(Boolean);
+  return parts.length ? `(${parts.join(', ')})` : '';
 }
 
 // 그 블록 줄의 경쟁률: 분양 성과(청약홈 API 또는 보도), 없으면 이력의 보도 경쟁률
@@ -274,7 +298,8 @@ export function townBrief(project, { curated = [], today } = {}) {
   const wholeItems = items.filter((item) => !item.block);
   const open = openReception(project, today);
   const plans = pendingPlans(project, today);
-  const main = latestMain(project, today);
+  const mains = latestMains(project, today);
+  const main = mains[0] ?? null;
   const paras = [];
 
   if (!hasBlocks(project)) {
@@ -305,23 +330,53 @@ export function townBrief(project, { curated = [], today } = {}) {
   // 1문단: 가장 최근 본청약
   const p1 = [];
   if (main) {
-    const label = [main.block, main.title ?? main.type].filter(Boolean).join(' ');
-    p1.push(T(`${name}의 가장 최근 본청약은 `), B(label));
-    p1.push(T(`${main.households ? `(${fmt(main.households)}세대)` : ''}${josa(main.households ? '대' : label, '으로', '로')} ${monthLabel(main.noticeDate)} 공고됐습니다.`));
-    const note = add(newestSource(main.sources) ?? main.sources?.[0]);
-    if (note) p1.push(note);
-    const comp = blockCompetition(project, main);
-    if (comp) {
-      p1.push(T(` ${comp.scope ? `${comp.scope} ` : ''}경쟁률은 ${rateText(comp.rate)}이었습니다.`));
-      const n = add(comp.source);
-      if (n) p1.push(n);
+    // 같은 날 공고된 블록은 함께: 'B-17(공공분양, 491세대)·A-24(신혼희망타운, 390세대)로 2025년 11월 공고됐습니다.'
+    p1.push(T(`${name}의 가장 최근 본청약은 `));
+    mains.forEach((entry, i) => {
+      if (i > 0) p1.push(T('·'));
+      p1.push(B(entry.block));
+      const detail = mainDetail(entry);
+      if (detail) p1.push(T(detail));
+    });
+    const last = mains.at(-1);
+    p1.push(T(`${josa(mainDetail(last) ? '대' : last.block, '으로', '로')} ${monthLabel(main.noticeDate)} 공고됐습니다.`));
+    const noted = new Set();
+    for (const entry of mains) {
+      const note = add(newestSource(entry.sources) ?? entry.sources?.[0]);
+      if (note && !noted.has(note.t)) {
+        noted.add(note.t);
+        p1.push(note);
+      }
     }
-    if (open && blockKey(open.block ?? '') === blockKey(main.block)) {
+    // 블록별 경쟁률(있는 블록만). 범위(scope)가 모두 같으면 앞에 한 번만 적는다
+    const cited = new Set();
+    const comps = mains.map((entry) => ({ entry, comp: blockCompetition(project, entry) })).filter((x) => x.comp);
+    if (comps.length) {
+      const scopes = [...new Set(comps.map((x) => x.comp.scope ?? ''))];
+      const shared = scopes.length === 1 && scopes[0] ? scopes[0] : null;
+      p1.push(T(` ${shared ? `${shared} ` : ''}경쟁률은 `));
+      const notes = [];
+      p1.push(T(`${comps.map(({ entry, comp }) => {
+        const who = mains.length > 1 ? `${entry.block} ` : '';
+        const scope = !shared && comp.scope ? `${comp.scope} ` : '';
+        return `${who}${scope}${rateText(comp.rate)}`;
+      }).join(', ')}이었습니다.`));
+      for (const { comp } of comps) {
+        const url = safeHttpUrl(comp.source?.url);
+        if (url) cited.add(url);
+        const n = add(comp.source);
+        if (n && !notes.some((x) => x.t === n.t)) notes.push(n);
+      }
+      p1.push(...notes);
+    }
+    if (open && mains.some((entry) => blockKey(open.block ?? '') === blockKey(entry.block))) {
       p1.push(T(open.winnerDate ? ` 지금 청약 접수 중이고, 당첨자 발표는 ${dayLabel(open.winnerDate)}입니다.` : ' 지금 청약 접수 중입니다.'));
       const n = add({ title: '청약홈', outlet: '청약홈', url: open.notice.url, date: open.notice.announceDate ?? null });
       if (n) p1.push(n);
     }
-    const price = items.find((item) => item.block && itemHasBlock(item, main.block) && /분양가/.test(item.title));
+    // 같은 블록의 분양가 기사. 이 문단에서 경쟁률 출처로 이미 단 기사면 다시 옮기지 않는다
+    const price = items.find((item) => item.block && mains.some((entry) => itemHasBlock(item, entry.block)) && /분양가/.test(item.title)
+      && !cited.has(safeHttpUrl(item.url)));
     if (price) {
       p1.push(T(` ${sentence(price.title)}`));
       const n = add(itemSource(price));
@@ -395,11 +450,18 @@ export function townBrief(project, { curated = [], today } = {}) {
   if (open?.block && open.winnerDate) headline = `${name}, ${open.block} 당첨 발표는 ${dayLabel(open.winnerDate)}`;
   else if (open) headline = `${name}, ${open.block ? `${open.block} ` : ''}청약 접수 중`;
   else if (next.length) headline = `${name}, 다음 차례는 ${next[0].blocks.join('·')}${next[0].type ? ` ${next[0].type}` : ''}`;
-  else if (main) headline = `${name}, 최근 본청약은 ${main.block}`;
+  else if (main) headline = `${name}, 최근 본청약은 ${mains.map((entry) => entry.block).join('·')}`;
   else headline = `${name}, 본청약 전 단계`;
   return {
     headline, paras, foot, basis: TOWN_BRIEF_BASIS,
   };
+}
+
+// 기간 표기: 한 해의 1~12월이면 '2029년'(출처가 해 단위로 말한 경우), 같은 달이면 그 달, 아니면 'A에서 B 사이'
+export function windowRangeText(from, to = from) {
+  const year = /^(\d{4})-01$/.exec(String(from ?? ''));
+  if (year && to === `${year[1]}-12`) return `${year[1]}년`;
+  return from === to ? monthLabel(from) : `${monthLabel(from)}에서 ${monthLabel(to)} 사이`;
 }
 
 // 첫 청약(또는 다음 블록) 시기 문장: 보도된 지구 계획(expected)이면 그 출처, 아니면 규칙으로 잡은 기간
@@ -407,7 +469,7 @@ function firstSaleParagraph(project, add, lead) {
   const from = project.window?.from;
   const to = project.window?.to ?? from;
   if (!from) return [T(`${lead}예상 시기는 아직 정하지 못했습니다.`)];
-  const range = from === to ? monthLabel(from) : `${monthLabel(from)}에서 ${monthLabel(to)} 사이`;
+  const range = windowRangeText(from, to);
   if (project.expected?.basis) {
     const segs = [T(`${lead}첫 분양은 ${range} 목표라는 발표·보도가 있습니다.`)];
     for (const source of basisSources(project, project.expected.basis)) {
@@ -424,12 +486,12 @@ function firstSaleParagraph(project, add, lead) {
  * watchlist에서 추적 중인 지구만 지구 브리핑을 만든다.
  */
 export function buildBriefs({
-  projects = [], watchlist = [], curated = [], today, seoulAsOf = null,
+  projects = [], watchlist = [], curated = [], today, seoulAsOf = null, newsSearched = null,
 } = {}) {
   const out = {};
   const stats = districtStats(projects);
   for (const district of SEOUL_DISTRICTS) {
-    const brief = districtBrief(district, stats, { seoulAsOf, today });
+    const brief = districtBrief(district, stats, { seoulAsOf, today, newsSearched });
     if (brief) out[district] = brief;
   }
   const byId = new Map(projects.map((p) => [p.id, p]));
