@@ -751,19 +751,19 @@ test('windowRangeLabel: a 1년 안 range that already started reads 지금~end (
   // 이번 달 시작·앞으로의 범위는 그대로
   assert.equal(app.windowRangeLabel(win('2026-11', '2027-11'), today), '2026-11~2027-11');
   assert.equal(app.windowRangeLabel(win('2027-03'), today), '2027-03');
-  // 지난 범위(예상 지남)와 접수 중은 원래 범위
+  // 지난 범위(예상 지남)와 공고 중은 원래 범위
   assert.equal(windowLabel(win('2024-01', '2025-01'), today), '2024-01~2025-01 (지남)');
   assert.equal(app.windowRangeLabel({ ...win('2026-04', '2027-04'), live: true }, today), '2026-04~2027-04');
   assert.equal(app.windowRangeLabel({ window: { from: null, to: null } }, today), null);
 });
 
-test('live projects and live blocks use one word, 접수 중; a chip colour never means two different states', () => {
-  assert.equal(BUCKET_INFO.live.label, '접수 중');
-  assert.equal(windowLabel({ live: true, window: null }, today), '접수 중');
+test('live projects say 공고 중 (open notice, may be before 접수 starts; block statuses keep the pipeline names); a chip colour never means two different states', () => {
+  assert.equal(BUCKET_INFO.live.label, '공고 중');
+  assert.equal(windowLabel({ live: true, window: null }, today), '공고 중');
   const projectClass = new Map(Object.values(BUCKET_INFO).map((info) => [info.cls, info.label]));
   // 사업 칩과 같은 클래스를 쓰는 블록 상태는 뜻이 같은 것뿐
   const shared = Object.entries(app.BLOCK_STATUS_CLASS).filter(([, cls]) => projectClass.has(cls)).map(([status, cls]) => [status, projectClass.get(cls)]);
-  assert.deepEqual(shared, [['접수 중', '접수 중'], ['본청약 공고', '공고 있었음'], ['예정 지남(보도)', '예상 지남'], ['미정', '3년 뒤·미정']]);
+  assert.deepEqual(shared, [['접수 중', '공고 중'], ['본청약 공고', '공고 있었음'], ['예정 지남(보도)', '예상 지남'], ['미정', '3년 뒤·미정']]);
   const blockClasses = Object.values(app.BLOCK_STATUS_CLASS);
   assert.equal(new Set(blockClasses).size, blockClasses.length);
   const css = readFileSync(new URL('../site/style.css', import.meta.url), 'utf8');
@@ -777,4 +777,33 @@ test('index.html: merged 지역/유형 filters, collapsible filter box, skip lin
   for (const id of ['filters-box', 'filters-summary', 'kind-group', 'disclaimer', 'towns-title', 'gantt-panel']) assert.ok(html.includes(`id="${id}"`), id);
   assert.ok(html.includes('href="#list-title"'));
   assert.ok(html.includes('placeholder="구역명·구·동"'));
+  // 잠긴 유형 버튼의 이유(aria-describedby 대상)
+  assert.ok(html.includes('id="kind-locked-note"'));
+});
+
+test('auto folds: every <details class="fold auto"> ships open and is the initFolds list; other folds keep their summary on wide screens', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  const autos = [...html.matchAll(/<details\b[^>]*>/g)].map((m) => m[0]).filter((tag) => /class="[^"]*\bfold\b[^"]*\bauto\b/.test(tag));
+  assert.deepEqual(autos.map((tag) => /id="([^"]+)"/.exec(tag)?.[1]).sort(), [...app.AUTO_FOLD_IDS].sort());
+  // 스크립트가 없어도 넓은 화면에서 내용이 보이게 기본은 펼침
+  for (const tag of autos) assert.match(tag, /\sopen[\s>]/, tag);
+  // 넓은 화면에서 접기 제목을 숨기는 규칙은 auto 에만(블록 표 설명처럼 닫혀 있는 보통 접기는 제목으로 열 수 있어야 한다)
+  const css = readFileSync(new URL('../site/style.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.fold.auto > summary { display: none; }'));
+  assert.equal(/(^|[\s,}])\.fold > summary \{[^}]*display: none/.test(css), false);
+  const js = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("h('details', { class: 'fold note' }"), 'block table note is a normal fold');
+});
+
+test('edge cases: year boundary range, duplicate hash keys, district-only empty state', () => {
+  // 시작 달이 지난해 12월, 오늘이 1월이어도 이미 시작된 범위
+  assert.equal(app.windowRangeLabel(win('2025-12', '2026-06'), '2026-01'), '지금~2026-06');
+  assert.equal(app.windowRangeLabel(win('2026-01', '2026-06'), '2026-01'), '2026-01~2026-06');
+  // 같은 키가 두 번이면 뒤의 값
+  assert.deepEqual(app.parseHash('#p=a&p=b'), { id: 'b', district: null });
+  assert.deepEqual(app.parseHash('#gu=%EC%A4%91%EA%B5%AC&gu=%EA%B0%95%EB%82%A8%EA%B5%AC&p=x'), { id: 'x', district: '강남구' });
+  // 구만 골랐는데 결과가 없으면 초기화 버튼(구 선택도 푼다)
+  assert.deepEqual(app.emptyState({ ...ALL, district: '중구' }), {
+    title: '지금 조건에 맞는 사업이 없습니다.', conditions: ['중구'], clearQuery: false, reset: true,
+  });
 });

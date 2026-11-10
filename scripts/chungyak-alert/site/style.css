@@ -104,8 +104,10 @@ button, input, select { font: inherit; color: inherit; }
 .seg button { font-size: .86rem; border: 0; background: transparent; color: var(--ink); padding: 5px 11px; cursor: pointer; min-height: 32px; }
 .seg button + button { border-left: 1px solid var(--rule); }
 .seg button[aria-pressed="true"] { background: var(--plan); color: var(--sheet); }
-.seg button:disabled { cursor: not-allowed; color: var(--muted); }
-.seg button[aria-pressed="true"]:disabled { background: var(--wash); color: var(--muted); }
+/* 잠긴 버튼은 aria-disabled 로 두어 포커스와 설명(aria-describedby)이 남게 한다 */
+.seg button[aria-disabled="true"] { cursor: not-allowed; color: var(--muted); }
+.seg button[aria-pressed="true"][aria-disabled="true"] { background: var(--wash); color: var(--muted); }
+.seg button[aria-pressed="true"][aria-disabled="true"]:focus-visible { outline-color: var(--line); }
 .seg button:focus-visible { outline-offset: -3px; }
 .seg button[aria-pressed="true"]:focus-visible { outline-color: var(--sheet); } /* 눌린 버튼(계획선 파랑) 위에서도 포커스가 보이게 */
 .field { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--muted); }
@@ -244,7 +246,7 @@ button, input, select { font: inherit; color: inherit; }
 .sale-src { font-size: .78rem; color: var(--muted); }
 .sale-src a { white-space: nowrap; } /* '낸 곳 날짜'가 중간에서 끊기지 않게(짧은 글자라 넘치지 않음) */
 
-/* 블록별 현황: 위에 상태별 개수, 아래 블록 표. 상세 칸이 좁으면(컨테이너 640px 이하) 줄마다 카드로 쌓는다(가로 스크롤 없음) */
+/* 블록별 현황: 위에 상태별 개수, 아래 블록 표(넓을 때 가로 스크롤 칸이라 머리줄 고정은 하지 않음). 상세 칸이 좁으면(컨테이너 640px 이하) 줄마다 카드로 쌓는다(가로 스크롤 없음) */
 .blocks { display: grid; gap: 6px; font-size: .86rem; min-width: 0; }
 .block-counts { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .block-counts li { display: inline-flex; align-items: center; gap: 4px; }
@@ -255,7 +257,7 @@ button, input, select { font: inherit; color: inherit; }
 .block-table th, .block-table td { text-align: left; vertical-align: top; padding: 6px 6px; border-bottom: 1px solid var(--rule); word-break: keep-all; overflow-wrap: break-word; }
 .block-table td:nth-child(2) { min-width: 6.5em; }
 .block-table td:nth-child(5) { min-width: 11em; }
-.block-table thead th { font-size: .76rem; font-weight: 600; color: var(--muted); background: var(--wash); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+.block-table thead th { font-size: .76rem; font-weight: 600; color: var(--muted); background: var(--wash); white-space: nowrap; }
 .block-table tbody th { font-weight: 700; white-space: nowrap; }
 .block-table td:nth-child(3) { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .block-table td .chip { display: inline-block; margin: 0 4px 2px 0; }
@@ -350,10 +352,11 @@ button, input, select { font: inherit; color: inherit; }
   .fold > summary, .memo summary { min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; }
   .linkish { padding: 11px 4px; margin: -11px -4px; }
 }
-/* 휴대폰보다 넓으면 접는 글을 늘 펼쳐 두고(app.js initFolds) 접기 제목은 숨긴다. 위 손가락 규칙보다 뒤에 둔다 */
+/* 휴대폰보다 넓으면 자동 접기(.fold.auto: 안내문·필터)는 늘 펼쳐 두고 접기 제목을 숨긴다(app.js initFolds).
+   블록 표 설명 같은 보통 접기(.fold)는 어느 폭에서나 제목으로 연다. 위 손가락 규칙보다 뒤에 둔다 */
 @media (min-width: 521px) {
-  .fold > summary { display: none; }
-  .fold > p { margin-top: 0; }
+  .fold.auto > summary { display: none; }
+  .fold.auto > p { margin-top: 0; }
   .filters-box[open] > summary { margin-bottom: 0; }
 }
 @media (prefers-reduced-motion: no-preference) {

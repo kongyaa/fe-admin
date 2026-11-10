@@ -11,11 +11,11 @@ export const DEFAULT_STAGES = {
   town: ['후보지', '지구지정', '지구계획승인', '부지조성 착공', '블록별 분양', '준공'],
 };
 
-// 정렬 순서이기도 하다: 접수 중 → 1년 안 → 3년 안 → 3년 뒤·미정 → 공고 있었음 → 예상 지남 → 분양했을 가능성 → 준공
+// 정렬 순서이기도 하다: 공고 중 → 1년 안 → 3년 안 → 3년 뒤·미정 → 공고 있었음 → 예상 지남 → 분양했을 가능성 → 준공
 // 파이프라인(src/pipeline/expected-window.js)의 BUCKETS와 같게 둔다.
 export const BUCKET_ORDER = ['live', 'soon', 'mid', 'far', 'announced', 'overdue', 'likely_sold', 'done'];
 export const BUCKET_INFO = {
-  live: { label: '접수 중', cls: 'c-live' },
+  live: { label: '공고 중', cls: 'c-live' },
   soon: { label: '1년 안', cls: 'c-soon' },
   mid: { label: '3년 안', cls: 'c-mid' },
   far: { label: '3년 뒤·미정', cls: 'c-far' },
@@ -60,7 +60,7 @@ export function addMonths(ym, n) {
 }
 
 /**
- * 예상 시기 구간: live(접수 중인 공고 연결) | soon(12개월 안) | mid(36개월 안) | far(그 뒤·미정)
+ * 예상 시기 구간: live(공고 중: 마감 전 공고 연결) | soon(12개월 안) | mid(36개월 안) | far(그 뒤·미정)
  * | announced(지난 공고만 연결) | overdue(예상 지남) | likely_sold(분양했을 가능성) | done(준공)
  * todayYm 은 'YYYY-MM' (한국 시간 기준 이번 달)
  */
@@ -133,6 +133,8 @@ export function matchesFilters(project, filters, todayYm, bucket = bucketOf(proj
 }
 
 export const DEFAULT_FILTERS = Object.freeze({ area: 'all', kind: 'all', stage: '', when: 'all', district: null, q: '' });
+// 폭에 따라 저절로 접고 펴는 <details class="fold auto"> 의 id(index.html). 휴대폰 폭에서만 접는다(initFolds)
+export const AUTO_FOLD_IDS = Object.freeze(['disclaimer', 'filters-box']);
 // 경기는 공공주택지구뿐이라 지역이 경기면 유형(재개발·재건축) 필터는 쓸 수 없다
 export const TOWN_AREA = '경기';
 
@@ -199,7 +201,7 @@ export function emptyState(filters) {
   return { title, conditions, clearQuery: Boolean(f.q), reset: others > 0 };
 }
 
-/** 목록 순서: 구간(접수 중 먼저), 예상 시작 달, 이름 */
+/** 목록 순서: 구간(공고 중 먼저), 예상 시작 달, 이름 */
 export function compareProjects(a, b, todayYm) {
   const ra = BUCKET_ORDER.indexOf(bucketOf(a, todayYm));
   const rb = BUCKET_ORDER.indexOf(bucketOf(b, todayYm));
@@ -272,7 +274,7 @@ export function windowLabel(project, todayYm) {
     const latest = latestAnnounce(project);
     return latest ? `공고 있었음(${latest})` : '공고 있었음';
   }
-  if (bucket === 'live') return range ?? '접수 중';
+  if (bucket === 'live') return range ?? '공고 중';
   return range ?? '3년 뒤·미정';
 }
 
@@ -417,7 +419,7 @@ export function latestSale(project) {
 export const BLOCK_STATUS_ORDER = [
   '접수 중', '본청약 공고', '임대 공고', '다음 예정(보도)', '예정 지남(보도)', '착공', '사업승인', '계획 보도', '미정',
 ];
-// 칩 색: 사업 목록의 칩(BUCKET_INFO)과 뜻이 같은 상태만 같은 클래스를 쓰고(접수 중·지난 공고·지남·미정),
+// 칩 색: 사업 목록의 칩(BUCKET_INFO)과 뜻이 같은 상태만 같은 클래스를 쓰고(공고 중·지난 공고·지남·미정),
 // 나머지는 블록 전용 클래스(b-*)를 써서 한 색이 두 가지 뜻이 되지 않게 한다.
 export const BLOCK_STATUS_CLASS = {
   '접수 중': 'c-live',
@@ -591,7 +593,7 @@ export function dayFraction(ymd) {
 }
 
 /**
- * 구별 집계: 서울 사업만, 구 이름 → { n: 전체, soon: 접수 중·1년 안, mid: 3년 안 }
+ * 구별 집계: 서울 사업만, 구 이름 → { n: 전체, soon: 공고 중·1년 안, mid: 3년 안 }
  * bucketFn(project) 로 구간을 받는다(화면에서는 미리 계산한 값을 넘김).
  */
 export function tileStats(projects, bucketFn) {
@@ -608,7 +610,7 @@ export function tileStats(projects, bucketFn) {
   return stats;
 }
 
-/** 타일 색 3단계: 1년 안(접수 중 포함) 3곳 이상 → hot, 1~2곳이거나 3년 안이 있으면 → has, 그 밖 → '' */
+/** 타일 색 3단계: 1년 안(공고 중 포함) 3곳 이상 → hot, 1~2곳이거나 3년 안이 있으면 → has, 그 밖 → '' */
 export function tileClass(stat) {
   const soon = stat?.soon ?? 0;
   if (soon >= 3) return 'hot';
@@ -617,7 +619,7 @@ export function tileClass(stat) {
 }
 
 /**
- * 타일에 쓰는 숫자: 크게 보일 main 은 1년 안(접수 중 포함) 수로 색(tileClass)과 같은 질문에 답하고,
+ * 타일에 쓰는 숫자: 크게 보일 main 은 1년 안(공고 중 포함) 수로 색(tileClass)과 같은 질문에 답하고,
  * total 은 그 구의 전체 사업 수(작게 '/36').
  */
 export function tileCount(stat) {
@@ -627,6 +629,7 @@ export function tileCount(stat) {
 /**
  * 주소 해시에서 화면 상태를 꺼낸다: '#p=<id>'(상세), '#gu=<구>'(구 선택), 둘 다면 '#gu=<구>&p=<id>'.
  * 값은 decodeURIComponent 로 풀고, 깨졌거나 빈 값은 null. 모르는 해시('#sources' 등)면 둘 다 null.
+ * 같은 키가 두 번 나오면 뒤의 값을 쓴다('#p=a&p=b' → 'b').
  */
 export function parseHash(hash) {
   const out = { id: null, district: null };
@@ -751,10 +754,11 @@ const state = {
   stages: DEFAULT_STAGES,
   filters: { ...DEFAULT_FILTERS },
   base: [], // 구 선택을 뺀 필터 결과(타일·지구 목록용)
-  baseIds: new Set(),
+  visibleIds: new Set(),
   visible: [], // 구 선택까지 적용한 결과(목록·타임라인용)
   shown: PAGE_SIZE,
   selected: null,
+  quietPop: false, // toggleDistrict 가 부른 history.back() 의 popstate 인지
   hashId: null, // 주소 해시에 들어 있는 상세 id(좁은 화면에서는 '상세를 보는 중'이라는 뜻)
 };
 
@@ -963,8 +967,8 @@ function buildStageSelect() {
 function applyFilters({ keepPage = false } = {}) {
   const { district, ...rest } = state.filters;
   state.base = state.projects.filter((p) => matchesFilters(p, rest, state.todayYm, state.bucket.get(p.id), state.hay.get(p.id)));
-  state.baseIds = new Set(state.base.map((p) => p.id));
   state.visible = district ? state.base.filter((p) => p.district === district) : state.base;
+  state.visibleIds = new Set(state.visible.map((p) => p.id));
   if (!keepPage) state.shown = PAGE_SIZE;
   syncFilterControls();
   keepFocus($('tiles'), renderTiles);
@@ -980,8 +984,16 @@ function syncFilterControls() {
   }
   // 경기는 공공주택지구뿐이라 유형(재개발·재건축)을 고를 수 없다
   const locked = kindLocked(state.filters);
-  for (const btn of document.querySelectorAll('[data-filter="kind"]')) btn.disabled = locked;
-  $('kind-group').title = locked ? '경기는 공공주택지구만 있어 유형을 고를 수 없습니다' : '';
+  // disabled 대신 aria-disabled: 포커스가 남고 화면 읽기 프로그램이 이유(kind-locked-note)를 읽는다. 누르면 nextFilters 가 무시한다
+  for (const btn of document.querySelectorAll('[data-filter="kind"]')) {
+    if (locked) {
+      btn.setAttribute('aria-disabled', 'true');
+      btn.setAttribute('aria-describedby', 'kind-locked-note');
+    } else {
+      btn.removeAttribute('aria-disabled');
+      btn.removeAttribute('aria-describedby');
+    }
+  }
   $('f-stage').value = state.filters.stage;
   if ($('f-q').value !== state.filters.q) $('f-q').value = state.filters.q;
   $('filters-summary').textContent = filterSummary(state.filters);
@@ -1011,9 +1023,15 @@ function toggleDistrict(district) {
   const next = state.filters.district === district ? null : district;
   state.filters = nextFilters(state.filters, 'district', next);
   applyFilters();
-  // 좁은 화면: 구를 고르면 기록을 하나 남기고(뒤로 가기 → 지도) 바로 그 구 목록으로 내려간다
+  // 좁은 화면: 구를 고르면 기록을 하나 남기고(뒤로 가기 → 지도) 바로 그 구 목록으로 내려간다.
+  // 그 기록에서 다시 풀면 기록을 하나 되돌린다(켜기·끄기·켜기를 반복해도 같은 기록이 쌓이지 않게). 화면은 이미 바꿨으니 popstate 는 조용히
   const phone = narrow.matches;
-  writeHash({ id: phone ? null : state.hashId, push: phone && next ? 'district' : null });
+  if (phone && !next && history.state?.pushed === 'district') {
+    state.quietPop = true;
+    history.back();
+  } else {
+    writeHash({ id: phone ? null : state.hashId, push: phone && next ? 'district' : null });
+  }
   if (phone && next) {
     $('list-title').scrollIntoView({ block: 'start' });
     $('list-title').focus({ preventScroll: true });
@@ -1043,14 +1061,21 @@ function syncFromHash() {
   const gu = district && SEOUL_DISTRICTS.has(district) ? district : null;
   const prevId = state.hashId;
   state.hashId = id;
-  const phone = narrow.matches;
+  // 우리가 부른 history.back()(toggleDistrict)이면 화면은 이미 맞췄으니 스크롤·포커스를 옮기지 않는다
+  const phone = narrow.matches && !state.quietPop;
+  state.quietPop = false;
   if (gu !== state.filters.district) {
     state.filters = nextFilters(state.filters, 'district', gu);
     applyFilters();
-    if (!id && !prevId && phone) $(gu ? 'list-title' : 'browse').scrollIntoView({ block: 'start' });
+    if (!id && !prevId && phone) {
+      // 구 목록으로 돌아오면 구를 눌렀을 때(toggleDistrict)처럼 목록 제목으로, 구 선택이 풀리면 지도로
+      const target = $(gu ? 'list-title' : 'browse');
+      target.scrollIntoView({ block: 'start' });
+      if (gu) target.focus({ preventScroll: true });
+    }
   }
   if (id) {
-    if (id !== state.selected) select(id, { fromHash: true, scroll: true });
+    if (id !== state.selected) select(id, { fromHash: true, scroll: phone });
     else if (id !== prevId && phone) showDetail();
   } else if (prevId && phone) {
     backToList();
@@ -1177,7 +1202,7 @@ function saleSection(p) {
           what ? h('span', {}, what) : null,
           r.stage === PRE_SUBSCRIPTION ? h('span', { class: 'chip c-pre' }, '사전청약') : null,
           r.rental ? h('span', { class: 'chip c-rent' }, '임대') : null,
-          open ? h('span', { class: 'chip c-live' }, '접수 중') : null),
+          open ? h('span', { class: 'chip c-live' }, '공고 중') : null),
         r.title ? h('span', { class: 'sale-title' }, r.title) : null,
         r.sources.length
           ? h('span', { class: 'sale-src' }, '출처 ', r.sources.flatMap((src, i) => (i ? [' · ', sourceLink(src)] : [sourceLink(src)])))
@@ -1301,7 +1326,7 @@ function renderDetail(p, missingId) {
             n?.typeLabel ? ` · ${n.typeLabel}` : '',
             n?.announceDate ? ` · 공고 ${n.announceDate}` : '',
             n?.end ? ` · 마감 ${n.end}` : ''),
-          open ? h('span', { class: 'chip c-live' }, '접수 중') : null);
+          open ? h('span', { class: 'chip c-live' }, '공고 중') : null);
       })))
     : null;
 
@@ -1321,7 +1346,7 @@ function renderDetail(p, missingId) {
     h('div', { class: 'detail-head' },
       h('h2', { class: 'detail-name', tabindex: '-1', id: 'detail-title' }, p.name ?? '')),
     // 필터를 바꿔 목록에서 빠진 사업이면 알려 준다(syncStale)
-    h('p', { class: 'stale-note', id: 'stale-note', hidden: true }, '지금 조건에는 없는 사업입니다. 목록에는 보이지 않습니다.'),
+    h('p', { class: 'stale-note', id: 'stale-note', hidden: true }, '지금 목록에는 없는 사업입니다. 필터나 구 선택을 바꾸면 다시 보입니다.'),
     answer,
     h('p', { class: 'why' }, h('b', {}, '예상 근거 '), p.windowBasis || '근거 정보 없음'),
     h('div', { class: 'facts' }, facts),
@@ -1348,10 +1373,10 @@ function renderDetail(p, missingId) {
 
 let stepsObserver = null;
 
-/** 보고 있는 사업이 지금 필터(구 선택 제외) 결과에 없으면 상세에 알림을 띄운다 */
+/** 보고 있는 사업이 지금 목록(필터와 구 선택을 모두 적용한 결과)에 없으면 상세에 알림을 띄운다 */
 function syncStale() {
   const note = document.getElementById('stale-note');
-  if (note) note.hidden = !state.selected || state.baseIds.has(state.selected);
+  if (note) note.hidden = !state.selected || state.visibleIds.has(state.selected);
 }
 
 const narrow = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(max-width: 820px)') : { matches: false };
@@ -1433,7 +1458,7 @@ function renderGantt() {
   const cells = [h('div', { class: 'g-corner' }), axis];
   for (const [p, bars] of rows) {
     const range = windowRangeLabel(p, state.todayYm);
-    const said = [range ? `${windowPrefix(p)} ${range}` : '', ...bars.filter((b) => b.kind === 'live').map((b) => `접수 중 ${b.label}`)].filter(Boolean).join(', ');
+    const said = [range ? `${windowPrefix(p)} ${range}` : '', ...bars.filter((b) => b.kind === 'live').map((b) => `공고 중 ${b.label}`)].filter(Boolean).join(', ');
     cells.push(
       h('button', {
         type: 'button', class: 'g-label', 'data-key': p.id, 'data-select': p.id, 'aria-current': String(state.selected === p.id), title: p.name ?? '',
@@ -1519,11 +1544,11 @@ function initTheme() {
 
 /**
  * 휴대폰 폭(≤520px)에서는 필터와 안내문을 접어 첫 화면에 지도가 보이게 하고, 그보다 넓으면 펼쳐 둔다
- * (넓은 화면에서는 CSS 가 접기 제목을 숨긴다).
+ * (index.html 은 open 으로 두어 스크립트가 없어도 펼쳐져 있고, 넓은 화면에서는 CSS 가 .fold.auto 의 접기 제목을 숨긴다).
  */
 function initFolds() {
   const phone = window.matchMedia('(max-width: 520px)');
-  const folds = [$('filters-box'), $('disclaimer')];
+  const folds = AUTO_FOLD_IDS.map((id) => $(id));
   const sync = () => {
     for (const el of folds) el.open = !phone.matches;
   };
@@ -1537,7 +1562,8 @@ function init() {
   document.addEventListener('click', (e) => {
     const btn = e.target instanceof Element ? e.target.closest('button') : null;
     if (!btn || !state.data) return;
-    if (btn.hasAttribute('data-filter')) setFilter(btn.dataset.filter, btn.dataset.value);
+    if (btn.getAttribute('aria-disabled') === 'true') announce($('kind-locked-note').textContent); // 잠긴 유형 버튼
+    else if (btn.hasAttribute('data-filter')) setFilter(btn.dataset.filter, btn.dataset.value);
     else if (btn.hasAttribute('data-district')) toggleDistrict(btn.dataset.district);
     else if (btn.hasAttribute('data-select')) select(btn.getAttribute('data-select'), { focus: true });
     else if (btn.hasAttribute('data-back')) leaveDetail();
