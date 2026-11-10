@@ -94,6 +94,21 @@
   현재 단계가 사업시행인가 전(구역지정·추진위·조합설립·건축심의)이면 맞는 공고가 있어도 잇지 않는다(`canLinkNotices`, 위 파이프라인 4 참고).
 - 공공주택지구: 공고 주소나 이름에 시 이름(`하남`)과 `noticeMatch` 중 하나가 있어야 한다.
 
+## 사업별 최근 뉴스 (`src/pipeline/news.js`)
+
+네이버 뉴스 검색 API(공식)로 사업마다 최근 기사 몇 건을 모은다. 스크래핑은 하지 않는다. 아직 `build-map.js`에 연결하지 않은 모듈이다.
+
+- 키: `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`. `NAVER_NEWS_ENDPOINT=hub`(기본, 네이버 API 허브 `naverapihub.apigw.ntruss.com/search/v1/news`, 헤더 `X-NCP-APIGW-API-KEY-ID`/`X-NCP-APIGW-API-KEY`) 또는 `legacy`(developers.naver.com `openapi.naver.com/v1/search/news.json`, 헤더 `X-Naver-Client-Id`/`X-Naver-Client-Secret`). 키는 헤더로만 보내 주소와 오류 문구에 남지 않는다. 키가 없으면 `news_no_key`, 다른 값이면 `news_endpoint`.
+- 대상(`newsTargets`): 공공주택지구 전부 + 서울 정비사업 중 `live`·`soon`·`mid`. 서울은 `live` > `soon` > `mid`, 같은 구간은 예상 시기 시작이 이른 순으로 150개까지(`maxSeoul`). 주 1회 실행이면 호출은 160건 안팎으로 하루 한도(25,000건)보다 훨씬 적다.
+- 검색어(`newsQuery`): 공공주택지구는 이름(`하남교산`). 서울은 `<구에서 '구'를 뺀 이름> <구역명> <재개발|재건축>`(`종로 신영1구역 재개발`). 구역명이 숫자로 끝나면 `구역`을 붙이고(`신영1` → `신영1구역`), `반포미도2차`·`개포주공5단지`는 그대로 둔다. `중구`는 줄이지 않는다. 최신순(`sort=date`) 20건을 받는다.
+- 관련성(`relevant`): 제목(태그·엔티티 제거, 공백 제거)에 이름이 있어야 남긴다. 서울은 공고 연결과 같은 구역명 값(`구역`과 공백을 뺀 값, `신영1구역`·`신영 1구역` 모두 맞음)이고, 3글자 미만이면 `<이름>구역`으로만 찾는다. 공공주택지구는 이름 또는 `noticeMatch`(2글자 이상). 숫자로 끝나는 값 뒤에 숫자, `차`, `단지`, `동`, `가`가 오면 다른 것으로 본다(`신당1` ≠ `신당10`, `신길2` ≠ `신길2차`). 기사 제목에는 구가 거의 없어 구는 보지 않는다(다른 구의 같은 이름 구역이 섞일 수 있다).
+- 정리: 같은 링크나 같은 제목(공백·문장부호 무시)은 하나만, 오늘 기준 21일 전(그날 포함)부터 오늘까지만, 최신순 5건(`limitPerProject`)까지.
+- 저장하는 값: `{ title, outlet, date, url }`뿐이다. 제목은 `<b>` 태그를 지우고 엔티티(`&quot;`, `&amp;` 등)를 푼 값, 언론사는 원문 주소 호스트로 정한다(알려진 언론사는 이름, 아니면 `www.`를 뗀 호스트). 날짜는 `pubDate`(RFC 1123)의 한국 날짜, 링크는 원문(`originallink`)이 http(s)면 원문, 아니면 네이버 뉴스 링크다. 날짜를 읽지 못한 기사는 보관 기간을 지킬 수 없어 뺀다. 요약(`description`)과 본문은 저장하지 않는다.
+- 약관(2026-09 개정 보도 기준): 출처와 원문 링크를 함께 보여 주고, 서버 보관은 21일 이내, AI 학습·답변 생성·재판매에 쓰지 않는다. 사이트에는 언론사 이름과 원문 링크를 함께 보여 줘야 한다.
+- 실패: 사업 하나의 실패는 `errors`에 kind만 남기고 다음 사업으로 간다. `401`·`403`·`429`, 키 없음, 잘못된 endpoint는 `stopped`에 kind를 두고 바로 멈춘다(호출을 더 보내지 않음). 사업 사이에 200ms 쉰다.
+- 결과(`collectNews`): `{ byId: { [사업 id]: [...] }, checked, matched, errors, failed, stopped }`. 기사가 남은 사업만 `byId`에 있다.
+- 연결할 때: `bucketOf` 뒤, `toPublic` 전에 `newsTargets`를 부른다(구간이 필요하고, `toPublic`이 `noticeMatch`를 지운다). 실패해도 지도 빌드는 계속하고 뉴스만 비운다.
+
 ## `data/newtowns.yaml` 편집
 
 ```yaml
