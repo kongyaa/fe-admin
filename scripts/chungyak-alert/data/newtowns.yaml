@@ -82,6 +82,14 @@ towns:
           - { title: "교산 푸르지오 더 퍼스트(하남교산 A-2BL) 공공분양주택 입주자모집공고 (LH청약플러스)", url: "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060838&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027", date: "2025-03-31" }
           - { title: "LH, 하남교산 첫 공공분양주택 1115가구 공급 (뉴시스)", url: "https://www.newsis.com/view/NISX20250331_0003120384", date: "2025-03-31" }
           - { title: "'3기 신도시' 하남교산 내달 첫 본청약…분양가 17% 올라 (뉴시스)", url: "https://www.newsis.com/view/NISX20250331_0003120514", date: "2025-03-31" }
+        # 보도된 경쟁률(청약홈 경쟁률 API에 자료가 없을 때만 지도에 쓴다). 기사는 '일반공급'이라고만 하고 1순위라고 하지 않는다.
+        # SBS Biz 2025-05-10(https://biz.sbs.co.kr/amp/article/20000233639)도 같은 수치(201가구, 5만2천920명, 263.3대 1).
+        competition:
+          scope: 일반공급
+          households: 201
+          applicants: 52920
+          rate: 263.3
+          source: { title: "하남교산 A2 387가구 모집에 7.8만명 몰려…경쟁률 최대 366대 1 (뉴시스)", url: "https://mobile.newsis.com/view/NISX20250509_0003170095", date: "2025-05-09" }
     # 다음 블록 계획은 모두 지역지(하남Times·하남일보) 보도뿐이고 LH·국토부 자료는 찾지 못했다. 출처 제목에 '지역지'를 붙인다.
     plans:
       - blocks: [A9, A11]

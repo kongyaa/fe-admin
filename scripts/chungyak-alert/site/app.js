@@ -505,6 +505,8 @@ export function blockRows(project, today) {
       plan,
       note: textOrNull(b.note),
       sources: cleanLinks(b.sources),
+      // 분양 성과(공고 난 분양 줄만, 없으면 null). 임대 줄에는 보이지 않는다.
+      performance: b.rental === true ? null : cleanPerformance(b.performance),
     };
   }).sort((a, b) => BLOCK_STATUS_ORDER.indexOf(a.status) - BLOCK_STATUS_ORDER.indexOf(b.status)
     || naturalBlock(a.block, b.block) || Number(a.rental) - Number(b.rental));
@@ -555,6 +557,157 @@ export function blockPlanLabel(plan, todayYm) {
   const src = plan.source ? `${sourceOutlet(plan.source)}${plan.source.date ? ` ${plan.source.date}` : ''}` : null;
   const passed = plan.to && todayYm && monthsBetween(todayYm, plan.to) < 0;
   return `${plan.expected}${src ? ` (${src})` : ''}${passed ? ' · 지남' : ''}`;
+}
+
+// --- 분양 성과(공고 난 블록의 분양가·경쟁률·주변 시세 비교) ------------------------
+
+/** 시세 숫자를 하나라도 보일 때 붙이는 안내 */
+export const MARKET_CAVEAT = '주변 단지 실거래로 추정한 값이며 이 단지의 시세가 아닙니다 (전매제한·미입주)';
+/** 공고 당시 값은 오늘 받은 실거래(늦은 신고·취소 반영)로 다시 계산한 것이라는 표시 */
+export const AT_NOTICE_NOTE = '(현재 집계 기준)';
+/** 청약홈 경쟁률 API 값의 안내(실시간 집계) */
+export const LIVE_COMPETITION_NOTE = '청약홈 실시간 집계, 최종 발표와 다를 수 있음';
+
+const finite = (n) => typeof n === 'number' && Number.isFinite(n);
+const positive = (n) => finite(n) && n > 0;
+
+/** 만원 → '6억 4,000만 원', '9,800만 원', '6억 원' */
+export function fmtManwon(value) {
+  if (!positive(value)) return '-';
+  const n = Math.round(value);
+  const eok = Math.floor(n / 10000);
+  const rest = n % 10000;
+  if (!eok) return `${rest.toLocaleString('ko-KR')}만 원`;
+  return rest ? `${eok}억 ${rest.toLocaleString('ko-KR')}만 원` : `${eok}억 원`;
+}
+
+/** 할인율 → '29% 낮음', '-0.12' → '12% 높음', 반올림해 0이면 '비슷함'. 값이 없으면 null */
+export function discountLabel(rate) {
+  if (!finite(rate)) return null;
+  const pct = Math.round(Math.abs(rate) * 100);
+  if (pct === 0) return '비슷함';
+  return `${pct}% ${rate > 0 ? '낮음' : '높음'}`;
+}
+
+const areaLabel = (area) => `${Number(area.toFixed(2))}㎡`;
+
+function cleanPoint(point) {
+  if (!point || typeof point !== 'object') return null;
+  const head = { asOf: ymdOrNull(point.asOf), period: textOrNull(point.period) };
+  if (!positive(point.estimate)) return { ...head, shown: false, reason: textOrNull(point.reason) ?? '추정하지 않았습니다' };
+  return {
+    ...head,
+    shown: true,
+    estimate: point.estimate,
+    unit: positive(point.unit) ? point.unit : null,
+    discountRate: finite(point.discountRate) ? point.discountRate : null,
+    confidence: textOrNull(point.confidence),
+    scopeLabel: textOrNull(point.scopeLabel) ?? textOrNull(point.scope),
+    same: point.scope === '같은 단지',
+    comparables: (Array.isArray(point.comparables) ? point.comparables : []).map(textOrNull).filter(Boolean).slice(0, 5),
+    comparableCount: countOrNull(point.comparableCount),
+    samples: countOrNull(point.samples),
+  };
+}
+
+function cleanCompetition(c) {
+  if (!c || typeof c !== 'object' || !positive(c.rate)) return null;
+  const ref = c.ref ? cleanLinks([c.ref])[0] ?? null : null;
+  return {
+    api: c.source === '청약홈',
+    scope: textOrNull(c.scope),
+    rate: c.rate,
+    applicants: countOrNull(c.applicants),
+    households: countOrNull(c.households),
+    shortfall: c.shortfall === true,
+    ref,
+  };
+}
+
+/**
+ * projects.json 의 블록 줄 performance 를 화면용으로 정리한다. 모양이 틀리면 null.
+ * { name, noticeDate, noticeUrl, representative, typeCount, pricesReason, atNotice, now, marketReason, competition, competitionReason }
+ */
+export function cleanPerformance(perf) {
+  if (!perf || typeof perf !== 'object' || Array.isArray(perf)) return null;
+  const rep = perf.representative;
+  const representative = rep && positive(rep.area) && positive(rep.topPrice)
+    ? {
+      houseType: textOrNull(rep.houseType), area: rep.area, topPrice: rep.topPrice, unitPrice: positive(rep.unitPrice) ? rep.unitPrice : null,
+    }
+    : null;
+  const market = perf.market && typeof perf.market === 'object' ? perf.market : null;
+  return {
+    name: textOrNull(perf.name),
+    noticeDate: ymdOrNull(perf.noticeDate),
+    noticeUrl: safeHttpUrl(perf.noticeUrl),
+    representative,
+    typeCount: Array.isArray(perf.prices) ? perf.prices.length : 0,
+    pricesReason: textOrNull(perf.pricesReason),
+    atNotice: cleanPoint(market?.atNotice),
+    now: cleanPoint(market?.now),
+    marketReason: textOrNull(perf.marketReason),
+    competition: cleanCompetition(perf.competition),
+    competitionReason: textOrNull(perf.competitionReason),
+  };
+}
+
+/** 대표 주택형 분양가: '84.98㎡(084.9800A) 최고 6억 4,000만 원 · 전용㎡당 753만 원' */
+export function performancePriceText(rep) {
+  if (!rep) return null;
+  const type = rep.houseType && rep.houseType !== '-' ? `(${rep.houseType})` : '';
+  const unit = rep.unitPrice ? ` · 전용㎡당 ${Math.round(rep.unitPrice).toLocaleString('ko-KR')}만 원` : '';
+  return `대표 ${areaLabel(rep.area)}${type} 최고 ${fmtManwon(rep.topPrice)}${unit}`;
+}
+
+/** 경쟁률: '1순위 263.3:1 (접수 52,920건 / 201가구)', 보도는 출처 범위 그대로 '일반공급 263.3:1 (52,920명 / 201가구)' */
+export function competitionText(c) {
+  if (!c) return null;
+  const scope = c.scope ?? (c.api ? '1순위' : '');
+  const rate = `${Number(c.rate.toFixed(1)).toLocaleString('ko-KR')}:1`;
+  const count = c.applicants !== null && c.households !== null
+    ? ` (${c.api ? '접수 ' : ''}${c.applicants.toLocaleString('ko-KR')}${c.api ? '건' : '명'} / ${c.households.toLocaleString('ko-KR')}가구)`
+    : '';
+  return `${scope ? `${scope} ` : ''}${rate}${count}${c.shortfall ? ' · 미달' : ''}`;
+}
+
+/**
+ * 시세 비교 한 줄. label 은 '공고 당시' 또는 '현재 기준'.
+ * '공고 당시 주변 신축 환산 시세 대비 29% 낮음 (신뢰도 중, 하남시 비교 3개 단지: A·B·C, 실거래 41건, 2024-09~2025-02)'
+ * 숨긴 값은 '공고 당시: 사유'
+ */
+export function marketPointText(point, label) {
+  if (!point) return null;
+  if (!point.shown) return `${label}: ${point.reason}${point.period ? ` (${point.period})` : ''}`;
+  const diff = discountLabel(point.discountRate);
+  const head = `${label} 주변 신축 환산 시세${point.estimate ? ` ${fmtManwon(point.estimate)}` : ''}${diff ? ` 대비 분양가 ${diff}` : ''}`;
+  const total = Math.max(point.comparableCount ?? 0, point.comparables.length);
+  const more = total > point.comparables.length && point.comparables.length ? ` 외 ${total - point.comparables.length}곳` : '';
+  const where = point.same
+    ? '같은 단지 거래'
+    : `${point.scopeLabel ? `${point.scopeLabel} ` : ''}비교 ${total}개 단지${point.comparables.length ? `: ${point.comparables.join('·')}${more}` : ''}`;
+  const parts = [
+    point.confidence ? `신뢰도 ${point.confidence}` : null,
+    where,
+    point.samples !== null ? `실거래 ${point.samples.toLocaleString('ko-KR')}건` : null,
+    point.period,
+  ].filter(Boolean);
+  return `${head} (${parts.join(', ')})`;
+}
+
+/**
+ * 주변 시세 비교 칸: 공고 당시·현재 기준 줄과 안내. 공고 당시 숫자 줄에는 AT_NOTICE_NOTE 를 붙인다.
+ * 안내(MARKET_CAVEAT)는 숫자를 보인 줄이 하나라도 있을 때만(사유만 있으면 null).
+ * { points: [{ shown, text }], caveat }
+ */
+export function marketLines(perf) {
+  const points = [];
+  if (perf?.atNotice) {
+    const text = marketPointText(perf.atNotice, '공고 당시');
+    points.push({ shown: perf.atNotice.shown, text: perf.atNotice.shown ? `${text} ${AT_NOTICE_NOTE}` : text });
+  }
+  if (perf?.now) points.push({ shown: perf.now.shown, text: marketPointText(perf.now, '현재 기준') });
+  return { points, caveat: points.some((p) => p.shown) ? MARKET_CAVEAT : null };
 }
 
 /** from~to(달)가 startYm 부터 months 칸 안에서 차지하는 칸. 걸치지 않으면 null */
@@ -1214,6 +1367,39 @@ function saleSection(p) {
 const joinLinks = (sources) => sources.flatMap((src, i) => (i ? [' · ', sourceLink(src)] : [sourceLink(src)]));
 
 /**
+ * 블록 줄 아래의 분양 성과: 대표 주택형 분양가, 경쟁률(출처), 주변 시세 비교(공고 당시·현재 기준)와 안내.
+ * 숫자를 숨긴 항목은 사유를 보인다. 모든 글자는 텍스트 노드, 주소는 safeHttpUrl 을 거친다(h).
+ */
+function performanceBox(block, perf) {
+  const muted = (text) => h('span', { class: 'muted' }, text);
+  const price = performancePriceText(perf.representative);
+  const comp = competitionText(perf.competition);
+  const c = perf.competition;
+  const compSource = !c ? null
+    : c.api ? muted(` · ${LIVE_COMPETITION_NOTE}`)
+      : [' · ', c.ref ? sourceLink(c.ref) : muted('보도')];
+  const market = marketLines(perf);
+  const points = market.points.map((p) => h('li', { class: p.shown ? null : 'muted' }, p.text));
+  const head = [perf.noticeDate ? `공고 ${perf.noticeDate}` : null, perf.name].filter(Boolean).join(' · ');
+  return h('div', { class: 'perf', role: 'group', 'aria-label': `${block} 분양 성과` },
+    h('p', { class: 'perf-head' },
+      h('b', {}, '분양 성과'),
+      head ? [' ', muted(head)] : null,
+      perf.noticeUrl ? [' ', h('a', { href: perf.noticeUrl, target: '_blank', rel: 'noopener noreferrer' }, '청약홈 공고')] : null),
+    h('dl', { class: 'perf-list' },
+      h('dt', {}, '분양가'),
+      h('dd', {}, price
+        ? [price, perf.typeCount > 1 ? muted(` · 주택형 ${perf.typeCount}개 중`) : null]
+        : muted(perf.pricesReason ?? '분양가 정보 없음')),
+      h('dt', {}, '경쟁률'),
+      h('dd', {}, comp ? [comp, compSource] : muted(perf.competitionReason ?? '경쟁률 정보 없음')),
+      h('dt', {}, '주변 시세 비교'),
+      h('dd', {},
+        points.length ? h('ul', { class: 'perf-points' }, points) : muted(perf.marketReason ?? '시세 비교 없음'),
+        market.caveat ? h('small', { class: 'perf-caveat' }, market.caveat) : null)));
+}
+
+/**
  * 블록별 현황(블록별 분양 지구만): 상태별 개수, 지구 전체 블록 수(출처 있을 때), 블록 표.
  * 상세 칸이 넓으면 표, 좁으면(컨테이너 쿼리, style.css) 줄마다 카드처럼 쌓는다(칸 이름은 data-label). 줄이 없으면 null.
  */
@@ -1244,7 +1430,7 @@ function blockSection(p) {
             ...r.timeline.map((t) => h('li', { class: t.stage === PRE_SUBSCRIPTION ? 'pre' : null }, blockTimelineLabel(t, r.rental))),
             plan ? h('li', { class: 'plan' }, `다음 예정 ${plan}`) : null,
           ].filter(Boolean);
-          return h('tr', {},
+          const main = h('tr', { class: r.performance ? 'has-perf' : null },
             h('th', { scope: 'row', 'data-label': '블록' }, r.block),
             cell('유형',
               h('span', { class: r.type ? null : 'muted' }, blockTypeLabel(r)),
@@ -1257,12 +1443,18 @@ function blockSection(p) {
               flow.length ? h('ul', { class: 'block-flow' }, flow) : r.note ? null : h('span', { class: 'muted' }, '-'),
               r.note ? h('small', { class: 'block-note' }, r.note) : null),
             cell('출처', r.sources.length ? h('span', { class: 'block-src' }, joinLinks(r.sources)) : '-'));
+          return r.performance
+            ? [main, h('tr', { class: 'block-perf-row' }, h('td', { colspan: '6', 'data-label': '분양 성과' }, performanceBox(r.block, r.performance)))]
+            : main;
         })))),
     // 표 읽는 법은 한 줄만 보이고 나머지는 '자세히'로 접는다(문구는 그대로)
     h('details', { class: 'fold note' },
       h('summary', {}, '출처로 확인한 블록만 보여 줍니다. ', h('span', { class: 'fold-more' }, '자세히')),
       h('p', {}, '사업승인 날짜는 승인일을 모르면 보도일이고, 유형이 출처에 없으면 "유형 미확인"입니다. '
         + '분양과 임대가 함께 있는 블록은 줄을 나눕니다.'
+        + (rows.some((r) => r.performance)
+          ? ' 분양 성과의 시세 비교는 주변 단지 실거래로 추정한 신축 환산 값이며, 신뢰도가 낮거나 차익 공유 유형이면 숫자를 보이지 않습니다.'
+          : '')
         + (totalText ? ' 위 전체 블록 수 문구는 그 출처가 보도한 수치라 표의 상태별 줄 수와 같은 기준이 아닙니다.' : ''))));
 }
 

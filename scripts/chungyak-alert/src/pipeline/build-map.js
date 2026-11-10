@@ -3,6 +3,7 @@ import { basename, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectApplyhome } from '../sources/applyhome.js';
 import { AppError, decodeServiceKey, kstToday, maskServiceKey, safeError, safeHttpUrl } from '../util.js';
+import { attachPerformance, buildPerformance, performanceTargets } from './block-performance.js';
 import { blockSummary, publicBlockTotal, townBlocks } from './blocks.js';
 import {
   BUCKETS, LIKELY_SOLD_STAGES, applyWindow, bucketOf, isBlockTown, onOrAfter,
@@ -70,6 +71,30 @@ function toPublic(project) {
     sources: publicSources(rest.sources),
     notices: (rest.notices ?? []).map((notice) => ({ ...notice, url: safeHttpUrl(notice.url) })),
   };
+}
+
+// 분양 성과(블록별 분양 지구의 공고 난 블록): 분양가, 주변 시세 비교, 경쟁률. 공고 연결·블록별 현황 뒤에 부른다.
+// 어떤 실패도 지도 빌드를 멈추지 않는다(블록마다 따로 처리하고, 남은 예외는 performance_failed로 센다).
+async function collectPerformance(projects, {
+  fetch, env, today, sleep, fullNotices, performance, config,
+}) {
+  const empty = (errors, skipped = null) => ({
+    results: new Map(),
+    stats: {
+      blocks: 0, priced: 0, estimated: 0, competition: 0, calls: 0, errors, skipped,
+    },
+  });
+  try {
+    const key = decodeServiceKey(env.DATA_GO_KR_KEY) || null;
+    const fullByKey = new Map(fullNotices.map((notice) => [notice.key, notice]));
+    const targets = projects.flatMap((project) => performanceTargets(project, { fullByKey, today }));
+    if (targets.length === 0) return empty([], key ? null : 'no_key');
+    return await performance(targets, {
+      fetch, key, today, sleep, ...(config ? { config } : {}),
+    });
+  } catch {
+    return empty(['performance_failed']);
+  }
 }
 
 async function collectNotices({ fetch, env, today, sleep }) {
@@ -143,6 +168,8 @@ export async function buildMap({
   readFile = (path) => readFileSync(path),
   loadTowns = loadNewtowns,
   sleep,
+  performance = buildPerformance,
+  config = null,
 } = {}) {
   const seoul = seoulFile
     ? parseSeoulWorkbook(readFile(seoulFile), { fileName: basename(seoulFile) })
@@ -155,8 +182,12 @@ export async function buildMap({
   const linkedResult = notices.skipped
     ? { projects: base, linked: 0, checked: 0 }
     : linkNotices(base, notices.notices, today);
-  const projects = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
-    .map((project) => toPublic({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
+  const staged = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
+    .map((project) => ({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
+  const perf = await collectPerformance(staged, {
+    fetch, env, today, sleep, fullNotices: notices.notices, performance, config,
+  });
+  const projects = staged.map((project) => toPublic(attachPerformance(project, perf.results)));
 
   return {
     generatedAt: today,
@@ -173,10 +204,18 @@ export async function buildMap({
         skipped: notices.skipped,
         errors: [...new Set(notices.errors)],
       },
+      performance: { ...perf.stats },
     },
     stages: { seoul: [...SEOUL_STAGES], town: [...TOWN_STAGES] },
     projects,
   };
+}
+
+// 분양 성과 한 줄(건수만). 키가 없으면 끝에 skipped=no_key.
+export function performanceLine(stats) {
+  const errors = Array.isArray(stats.errors) ? stats.errors.length : 0;
+  return `map performance blocks=${stats.blocks} priced=${stats.priced} estimated=${stats.estimated} `
+    + `competition=${stats.competition} calls=${stats.calls} errors=${errors}${stats.skipped ? ` skipped=${stats.skipped}` : ''}`;
 }
 
 export function summaryLines(data) {
@@ -192,6 +231,7 @@ export function summaryLines(data) {
   lines.push(`map buckets ${BUCKETS.map((bucket) => `${bucket}=${buckets[bucket] ?? 0}`).join(' ')}`);
   const stages = tally(data.projects.map((project) => project.stage));
   lines.push(`map stages ${Object.entries(stages).map(([stage, count]) => `${stage}=${count}`).join(' ')}`);
+  if (data.sources.performance) lines.push(performanceLine(data.sources.performance));
   return lines;
 }
 
