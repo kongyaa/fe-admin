@@ -1,161 +1,2641 @@
 {
-  "sample": true,
-  "generatedAt": "2026-11-10",
-  "sources": {
-    "seoul": { "asOf": "2026-06", "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do", "count": 11, "skipped": {} },
-    "newtowns": { "asOf": "2026-11-10", "count": 3 },
-    "notices": { "linked": 3, "checked": 120, "skipped": null }
+ "sample": true,
+ "generatedAt": "2026-11-10T07:30:00+09:00",
+ "sources": {
+  "seoul": {
+   "asOf": "2026-06",
+   "title": "서울시 정비사업 추진현황 (예시 데이터)",
+   "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do",
+   "count": 11,
+   "skipped": {}
   },
-  "stages": {
-    "seoul": ["구역지정", "추진위", "조합설립", "건축심의", "사업시행인가", "관리처분인가", "이주", "착공", "일반분양"],
-    "town": ["후보지", "지구지정", "지구계획승인", "부지조성 착공", "블록별 분양", "준공"]
+  "newtowns": {
+   "asOf": "2026-11-10",
+   "count": 3,
+   "skipped": null
   },
-  "projects": [
-    {
-      "id": "seoul-90001", "name": "예시 성동A", "kind": "재개발", "subKind": "주택정비형 재개발",
-      "region": "서울", "district": "성동구", "address": "예시동 101-1", "roadAddress": "예시로 1",
-      "operator": "민간", "stage": "관리처분인가", "stageIndex": 5,
-      "stageDates": { "구역지정": "2018-03-02", "조합설립": "2020-03-15", "사업시행인가": "2023-06-20", "관리처분인가": "2026-05-12" },
-      "households": 1200, "saleHouseholds": 980, "rentalHouseholds": 220, "generalSupply": null,
-      "window": { "from": "2027-11", "to": "2029-05" }, "windowBasis": "관리처분인가(2026-05) 뒤 1.5~3년", "windowStatus": "estimated",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90002", "name": "예시 동대문B", "kind": "재개발", "subKind": "주택정비형 재개발",
-      "region": "서울", "district": "동대문구", "address": "예시동 22", "roadAddress": "",
-      "operator": "민간", "stage": "이주", "stageIndex": 6,
-      "stageDates": { "구역지정": "2016-04-01", "조합설립": "2018-09-10", "사업시행인가": "2022-02-08", "관리처분인가": "2025-04-21", "이주": "2026-06-01" },
-      "households": 980, "saleHouseholds": 820, "rentalHouseholds": 160, "generalSupply": null,
-      "window": { "from": "2026-12", "to": "2028-06" }, "windowBasis": "이주(2026-06) 뒤 0.5~2년", "windowStatus": "estimated",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90003", "name": "예시 송파C", "kind": "재건축", "subKind": "공동주택재건축",
-      "region": "서울", "district": "송파구", "address": "예시동 3", "roadAddress": "예시대로 300",
-      "operator": "민간", "stage": "착공", "stageIndex": 7,
-      "stageDates": { "구역지정": "2015-07-01", "추진위": "2016-02-01", "조합설립": "2017-05-11", "사업시행인가": "2021-08-30", "관리처분인가": "2024-03-04", "이주": "2025-02-01", "착공": "2026-08-18" },
-      "households": 2100, "saleHouseholds": 1800, "rentalHouseholds": 300, "generalSupply": null,
-      "window": { "from": "2026-08", "to": "2027-08" }, "windowBasis": "착공(2026-08) 뒤 0~1년", "windowStatus": "estimated",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90004", "name": "예시 노원D", "kind": "재건축", "subKind": "공동주택재건축",
-      "region": "서울", "district": "노원구", "address": "예시동 404", "roadAddress": "",
-      "operator": "민간", "stage": "사업시행인가", "stageIndex": 4,
-      "stageDates": { "구역지정": "2021-01-05", "조합설립": "2023-10-02", "사업시행인가": "2026-03-09" },
-      "households": 3000, "saleHouseholds": 2600, "rentalHouseholds": 400, "generalSupply": null,
-      "window": { "from": "2029-03", "to": "2031-03" }, "windowBasis": "사업시행인가(2026-03) 뒤 3~5년", "windowStatus": "estimated",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90005", "name": "예시 강동E", "kind": "재개발", "subKind": "주택정비형 재개발",
-      "region": "서울", "district": "강동구", "address": "예시동 55-5", "roadAddress": "예시길 55",
-      "operator": "민간", "stage": "착공", "stageIndex": 7,
-      "stageDates": { "구역지정": "2017-02-01", "조합설립": "2019-04-02", "사업시행인가": "2022-11-15", "관리처분인가": "2024-12-20", "이주": "2025-09-01", "착공": "2026-09-01" },
-      "households": 760, "saleHouseholds": 640, "rentalHouseholds": 120, "generalSupply": 190,
-      "window": { "from": "2026-09", "to": "2027-09" }, "windowBasis": "착공(2026-09) 뒤 0~1년. 연결된 청약 공고가 있습니다.", "windowStatus": "estimated",
-      "notices": [{ "key": "sample-2026000001", "name": "예시 강동E 아파트 (예시 공고)", "announceDate": "2026-11-03", "end": "2026-11-20", "url": "https://www.applyhome.co.kr/", "typeLabel": "민영" }],
-      "live": true,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90006", "name": "예시 마포F", "kind": "재개발", "subKind": "도시정비형 재개발",
-      "region": "서울", "district": "마포구", "address": "예시동 6", "roadAddress": "",
-      "operator": "민간", "stage": "조합설립", "stageIndex": 2,
-      "stageDates": { "구역지정": "2022-05-01", "조합설립": "2025-07-14" },
-      "households": 1500, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
-      "window": { "from": null, "to": null }, "windowBasis": "사업시행인가 전이라 36개월 밖으로 예상", "windowStatus": "far",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90007", "name": "예시 영등포G", "kind": "재건축", "subKind": "아파트지구재건축",
-      "region": "서울", "district": "영등포구", "address": "예시동 77", "roadAddress": "예시로 77",
-      "operator": "민간", "stage": "착공", "stageIndex": 7,
-      "stageDates": { "구역지정": "2012-01-01", "조합설립": "2014-06-01", "사업시행인가": "2018-10-01", "관리처분인가": "2020-09-01", "이주": "2021-06-01", "착공": "2023-02-01" },
-      "households": 870, "saleHouseholds": 760, "rentalHouseholds": 110, "generalSupply": null,
-      "window": { "from": "2023-02", "to": "2024-02" }, "windowBasis": "착공(2023-02) 뒤 0~1년, 일반분양은 착공 전후가 많음. 예상 시기가 지났습니다. 이미 분양했을 가능성이 큽니다(공고 미확인)", "windowStatus": "likely_sold",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90008", "name": "예시 은평H", "kind": "재개발", "subKind": "주택정비형 재개발",
-      "region": "서울", "district": "은평구", "address": "예시동 8-8", "roadAddress": "",
-      "operator": "공공", "stage": "구역지정", "stageIndex": 0,
-      "stageDates": { "구역지정": "2025-12-01" },
-      "households": null, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
-      "window": { "from": null, "to": null }, "windowBasis": "사업시행인가 전이라 36개월 밖으로 예상", "windowStatus": "far",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90009", "name": "예시 관악I", "kind": "재개발", "subKind": "주택정비형 재개발",
-      "region": "서울", "district": "관악구", "address": "예시동 9", "roadAddress": "예시로 9",
-      "operator": "민간", "stage": "사업시행인가", "stageIndex": 4,
-      "stageDates": { "구역지정": "2014-03-01", "조합설립": "2017-08-01", "건축심의": "2022-05-01", "사업시행인가": "2024-01-15" },
-      "households": 1340, "saleHouseholds": 1100, "rentalHouseholds": 240, "generalSupply": null,
-      "window": { "from": "2027-01", "to": "2029-01" }, "windowBasis": "사업시행인가(2024-01) 뒤 3~5년", "windowStatus": "estimated",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90010", "name": "예시 성북J", "kind": "재개발", "subKind": "주택정비형 재개발",
-      "region": "서울", "district": "성북구", "address": "예시동 10", "roadAddress": "",
-      "operator": "민간", "stage": "관리처분인가", "stageIndex": 5,
-      "stageDates": { "구역지정": "2011-06-01", "조합설립": "2013-09-01", "사업시행인가": "2017-04-01", "관리처분인가": "2020-09-01" },
-      "households": 1100, "saleHouseholds": 900, "rentalHouseholds": 200, "generalSupply": null,
-      "window": { "from": "2022-03", "to": "2023-09" }, "windowBasis": "관리처분인가(2020-09) 뒤 1.5~3년. 예상 시기가 지났습니다(지연 가능성)", "windowStatus": "overdue",
-      "notices": [], "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "seoul-90011", "name": "예시 서초K", "kind": "재건축", "subKind": "공동주택재건축",
-      "region": "서울", "district": "서초구", "address": "예시동 11", "roadAddress": "예시대로 11",
-      "operator": "민간", "stage": "착공", "stageIndex": 7,
-      "stageDates": { "구역지정": "2014-05-01", "조합설립": "2016-03-01", "사업시행인가": "2019-11-01", "관리처분인가": "2022-07-01", "이주": "2023-03-01", "착공": "2025-06-01" },
-      "households": 1500, "saleHouseholds": 1250, "rentalHouseholds": 250, "generalSupply": 320,
-      "window": { "from": "2025-06", "to": "2026-06" }, "windowBasis": "청약홈 공고가 이미 있었습니다(2026-04-14)", "windowStatus": "announced",
-      "notices": [{ "key": "sample-2026000003", "name": "예시 서초K 아파트 (예시 공고)", "announceDate": "2026-04-14", "end": "2026-04-30", "url": "https://www.applyhome.co.kr/", "typeLabel": "민영" }],
-      "live": false,
-      "sources": [{ "title": "서울시 정비사업 추진현황 (예시 데이터)", "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do" }], "asOf": "2026-06"
-    },
-    {
-      "id": "town-hanam-gyosan", "name": "하남교산 (예시 일정)", "kind": "공공주택지구", "subKind": "3기 신도시",
-      "region": "경기", "district": "하남시", "address": "하남시 교산동 일원", "roadAddress": "",
-      "operator": "공공", "stage": "블록별 분양", "stageIndex": 4,
-      "stageDates": { "후보지": "2018-12", "지구지정": "2019-10", "블록별 분양": "2025-05" },
-      "households": 33000, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
-      "window": { "from": "2026-11", "to": "2028-11" }, "windowBasis": "블록별 분양 진행 중, 남은 블록 순차 공고(규칙 확장, 예시 데이터)", "windowStatus": "estimated",
-      "notices": [], "live": false,
-      "sources": [{ "title": "스마트투데이: 하남교산 본청약(2025.5)", "url": "https://www.smarttoday.co.kr/news/articleView.html?idxno=79043", "date": "2025-05" }], "asOf": "2026-11-10"
-    },
-    {
-      "id": "town-guri-topyeong", "name": "구리토평한강 (예시 일정)", "kind": "공공주택지구", "subKind": "공공주택지구",
-      "region": "경기", "district": "구리시", "address": "구리시 토평동 일원", "roadAddress": "",
-      "operator": "공공", "stage": "지구지정", "stageIndex": 1,
-      "stageDates": { "후보지": "2023-11", "지구지정": "2025-12" },
-      "households": 22000, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": null,
-      "window": { "from": "2029-06", "to": "2031-06" }, "windowBasis": "보도된 계획(착공 2029년 목표) 기준, 예시 데이터", "windowStatus": "estimated",
-      "notices": [], "live": false,
-      "sources": [
-        { "title": "한국경제: 구리토평2 지구 지정(2025.12)", "url": "https://www.hankyung.com/article/202512313837i", "date": "2025-12-31" },
-        { "title": "SBS Biz: 수도권 공공주택지구 지구계획 승인 일정", "url": "https://biz.sbs.co.kr/amp/article/20000281760" }
-      ], "asOf": "2026-11-10"
-    },
-    {
-      "id": "town-guri-galmae", "name": "구리갈매역세권 (예시 일정)", "kind": "공공주택지구", "subKind": "공공주택지구",
-      "region": "경기", "district": "구리시", "address": "구리시 갈매동 일원", "roadAddress": "",
-      "operator": "공공", "stage": "블록별 분양", "stageIndex": 4,
-      "stageDates": { "지구지정": "2018-12", "블록별 분양": "2026-11" },
-      "households": null, "saleHouseholds": null, "rentalHouseholds": null, "generalSupply": 213,
-      "window": { "from": "2026-11", "to": "2028-11" }, "windowBasis": "블록별 분양 진행 중, 남은 블록 순차 공고(규칙 확장, 예시 데이터)", "windowStatus": "estimated",
-      "notices": [{ "key": "sample-2026000002", "name": "구리갈매역세권 B-1블록 (예시 공고)", "announceDate": "2026-11-05", "end": "2026-11-25", "url": "https://www.applyhome.co.kr/", "typeLabel": "민영" }],
-      "live": true,
-      "sources": [{ "title": "청약홈 분양정보", "url": "https://www.applyhome.co.kr/" }], "asOf": "2026-11-10"
-    }
+  "notices": {
+   "linked": 4,
+   "checked": 120,
+   "skipped": null
+  }
+ },
+ "stages": {
+  "seoul": [
+   "구역지정",
+   "추진위",
+   "조합설립",
+   "건축심의",
+   "사업시행인가",
+   "관리처분인가",
+   "이주",
+   "착공",
+   "일반분양"
+  ],
+  "town": [
+   "후보지",
+   "지구지정",
+   "지구계획승인",
+   "부지조성 착공",
+   "블록별 분양",
+   "준공"
   ]
+ },
+ "projects": [
+  {
+   "id": "seoul-90001",
+   "name": "예시 성동A",
+   "kind": "재개발",
+   "subKind": "주택정비형 재개발",
+   "region": "서울",
+   "district": "성동구",
+   "address": "예시동 101-1",
+   "roadAddress": "예시로 1",
+   "operator": "민간",
+   "stage": "관리처분인가",
+   "stageIndex": 5,
+   "stageDates": {
+    "구역지정": "2018-03-02",
+    "조합설립": "2020-03-15",
+    "사업시행인가": "2023-06-20",
+    "관리처분인가": "2026-05-12"
+   },
+   "households": 1200,
+   "saleHouseholds": 980,
+   "rentalHouseholds": 220,
+   "generalSupply": null,
+   "window": {
+    "from": "2027-11",
+    "to": "2029-05"
+   },
+   "windowBasis": "관리처분인가(2026-05) 뒤 1.5~3년",
+   "windowStatus": "estimated",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90002",
+   "name": "예시 동대문B",
+   "kind": "재개발",
+   "subKind": "주택정비형 재개발",
+   "region": "서울",
+   "district": "동대문구",
+   "address": "예시동 22",
+   "roadAddress": "",
+   "operator": "민간",
+   "stage": "이주",
+   "stageIndex": 6,
+   "stageDates": {
+    "구역지정": "2016-04-01",
+    "조합설립": "2018-09-10",
+    "사업시행인가": "2022-02-08",
+    "관리처분인가": "2025-04-21",
+    "이주": "2026-06-01"
+   },
+   "households": 980,
+   "saleHouseholds": 820,
+   "rentalHouseholds": 160,
+   "generalSupply": null,
+   "window": {
+    "from": "2026-12",
+    "to": "2028-06"
+   },
+   "windowBasis": "이주(2026-06) 뒤 0.5~2년",
+   "windowStatus": "estimated",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90003",
+   "name": "예시 송파C",
+   "kind": "재건축",
+   "subKind": "공동주택재건축",
+   "region": "서울",
+   "district": "송파구",
+   "address": "예시동 3",
+   "roadAddress": "예시대로 300",
+   "operator": "민간",
+   "stage": "착공",
+   "stageIndex": 7,
+   "stageDates": {
+    "구역지정": "2015-07-01",
+    "추진위": "2016-02-01",
+    "조합설립": "2017-05-11",
+    "사업시행인가": "2021-08-30",
+    "관리처분인가": "2024-03-04",
+    "이주": "2025-02-01",
+    "착공": "2026-08-18"
+   },
+   "households": 2100,
+   "saleHouseholds": 1800,
+   "rentalHouseholds": 300,
+   "generalSupply": null,
+   "window": {
+    "from": "2026-08",
+    "to": "2027-08"
+   },
+   "windowBasis": "착공(2026-08) 뒤 0~1년",
+   "windowStatus": "estimated",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90004",
+   "name": "예시 노원D",
+   "kind": "재건축",
+   "subKind": "공동주택재건축",
+   "region": "서울",
+   "district": "노원구",
+   "address": "예시동 404",
+   "roadAddress": "",
+   "operator": "민간",
+   "stage": "사업시행인가",
+   "stageIndex": 4,
+   "stageDates": {
+    "구역지정": "2021-01-05",
+    "조합설립": "2023-10-02",
+    "사업시행인가": "2026-03-09"
+   },
+   "households": 3000,
+   "saleHouseholds": 2600,
+   "rentalHouseholds": 400,
+   "generalSupply": null,
+   "window": {
+    "from": "2029-03",
+    "to": "2031-03"
+   },
+   "windowBasis": "사업시행인가(2026-03) 뒤 3~5년",
+   "windowStatus": "estimated",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90005",
+   "name": "예시 강동E",
+   "kind": "재개발",
+   "subKind": "주택정비형 재개발",
+   "region": "서울",
+   "district": "강동구",
+   "address": "예시동 55-5",
+   "roadAddress": "예시길 55",
+   "operator": "민간",
+   "stage": "착공",
+   "stageIndex": 7,
+   "stageDates": {
+    "구역지정": "2017-02-01",
+    "조합설립": "2019-04-02",
+    "사업시행인가": "2022-11-15",
+    "관리처분인가": "2024-12-20",
+    "이주": "2025-09-01",
+    "착공": "2026-09-01"
+   },
+   "households": 760,
+   "saleHouseholds": 640,
+   "rentalHouseholds": 120,
+   "generalSupply": 190,
+   "window": {
+    "from": "2026-09",
+    "to": "2027-09"
+   },
+   "windowBasis": "착공(2026-09) 뒤 0~1년. 연결된 청약 공고가 있습니다.",
+   "windowStatus": "estimated",
+   "notices": [
+    {
+     "key": "sample-2026000001",
+     "name": "예시 강동E 아파트 (예시 공고)",
+     "announceDate": "2026-11-03",
+     "end": "2026-11-20",
+     "url": "https://www.applyhome.co.kr/",
+     "typeLabel": "민영",
+     "stages": [
+      {
+       "name": "특별공급",
+       "start": "2026-11-16",
+       "end": "2026-11-16"
+      },
+      {
+       "name": "1순위 해당",
+       "start": "2026-11-17",
+       "end": "2026-11-17"
+      },
+      {
+       "name": "1순위 기타",
+       "start": "2026-11-18",
+       "end": "2026-11-18"
+      },
+      {
+       "name": "2순위",
+       "start": "2026-11-19",
+       "end": "2026-11-19"
+      }
+     ],
+     "winnerDate": "2026-11-26"
+    }
+   ],
+   "live": true,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90006",
+   "name": "예시 마포F",
+   "kind": "재개발",
+   "subKind": "도시정비형 재개발",
+   "region": "서울",
+   "district": "마포구",
+   "address": "예시동 6",
+   "roadAddress": "",
+   "operator": "민간",
+   "stage": "조합설립",
+   "stageIndex": 2,
+   "stageDates": {
+    "구역지정": "2022-05-01",
+    "조합설립": "2025-07-14"
+   },
+   "households": 1500,
+   "saleHouseholds": null,
+   "rentalHouseholds": null,
+   "generalSupply": null,
+   "window": {
+    "from": null,
+    "to": null
+   },
+   "windowBasis": "사업시행인가 전이라 36개월 밖으로 예상",
+   "windowStatus": "far",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90007",
+   "name": "예시 영등포G",
+   "kind": "재건축",
+   "subKind": "아파트지구재건축",
+   "region": "서울",
+   "district": "영등포구",
+   "address": "예시동 77",
+   "roadAddress": "예시로 77",
+   "operator": "민간",
+   "stage": "착공",
+   "stageIndex": 7,
+   "stageDates": {
+    "구역지정": "2012-01-01",
+    "조합설립": "2014-06-01",
+    "사업시행인가": "2018-10-01",
+    "관리처분인가": "2020-09-01",
+    "이주": "2021-06-01",
+    "착공": "2023-02-01"
+   },
+   "households": 870,
+   "saleHouseholds": 760,
+   "rentalHouseholds": 110,
+   "generalSupply": null,
+   "window": {
+    "from": "2023-02",
+    "to": "2024-02"
+   },
+   "windowBasis": "착공(2023-02) 뒤 0~1년, 일반분양은 착공 전후가 많음. 예상 시기가 지났습니다. 이미 분양했을 가능성이 큽니다(공고 미확인)",
+   "windowStatus": "likely_sold",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90008",
+   "name": "예시 은평H",
+   "kind": "재개발",
+   "subKind": "주택정비형 재개발",
+   "region": "서울",
+   "district": "은평구",
+   "address": "예시동 8-8",
+   "roadAddress": "",
+   "operator": "공공",
+   "stage": "구역지정",
+   "stageIndex": 0,
+   "stageDates": {
+    "구역지정": "2025-12-01"
+   },
+   "households": null,
+   "saleHouseholds": null,
+   "rentalHouseholds": null,
+   "generalSupply": null,
+   "window": {
+    "from": null,
+    "to": null
+   },
+   "windowBasis": "사업시행인가 전이라 36개월 밖으로 예상",
+   "windowStatus": "far",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90009",
+   "name": "예시 관악I",
+   "kind": "재개발",
+   "subKind": "주택정비형 재개발",
+   "region": "서울",
+   "district": "관악구",
+   "address": "예시동 9",
+   "roadAddress": "예시로 9",
+   "operator": "민간",
+   "stage": "사업시행인가",
+   "stageIndex": 4,
+   "stageDates": {
+    "구역지정": "2014-03-01",
+    "조합설립": "2017-08-01",
+    "건축심의": "2022-05-01",
+    "사업시행인가": "2024-01-15"
+   },
+   "households": 1340,
+   "saleHouseholds": 1100,
+   "rentalHouseholds": 240,
+   "generalSupply": null,
+   "window": {
+    "from": "2027-01",
+    "to": "2029-01"
+   },
+   "windowBasis": "사업시행인가(2024-01) 뒤 3~5년",
+   "windowStatus": "estimated",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90010",
+   "name": "예시 성북J",
+   "kind": "재개발",
+   "subKind": "주택정비형 재개발",
+   "region": "서울",
+   "district": "성북구",
+   "address": "예시동 10",
+   "roadAddress": "",
+   "operator": "민간",
+   "stage": "관리처분인가",
+   "stageIndex": 5,
+   "stageDates": {
+    "구역지정": "2011-06-01",
+    "조합설립": "2013-09-01",
+    "사업시행인가": "2017-04-01",
+    "관리처분인가": "2020-09-01"
+   },
+   "households": 1100,
+   "saleHouseholds": 900,
+   "rentalHouseholds": 200,
+   "generalSupply": null,
+   "window": {
+    "from": "2022-03",
+    "to": "2023-09"
+   },
+   "windowBasis": "관리처분인가(2020-09) 뒤 1.5~3년. 예상 시기가 지났습니다(지연 가능성)",
+   "windowStatus": "overdue",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "seoul-90011",
+   "name": "예시 서초K",
+   "kind": "재건축",
+   "subKind": "공동주택재건축",
+   "region": "서울",
+   "district": "서초구",
+   "address": "예시동 11",
+   "roadAddress": "예시대로 11",
+   "operator": "민간",
+   "stage": "착공",
+   "stageIndex": 7,
+   "stageDates": {
+    "구역지정": "2014-05-01",
+    "조합설립": "2016-03-01",
+    "사업시행인가": "2019-11-01",
+    "관리처분인가": "2022-07-01",
+    "이주": "2023-03-01",
+    "착공": "2025-06-01"
+   },
+   "households": 1500,
+   "saleHouseholds": 1250,
+   "rentalHouseholds": 250,
+   "generalSupply": 320,
+   "window": {
+    "from": "2025-06",
+    "to": "2026-06"
+   },
+   "windowBasis": "청약홈 공고가 이미 있었습니다(2026-04-14)",
+   "windowStatus": "announced",
+   "notices": [
+    {
+     "key": "sample-2026000003",
+     "name": "예시 서초K 아파트 (예시 공고)",
+     "announceDate": "2026-04-14",
+     "end": "2026-04-30",
+     "url": "https://www.applyhome.co.kr/",
+     "typeLabel": "민영",
+     "stages": [],
+     "winnerDate": null
+    }
+   ],
+   "live": false,
+   "sources": [
+    {
+     "title": "서울시 정비사업 추진현황 (예시 데이터)",
+     "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do"
+    }
+   ],
+   "asOf": "2026-06"
+  },
+  {
+   "id": "town-guri-galmae-station",
+   "name": "구리갈매역세권",
+   "kind": "공공주택지구",
+   "subKind": "공공주택지구",
+   "region": "경기",
+   "district": "구리시",
+   "address": null,
+   "roadAddress": null,
+   "operator": "공공",
+   "stage": "블록별 분양",
+   "stageIndex": 4,
+   "stageDates": {
+    "지구지정": "2018-07-04",
+    "지구계획승인": "2019-12-31",
+    "부지조성 착공": "2022-12-29",
+    "블록별 분양": "2025-07-29"
+   },
+   "households": 6162,
+   "saleHouseholds": null,
+   "rentalHouseholds": null,
+   "generalSupply": null,
+   "notes": "지구지정(2018-07-04)·지구계획승인(2019-12-31)·조성공사 착공(2022-12-29)은 구리시 누리집 '갈매역세권 공공주택지구' 추진 현황 (일부 언론 보도는 지정을 2017년 7월로 적어 엇갈리나 구리시 공식 자료를 따른다). 같은 자료에 2025-12-29 A-4BL 본청약도 있다. 블록별 분양(2025-07-29)은 LH청약플러스 A-1블록 신혼희망타운(공공분양) 입주자모집공고일(아래 history). 한국경제 2025-08-05 기사도 LH가 A1블록 신혼희망타운 1,182가구 공급 발표(5일), 사전청약 당첨자 11~12일·일반 13~14일 접수로 적는다. 확인된 가장 이른 본청약이며, 그 전에 다른 블록 본청약이 있었는지는 확인하지 못했다. 최근 공고: A-1블록 행복주택 609가구 모집공고 2026-10-27(메트로신문 2026-10-27), B-1블록 '구리갈매역세권 신안인스빌 디센트' 213세대, 특별공급 2026-11-09·1순위 11-10·2순위 11-11, 당첨자 발표 11-17(메트로신문 2026-11-03, 파이낸셜뉴스 2026-10-05는 B-1블록·213가구·분양가상한제 적용 확인). 가구 수 6,162(면적 798,103㎡, 계획인구 15,676명)는 메트로신문 2026-11-03 기사. noticeMatch: 바로 옆에 별개의 구리갈매 공공주택지구(갈매지구)가 있어(파이낸셜뉴스 2026-10-05: 별내신도시와 구리갈매지구 사이) '갈매' 단독은 그 지구 공고까지 잡으므로 '갈매역세권'만 쓴다. 블록 공고명은 '구리갈매역세권 A-1블록', '구리갈매역세권 신안인스빌 디센트' 꼴.",
+   "notices": [
+    {
+     "key": "2026000472-2026000472",
+     "name": "구리갈매역세권 B-1블록 신안인스빌 디센트",
+     "announceDate": "2026-10-30",
+     "end": "2026-11-11",
+     "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472",
+     "typeLabel": "APT",
+     "stages": [
+      {
+       "name": "특별공급",
+       "start": "2026-11-09",
+       "end": "2026-11-09"
+      },
+      {
+       "name": "1순위 해당",
+       "start": "2026-11-10",
+       "end": "2026-11-10"
+      },
+      {
+       "name": "1순위 기타",
+       "start": "2026-11-10",
+       "end": "2026-11-10"
+      },
+      {
+       "name": "2순위",
+       "start": "2026-11-11",
+       "end": "2026-11-11"
+      }
+     ],
+     "winnerDate": "2026-11-17"
+    },
+    {
+     "key": "2025000646-2025000646",
+     "name": "구리갈매역세권 A-4블록 공공분양주택(본청약)",
+     "announceDate": "2025-12-29",
+     "end": "2026-01-16",
+     "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000646&pblancNo=2025000646",
+     "typeLabel": "APT",
+     "stages": [],
+     "winnerDate": null
+    },
+    {
+     "key": "2025000647-2025000647",
+     "name": "구리갈매역세권 A-4블록 6년 분양전환공공임대주택(본청약)",
+     "announceDate": "2025-12-29",
+     "end": "2026-01-16",
+     "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000647&pblancNo=2025000647",
+     "typeLabel": "APT",
+     "stages": [],
+     "winnerDate": null
+    },
+    {
+     "key": "2025820012-2025820012",
+     "name": "구리갈매역세권 A-1블록 신혼희망타운(공공분양)(본청약)",
+     "announceDate": "2025-07-29",
+     "end": "2025-08-14",
+     "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025820012&pblancNo=2025820012",
+     "typeLabel": "신혼희망타운",
+     "stages": [],
+     "winnerDate": null
+    }
+   ],
+   "live": true,
+   "sources": [
+    {
+     "title": "LH, 갈매·진접에 공공분양·신혼희망타운 (한국경제)",
+     "url": "https://www.hankyung.com/article/2025080530681",
+     "date": "2025-08-05"
+    },
+    {
+     "title": "뛰는 분양가에 '오늘이 가장 싸다'… 분상제 적용 '구리갈매역세권 신안인스빌 디센트' 공급 (파이낸셜뉴스)",
+     "url": "https://www.fnnews.com/news/202610021332429533",
+     "date": "2026-10-05"
+    },
+    {
+     "title": "LH, 4분기 전국 4663가구 공공임대 공급 (메트로신문)",
+     "url": "https://www.metroseoul.co.kr/article/20261027500075",
+     "date": "2026-10-27"
+    },
+    {
+     "title": "청년 안심주택 - 구리시 청년포털 (구리시 누리집, 갈매역세권 공공주택지구 추진 현황)",
+     "url": "https://www.guri.go.kr/youth/contents.do?key=8056",
+     "date": "2026-10-30"
+    },
+    {
+     "title": "㈜신안, '구리갈매역세권 신안인스빌 디센트' 30일 견본주택 개관 (메트로신문)",
+     "url": "https://www.metroseoul.co.kr/article/20261103500089",
+     "date": "2026-11-03"
+    }
+   ],
+   "asOf": "2026-11-10",
+   "blockTotal": null,
+   "window": {
+    "from": "2026-12",
+    "to": "2028-12"
+   },
+   "windowBasis": "다음 블록 예상(규칙): 접수 중인 공고(마감 2026-11-11) 뒤 0~2년",
+   "windowStatus": "estimated",
+   "windowRule": "공공주택지구:블록별 분양",
+   "windowLabel": "다음 블록 예상",
+   "blocks": [
+    {
+     "block": "B-1",
+     "type": "민간분양",
+     "households": 213,
+     "rental": false,
+     "status": "접수 중",
+     "statusDate": "2026-11-11",
+     "timeline": [
+      {
+       "stage": "본청약",
+       "date": "2026-10-30"
+      },
+      {
+       "stage": "접수 중",
+       "date": "2026-11-11"
+      }
+     ],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "청약홈 분양정보 (houseManageNo 2026000472)",
+       "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472",
+       "date": "2026-10-30",
+       "outlet": "청약홈"
+      },
+      {
+       "title": "㈜신안, '구리갈매역세권 신안인스빌 디센트' 30일 견본주택 개관 (메트로신문)",
+       "url": "https://www.metroseoul.co.kr/article/20261103500089",
+       "date": "2026-11-03"
+      }
+     ]
+    },
+    {
+     "block": "A-1",
+     "type": "신혼희망타운",
+     "households": 1182,
+     "rental": false,
+     "status": "본청약 공고",
+     "statusDate": "2025-07-29",
+     "timeline": [
+      {
+       "stage": "사전청약",
+       "date": "2021-12-29"
+      },
+      {
+       "stage": "본청약",
+       "date": "2025-07-29"
+      }
+     ],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "3기 신도시 등 수도권 공공택지에 사전청약 물량 1만7000호 공급 (이코노미스트)",
+       "url": "https://economist.co.kr/2021/12/28/realEstate/realEstateNormal/20211228190135672.html",
+       "date": "2021-12-28"
+      },
+      {
+       "title": "구리갈매역세권 A-1블록 신혼희망타운(공공분양) 입주자모집공고 (LH청약플러스)",
+       "url": "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060929&ccrCnntSysDsCd=02&uppAisTpCd=39&aisTpCd=39&mi=1027",
+       "date": "2025-07-29"
+      },
+      {
+       "title": "구리갈매역세권 A-1블록 신혼희망타운(공공분양)(본청약)",
+       "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025820012&pblancNo=2025820012",
+       "date": "2025-07-29",
+       "outlet": "청약홈"
+      }
+     ]
+    },
+    {
+     "block": "A-4",
+     "type": "공공분양",
+     "households": 251,
+     "rental": false,
+     "status": "본청약 공고",
+     "statusDate": "2025-12-29",
+     "timeline": [
+      {
+       "stage": "사전청약",
+       "date": "2023-09"
+      },
+      {
+       "stage": "본청약",
+       "date": "2025-12-29"
+      }
+     ],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "'구리 갈매 역세권지구 A4블록 사전청약' 서울시 장애인 특별공급 기관추천 안내 (서울시)",
+       "url": "https://news.seoul.go.kr/welfare/archives/555616",
+       "date": "2023-09-21"
+      },
+      {
+       "title": "LH, 오늘부터 '뉴:홈' 3035호 사전청약 접수 실시 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2023/10/16/2023101600159.amp.html",
+       "date": "2023-10-16"
+      },
+      {
+       "title": "LH, 남양주진접·구리갈매역세권·김포고촌에 1291가구 공급 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2025/12/30/2025123000070.amp.html",
+       "date": "2025-12-30"
+      },
+      {
+       "title": "구리갈매역세권 A-4블록 공공분양주택(본청약)",
+       "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000646&pblancNo=2025000646",
+       "date": "2025-12-29",
+       "outlet": "청약홈"
+      },
+      {
+       "title": "구리갈매역세권 A-4블록 6년 분양전환공공임대주택(본청약)",
+       "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000647&pblancNo=2025000647",
+       "date": "2025-12-29",
+       "outlet": "청약홈"
+      }
+     ]
+    },
+    {
+     "block": "A-1",
+     "type": "행복주택",
+     "households": 609,
+     "rental": true,
+     "status": "임대 공고",
+     "statusDate": "2026-10-27",
+     "timeline": [
+      {
+       "stage": "본청약",
+       "date": "2026-10-27"
+      }
+     ],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "LH, 4분기 전국 4663가구 공공임대 공급 (메트로신문)",
+       "url": "https://www.metroseoul.co.kr/article/20261027500075",
+       "date": "2026-10-27"
+      }
+     ]
+    },
+    {
+     "block": "A-4",
+     "type": "6년 분양전환 공공임대",
+     "households": 310,
+     "rental": true,
+     "status": "임대 공고",
+     "statusDate": "2025-12-29",
+     "timeline": [
+      {
+       "stage": "본청약",
+       "date": "2025-12-29"
+      }
+     ],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "LH, 남양주진접·구리갈매역세권·김포고촌에 1291가구 공급 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2025/12/30/2025123000070.amp.html",
+       "date": "2025-12-30"
+      }
+     ]
+    },
+    {
+     "block": "B-2",
+     "type": "실버스테이 민간임대",
+     "households": 725,
+     "rental": true,
+     "status": "다음 예정(보도)",
+     "statusDate": "2025-05-04",
+     "timeline": [],
+     "plan": {
+      "expected": "2029-하반기",
+      "from": "2029-07",
+      "to": "2029-12",
+      "source": {
+       "title": "LH·SH·GH, 시니어 레지던스 사업 본격화 (머니투데이방송)",
+       "url": "https://news.mtn.co.kr/news-detail/2025050301112487749",
+       "date": "2025-05-04"
+      }
+     },
+     "note": "725가구 중 346가구가 실버스테이(20년 임대). 2025-04 우미건설 컨소시엄 우선협상대상자, 2026-12 부지 매매계약·2027-01 착공 계획(보도)",
+     "sources": [
+      {
+       "title": "우미컨소, 구리갈매역세권 '실버스테이' (한국경제)",
+       "url": "https://www.hankyung.com/article/2025041788301",
+       "date": "2025-04-17"
+      },
+      {
+       "title": "LH·SH·GH, 시니어 레지던스 사업 본격화 (머니투데이방송)",
+       "url": "https://news.mtn.co.kr/news-detail/2025050301112487749",
+       "date": "2025-05-04"
+      }
+     ]
+    },
+    {
+     "block": "S-1",
+     "type": null,
+     "households": 734,
+     "rental": false,
+     "status": "계획 보도",
+     "statusDate": "2026-05-06",
+     "timeline": [],
+     "plan": null,
+     "note": "2026 하반기 우미린 공급 예정(보도). 분양 유형 미확인, 2026-11-10까지 공고 확인 못함",
+     "sources": [
+      {
+       "title": "우미, 창릉·고덕·세교 등에 1만가구 공급 (한국경제)",
+       "url": "https://www.hankyung.com/article/2026050694481",
+       "date": "2026-05-06"
+      }
+     ]
+    },
+    {
+     "block": "A-2",
+     "type": "공공임대",
+     "households": 362,
+     "rental": true,
+     "status": "미정",
+     "statusDate": null,
+     "timeline": [],
+     "plan": null,
+     "note": "2025-12 시공사 종합심사 1순위(금강주택 컨소시엄), 최종 낙찰·임대 유형·모집 시기 미확인",
+     "sources": [
+      {
+       "title": "금강주택, LH '구리갈매역세권 A-2BL 아파트 3공구' 종합심사 1순위… 수주 유력 (헤럴드경제)",
+       "url": "https://www.heraldk.com/article/2025120416454851370",
+       "date": "2025-12-04"
+      }
+     ]
+    }
+   ],
+   "blockSummary": {
+    "접수 중": 1,
+    "본청약 공고": 2,
+    "임대 공고": 2,
+    "다음 예정(보도)": 1,
+    "계획 보도": 1,
+    "미정": 1
+   },
+   "history": [
+    {
+     "block": "A1",
+     "stage": "사전청약",
+     "type": "신혼희망타운",
+     "title": null,
+     "households": 1125,
+     "noticeDate": "2021-12-29",
+     "end": null,
+     "rental": false,
+     "sources": [
+      {
+       "title": "3기 신도시 등 수도권 공공택지에 사전청약 물량 1만7000호 공급 (이코노미스트)",
+       "url": "https://economist.co.kr/2021/12/28/realEstate/realEstateNormal/20211228190135672.html",
+       "date": "2021-12-28"
+      }
+     ]
+    },
+    {
+     "block": "A4",
+     "stage": "사전청약",
+     "type": "공공분양(일반형 230)·선택형(285)",
+     "title": null,
+     "households": 515,
+     "noticeDate": "2023-09",
+     "end": null,
+     "rental": false,
+     "sources": [
+      {
+       "title": "'구리 갈매 역세권지구 A4블록 사전청약' 서울시 장애인 특별공급 기관추천 안내 (서울시)",
+       "url": "https://news.seoul.go.kr/welfare/archives/555616",
+       "date": "2023-09-21"
+      },
+      {
+       "title": "LH, 오늘부터 '뉴:홈' 3035호 사전청약 접수 실시 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2023/10/16/2023101600159.amp.html",
+       "date": "2023-10-16"
+      }
+     ]
+    },
+    {
+     "block": "A-1",
+     "stage": "본청약",
+     "type": "신혼희망타운",
+     "title": "구리갈매역세권 A-1블록 신혼희망타운(공공분양)",
+     "households": 1182,
+     "noticeDate": "2025-07-29",
+     "end": null,
+     "rental": false,
+     "sources": [
+      {
+       "title": "구리갈매역세권 A-1블록 신혼희망타운(공공분양) 입주자모집공고 (LH청약플러스)",
+       "url": "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060929&ccrCnntSysDsCd=02&uppAisTpCd=39&aisTpCd=39&mi=1027",
+       "date": "2025-07-29"
+      }
+     ]
+    },
+    {
+     "block": "A-4",
+     "stage": "본청약",
+     "type": "공공분양",
+     "title": null,
+     "households": 251,
+     "noticeDate": "2025-12-29",
+     "end": null,
+     "rental": false,
+     "sources": [
+      {
+       "title": "LH, 남양주진접·구리갈매역세권·김포고촌에 1291가구 공급 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2025/12/30/2025123000070.amp.html",
+       "date": "2025-12-30"
+      }
+     ]
+    },
+    {
+     "block": "A-4",
+     "stage": "본청약",
+     "type": "6년 분양전환 공공임대",
+     "title": null,
+     "households": 310,
+     "noticeDate": "2025-12-29",
+     "end": null,
+     "rental": true,
+     "sources": [
+      {
+       "title": "LH, 남양주진접·구리갈매역세권·김포고촌에 1291가구 공급 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2025/12/30/2025123000070.amp.html",
+       "date": "2025-12-30"
+      }
+     ]
+    },
+    {
+     "block": "A-1",
+     "stage": "본청약",
+     "type": "행복주택",
+     "title": "구리갈매역세권 A-1BL 신혼희망타운 행복주택",
+     "households": 609,
+     "noticeDate": "2026-10-27",
+     "end": null,
+     "rental": true,
+     "sources": [
+      {
+       "title": "LH, 4분기 전국 4663가구 공공임대 공급 (메트로신문)",
+       "url": "https://www.metroseoul.co.kr/article/20261027500075",
+       "date": "2026-10-27"
+      }
+     ]
+    },
+    {
+     "block": "B-1",
+     "stage": "본청약",
+     "type": "민간분양",
+     "title": "구리갈매역세권 신안인스빌 디센트",
+     "households": 213,
+     "noticeDate": "2026-10-30",
+     "end": "2026-11-11",
+     "rental": false,
+     "sources": [
+      {
+       "title": "청약홈 분양정보 (houseManageNo 2026000472)",
+       "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472",
+       "date": "2026-10-30",
+       "outlet": "청약홈"
+      },
+      {
+       "title": "㈜신안, '구리갈매역세권 신안인스빌 디센트' 30일 견본주택 개관 (메트로신문)",
+       "url": "https://www.metroseoul.co.kr/article/20261103500089",
+       "date": "2026-11-03"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "town-hanam-gyosan",
+   "name": "하남교산",
+   "kind": "공공주택지구",
+   "subKind": "공공주택지구",
+   "region": "경기",
+   "district": "하남시",
+   "address": null,
+   "roadAddress": null,
+   "operator": "공공",
+   "stage": "블록별 분양",
+   "stageIndex": 4,
+   "stageDates": {
+    "후보지": "2018-12",
+    "지구지정": "2019-10-15",
+    "지구계획승인": "2021-08",
+    "블록별 분양": "2025-03-31"
+   },
+   "households": 36697,
+   "saleHouseholds": null,
+   "rentalHouseholds": null,
+   "generalSupply": null,
+   "notes": "3기 신도시. 후보지(2018-12, 수도권 30만호 2차 발표)와 지구지정(2019-10-15자 고시)은 뉴시스 2019-10-13 기사 (\"15일자로 공공주택지구 지정을 고시한다고 13일 밝혔다\"). 지구계획승인(2021-08)은 머니투데이방송 2021-08-26 기사(국토부가 26일 승인 발표). 블록별 분양(2025-03-31)은 뉴시스 2025-03-31 기사: LH가 A2블록 '교산 푸르지오 더 퍼스트'(1,115가구) 입주자 모집공고를 31일 게시, 사전청약 당첨자 본청약 4/29~30, 특별공급 5/7, 일반공급 5/8~9(스마트투데이 2025-04-24 기사도 같은 일정). 가구 수 36,697은 경인일보 2024-12-22 기사의 지구계획 변경(3차) 수치(33,037 → 36,697). 이후 4차(2025-12-18)·5차(2026-10-08) 변경 고시가 있다는 검색 결과가 있으나 변경 후 가구 수는 확인하지 못해 3차 기준으로 둔다. 2021·2025 기사에는 '약 3만3000가구'로 나온다. 부지조성 착공 시점은 확인하지 못해 비워 둔다. noticeMatch '교산'은 블록 공고명(예: 교산 푸르지오 더 퍼스트)과 지구 주소(천현동·교산동·춘궁동 일원)에 쓰이는 이름이다.",
+   "notices": [
+    {
+     "key": "2025000093-2025000093",
+     "name": "교산 푸르지오 더 퍼스트(본청약)",
+     "announceDate": "2025-03-31",
+     "end": "2025-05-09",
+     "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000093&pblancNo=2025000093",
+     "typeLabel": "APT",
+     "stages": [],
+     "winnerDate": null
+    }
+   ],
+   "live": false,
+   "sources": [
+    {
+     "title": "[3기신도시]하남·남양주 등 5곳 지구지정…3기 신도시 개발 '본궤도' (뉴시스)",
+     "url": "https://www.newsis.com/view/NISX20191013_0000796781",
+     "date": "2019-10-13"
+    },
+    {
+     "title": "남양주왕숙·하남교산 3기신도시 지구계획 수립 완료…10.1만가구 공급 (머니투데이방송)",
+     "url": "https://news.mtn.co.kr/article/2021082609362623524",
+     "date": "2021-08-26"
+    },
+    {
+     "title": "하남교산 소형 비중 높여 3360가구 늘린다 (경인일보)",
+     "url": "https://www.kyeongin.com/article/1723580",
+     "date": "2024-12-22"
+    },
+    {
+     "title": "'3기 신도시' 하남교산 내달 첫 본청약…분양가 17% 올라 (뉴시스)",
+     "url": "https://www.newsis.com/view/NISX20250331_0003120514",
+     "date": "2025-03-31"
+    },
+    {
+     "title": "대우건설·LH, '교산 푸르지오 더 퍼스트' 25일 견본주택 오픈 (스마트투데이)",
+     "url": "https://www.smarttoday.co.kr/news/articleView.html?idxno=79043",
+     "date": "2025-04-24"
+    }
+   ],
+   "asOf": "2026-11-10",
+   "blockTotal": {
+    "total": 39,
+    "approved": 16,
+    "date": "2025-11-24",
+    "outlet": "시티뉴스",
+    "sources": [
+     {
+      "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+      "url": "http://www.ctnews.co.kr/39834",
+      "date": "2025-11-24",
+      "outlet": "시티뉴스"
+     }
+    ]
+   },
+   "window": {
+    "from": "2026-11",
+    "to": "2026-12"
+   },
+   "windowBasis": "보도된 다음 블록 계획: A9·A11 2026-하반기 (하남일보 2026-03-08). 지역지 보도만 있음. 2026-11-10까지 공고 없음",
+   "windowStatus": "estimated",
+   "windowRule": "town-plan",
+   "windowLabel": "다음 블록 예상",
+   "blocks": [
+    {
+     "block": "A2",
+     "type": "공공분양",
+     "households": 1115,
+     "rental": false,
+     "status": "본청약 공고",
+     "statusDate": "2025-03-31",
+     "timeline": [
+      {
+       "stage": "사전청약",
+       "date": "2021-11-18"
+      },
+      {
+       "stage": "본청약",
+       "date": "2025-03-31"
+      }
+     ],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "국토부, 내일 3차 사전청약 4100가구 모집공고 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2021/11/17/2021111700054.html",
+       "date": "2021-11-17"
+      },
+      {
+       "title": "교산 푸르지오 더 퍼스트(하남교산 A-2BL) 공공분양주택 입주자모집공고 (LH청약플러스)",
+       "url": "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060838&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027",
+       "date": "2025-03-31"
+      },
+      {
+       "title": "LH, 하남교산 첫 공공분양주택 1115가구 공급 (뉴시스)",
+       "url": "https://www.newsis.com/view/NISX20250331_0003120384",
+       "date": "2025-03-31"
+      },
+      {
+       "title": "'3기 신도시' 하남교산 내달 첫 본청약…분양가 17% 올라 (뉴시스)",
+       "url": "https://www.newsis.com/view/NISX20250331_0003120514",
+       "date": "2025-03-31"
+      },
+      {
+       "title": "교산 푸르지오 더 퍼스트(본청약)",
+       "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000093&pblancNo=2025000093",
+       "date": "2025-03-31",
+       "outlet": "청약홈"
+      }
+     ]
+    },
+    {
+     "block": "A9",
+     "type": "공공분양",
+     "households": 244,
+     "rental": false,
+     "status": "다음 예정(보도)",
+     "statusDate": "2026-03-08",
+     "timeline": [],
+     "plan": {
+      "expected": "2026-하반기",
+      "from": "2026-07",
+      "to": "2026-12",
+      "source": {
+       "title": "하남 교산, 3만6,697 가구 공급 로드맵 확정 (하남일보, 지역지)",
+       "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11888",
+       "date": "2026-03-08",
+       "outlet": "하남일보"
+      }
+     },
+     "note": null,
+     "sources": [
+      {
+       "title": "하남 교산, 3만6,697 가구 공급 로드맵 확정 (하남일보, 지역지)",
+       "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11888",
+       "date": "2026-03-08",
+       "outlet": "하남일보"
+      },
+      {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      },
+      {
+       "title": "하남교산, 내년 A9·A11·A20·S2블록 분양 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12508",
+       "date": "2025-11-27",
+       "outlet": "하남Times"
+      },
+      {
+       "title": "하남, \"교산신도시 분양 지도 나왔다\" (하남일보, 지역지)",
+       "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11572",
+       "date": "2025-11-23",
+       "outlet": "하남일보"
+      }
+     ]
+    },
+    {
+     "block": "A11",
+     "type": "공공분양",
+     "households": 511,
+     "rental": false,
+     "status": "다음 예정(보도)",
+     "statusDate": "2026-03-08",
+     "timeline": [],
+     "plan": {
+      "expected": "2026-하반기",
+      "from": "2026-07",
+      "to": "2026-12",
+      "source": {
+       "title": "하남 교산, 3만6,697 가구 공급 로드맵 확정 (하남일보, 지역지)",
+       "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11888",
+       "date": "2026-03-08",
+       "outlet": "하남일보"
+      }
+     },
+     "note": null,
+     "sources": [
+      {
+       "title": "하남 교산, 3만6,697 가구 공급 로드맵 확정 (하남일보, 지역지)",
+       "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11888",
+       "date": "2026-03-08",
+       "outlet": "하남일보"
+      },
+      {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      },
+      {
+       "title": "하남교산, 내년 A9·A11·A20·S2블록 분양 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12508",
+       "date": "2025-11-27",
+       "outlet": "하남Times"
+      },
+      {
+       "title": "하남, \"교산신도시 분양 지도 나왔다\" (하남일보, 지역지)",
+       "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11572",
+       "date": "2025-11-23",
+       "outlet": "하남일보"
+      }
+     ]
+    },
+    {
+     "block": "A20",
+     "type": "통합공공임대",
+     "households": 249,
+     "rental": true,
+     "status": "다음 예정(보도)",
+     "statusDate": "2025-12-13",
+     "timeline": [],
+     "plan": {
+      "expected": "2026-하반기",
+      "from": "2026-07",
+      "to": "2026-12",
+      "source": {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      }
+     },
+     "note": null,
+     "sources": [
+      {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      }
+     ]
+    },
+    {
+     "block": "S2",
+     "type": "분양전환 공공임대(373)·선택형(41)",
+     "households": 414,
+     "rental": true,
+     "status": "다음 예정(보도)",
+     "statusDate": "2025-12-13",
+     "timeline": [],
+     "plan": {
+      "expected": "2026-하반기",
+      "from": "2026-07",
+      "to": "2026-12",
+      "source": {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      }
+     },
+     "note": null,
+     "sources": [
+      {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      }
+     ]
+    },
+    {
+     "block": "D2",
+     "type": "민간분양",
+     "households": null,
+     "rental": false,
+     "status": "예정 지남(보도)",
+     "statusDate": "2025-12-13",
+     "timeline": [],
+     "plan": {
+      "expected": "2026-상반기",
+      "from": "2026-01",
+      "to": "2026-06",
+      "source": {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      }
+     },
+     "note": null,
+     "sources": [
+      {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      },
+      {
+       "title": "하남교산, 내년 A9·A11·A20·S2블록 분양 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12508",
+       "date": "2025-11-27",
+       "outlet": "하남Times"
+      }
+     ]
+    },
+    {
+     "block": "D5",
+     "type": "민간분양",
+     "households": null,
+     "rental": false,
+     "status": "예정 지남(보도)",
+     "statusDate": "2025-12-13",
+     "timeline": [],
+     "plan": {
+      "expected": "2026-상반기",
+      "from": "2026-01",
+      "to": "2026-06",
+      "source": {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      }
+     },
+     "note": null,
+     "sources": [
+      {
+       "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+       "date": "2025-12-13",
+       "outlet": "하남Times"
+      },
+      {
+       "title": "하남교산, 내년 A9·A11·A20·S2블록 분양 본격화 (하남Times, 지역지)",
+       "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12508",
+       "date": "2025-11-27",
+       "outlet": "하남Times"
+      }
+     ]
+    },
+    {
+     "block": "A1",
+     "type": "통합공공임대",
+     "households": 723,
+     "rental": true,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "A3",
+     "type": "통합공공임대(GH)",
+     "households": 1100,
+     "rental": true,
+     "status": "사업승인",
+     "statusDate": "2026-04-23",
+     "timeline": [],
+     "plan": null,
+     "note": "경기도가 2026-04-23 GH 사업계획 승인(2026-04-27 발표, 기사는 '지난 23일')",
+     "sources": [
+      {
+       "title": "하남교산에 통합공공임대 1100가구 공급…복지·일자리 결합 모델 도입 (글로벌이코노믹)",
+       "url": "https://www.g-enews.com/article/General-News/2026/04/2026042710544162568fbfc802b3_1",
+       "date": "2026-04-27"
+      }
+     ]
+    },
+    {
+     "block": "A5",
+     "type": "나눔형 공공분양",
+     "households": 492,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [
+      {
+       "stage": "사전청약",
+       "date": "2023-09-25"
+      }
+     ],
+     "plan": null,
+     "note": "사업승인 목록은 492가구, 사전청약(2023-09)은 452가구로 엇갈림. 승인일 미확인(보도일 기준). 2026-07-23(오마이뉴스) 기준 본청약 공고 전",
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      },
+      {
+       "title": "국토부, '뉴:홈' 3300가구 사전청약 실시 (메트로신문)",
+       "url": "https://www.metroseoul.co.kr/article/20230920500364",
+       "date": "2023-09-20"
+      },
+      {
+       "title": "하남교산서 4억원대 공공분양···올해 세 번째 '뉴홈' 사전청약",
+       "url": "https://www.koscaj.com/news/articleView.html?idxno=302259",
+       "date": "2023-09-21"
+      },
+      {
+       "title": "경기 하남 교산에 첫 나눔형 사전청약 풀린다 (세계일보)",
+       "url": "https://m.segye.com/view/20231012518645",
+       "date": "2023-10-13"
+      }
+     ]
+    },
+    {
+     "block": "A12",
+     "type": "통합공공임대",
+     "households": 788,
+     "rental": true,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "A14",
+     "type": null,
+     "households": 1459,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "A15",
+     "type": "통합공공임대",
+     "households": 915,
+     "rental": true,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "A16",
+     "type": "통합공공임대",
+     "households": 1146,
+     "rental": true,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "A18",
+     "type": null,
+     "households": 664,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "A19",
+     "type": null,
+     "households": 543,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "B3",
+     "type": "공공분양",
+     "households": 837,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "B5",
+     "type": "공공분양",
+     "households": 457,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "S1",
+     "type": "공공분양",
+     "households": 705,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "S4",
+     "type": null,
+     "households": 1034,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "S9",
+     "type": null,
+     "households": 1722,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "S10",
+     "type": null,
+     "households": 541,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    },
+    {
+     "block": "S11",
+     "type": "공공분양",
+     "households": 1198,
+     "rental": false,
+     "status": "사업승인",
+     "statusDate": "2025-11-24",
+     "timeline": [],
+     "plan": null,
+     "note": null,
+     "sources": [
+      {
+       "title": "하남, 교산 공동주택 41% 주택건설승인 (시티뉴스, 지역지)",
+       "url": "http://www.ctnews.co.kr/39834",
+       "date": "2025-11-24",
+       "outlet": "시티뉴스"
+      }
+     ]
+    }
+   ],
+   "blockSummary": {
+    "본청약 공고": 1,
+    "다음 예정(보도)": 4,
+    "예정 지남(보도)": 2,
+    "사업승인": 16
+   },
+   "history": [
+    {
+     "block": "A2",
+     "stage": "사전청약",
+     "type": "공공분양",
+     "title": "3차 공공 사전청약 하남교산 A2",
+     "households": 1056,
+     "noticeDate": "2021-11-18",
+     "end": null,
+     "rental": false,
+     "sources": [
+      {
+       "title": "국토부, 내일 3차 사전청약 4100가구 모집공고 (뉴데일리)",
+       "url": "https://biz.newdaily.co.kr/site/data/html/2021/11/17/2021111700054.html",
+       "date": "2021-11-17"
+      }
+     ]
+    },
+    {
+     "block": "A5",
+     "stage": "사전청약",
+     "type": "나눔형 공공분양",
+     "title": "뉴:홈 3차 사전청약 하남교산 A5",
+     "households": 452,
+     "noticeDate": "2023-09-25",
+     "end": null,
+     "rental": false,
+     "sources": [
+      {
+       "title": "국토부, '뉴:홈' 3300가구 사전청약 실시 (메트로신문)",
+       "url": "https://www.metroseoul.co.kr/article/20230920500364",
+       "date": "2023-09-20"
+      },
+      {
+       "title": "하남교산서 4억원대 공공분양···올해 세 번째 '뉴홈' 사전청약",
+       "url": "https://www.koscaj.com/news/articleView.html?idxno=302259",
+       "date": "2023-09-21"
+      },
+      {
+       "title": "경기 하남 교산에 첫 나눔형 사전청약 풀린다 (세계일보)",
+       "url": "https://m.segye.com/view/20231012518645",
+       "date": "2023-10-13"
+      }
+     ]
+    },
+    {
+     "block": "A2",
+     "stage": "본청약",
+     "type": "공공분양",
+     "title": "교산 푸르지오 더 퍼스트",
+     "households": 1115,
+     "noticeDate": "2025-03-31",
+     "end": null,
+     "rental": false,
+     "sources": [
+      {
+       "title": "교산 푸르지오 더 퍼스트(하남교산 A-2BL) 공공분양주택 입주자모집공고 (LH청약플러스)",
+       "url": "https://apply.lh.or.kr/lhapply/apply/wt/wrtanc/selectWrtancInfo.do?panId=0000060838&ccrCnntSysDsCd=02&uppAisTpCd=05&aisTpCd=05&mi=1027",
+       "date": "2025-03-31"
+      },
+      {
+       "title": "LH, 하남교산 첫 공공분양주택 1115가구 공급 (뉴시스)",
+       "url": "https://www.newsis.com/view/NISX20250331_0003120384",
+       "date": "2025-03-31"
+      },
+      {
+       "title": "'3기 신도시' 하남교산 내달 첫 본청약…분양가 17% 올라 (뉴시스)",
+       "url": "https://www.newsis.com/view/NISX20250331_0003120514",
+       "date": "2025-03-31"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "town-guri-topyeong-hangang",
+   "name": "구리토평한강",
+   "kind": "공공주택지구",
+   "subKind": "공공주택지구",
+   "region": "경기",
+   "district": "구리시",
+   "address": null,
+   "roadAddress": null,
+   "operator": "공공",
+   "stage": "지구지정",
+   "stageIndex": 1,
+   "stageDates": {
+    "후보지": "2023-11-15",
+    "지구지정": "2025-12-31"
+   },
+   "households": 22000,
+   "saleHouseholds": null,
+   "rentalHouseholds": null,
+   "generalSupply": null,
+   "notes": "구리토평2 공공주택지구. '구리토평한강'은 구리시 명칭 공모(2025-06-02~27, 689건) 1위작으로 국토부에 공식 명칭으로 건의할 예정이라는 헤럴드경제 2025-08-04 기사 기준이며, 국토부 지정 보도와 구리시 누리집(2026-10-30 수정)은 여전히 '구리토평2'로 적는다(공식 채택 미확인). 후보지(2023-11-15)와 지구지정(2025-12-31)은 구리시 누리집 추진 현황 및 SBS Biz 2025-12-31 기사. 가구 수 22,000은 한국경제 2025-12-31 기사('구리토평2지구(2만2000가구)'). 다른 보도는 '잠정'으로 적는다. 향후 일정(보도 기준): 지구계획 최초 승인 2027년 예정(SBS Biz 2025-12-31), 2026 지구계획 승인 신청 → 2027 승인 → 2029 조성공사 착수 → 2034 준공 목표(헤럴드경제 2026-01-26). 분양 시기는 보도된 계획이 없어 expected는 넣지 않는다. noticeMatch: 구리 토평동에는 기존 아파트가 많아 '토평' 단독은 쓰지 않고 '토평한강'·'토평2'로 한정한다.",
+   "notices": [],
+   "live": false,
+   "sources": [
+    {
+     "title": "'구리토평2 공공주택지구' 명칭 '구리토평한강'으로 (헤럴드경제)",
+     "url": "https://www.heraldk.com/article/2025080415231595708",
+     "date": "2025-08-04"
+    },
+    {
+     "title": "의왕·군포 등 수도권 13만 가구 공급 본격화…공공주택지구 계획 승인 (한국경제)",
+     "url": "https://www.hankyung.com/article/202512313837i",
+     "date": "2025-12-31"
+    },
+    {
+     "title": "수도권 7곳 공공주택지구 계획승인·지정…13.3만호 공급 (SBS Biz)",
+     "url": "https://biz.sbs.co.kr/amp/article/20000281760",
+     "date": "2025-12-31"
+    },
+    {
+     "title": "백경현 구리시장, 구리토평2 공공주택지구 사업 현황 점검 (헤럴드경제)",
+     "url": "https://www.heraldk.com/article/2026012614514311201",
+     "date": "2026-01-26"
+    },
+    {
+     "title": "청년 안심주택 - 구리시 청년포털 (구리시 누리집, 갈매역세권·구리토평2 추진 현황)",
+     "url": "https://www.guri.go.kr/youth/contents.do?key=8056",
+     "date": "2026-10-30"
+    }
+   ],
+   "asOf": "2026-11-10",
+   "blockTotal": null,
+   "window": {
+    "from": "2028-12",
+    "to": "2030-12"
+   },
+   "windowBasis": "지구지정(2025-12) 뒤 3~5년",
+   "windowStatus": "estimated",
+   "windowRule": "공공주택지구:지구지정",
+   "windowLabel": null,
+   "blocks": [],
+   "blockSummary": {},
+   "history": []
+  }
+ ],
+ "calendar": [
+  {
+   "date": "2026-11-10",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "label": "1순위",
+   "title": "구리갈매역세권 B-1블록 신안인스빌 디센트",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472"
+  },
+  {
+   "date": "2026-11-11",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "label": "2순위",
+   "title": "구리갈매역세권 B-1블록 신안인스빌 디센트",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472"
+  },
+  {
+   "date": "2026-11-16",
+   "projectId": "seoul-90005",
+   "block": null,
+   "label": "특별공급",
+   "title": "예시 강동E 아파트 (예시 공고)",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/"
+  },
+  {
+   "date": "2026-11-17",
+   "projectId": "seoul-90005",
+   "block": null,
+   "label": "1순위",
+   "title": "예시 강동E 아파트 (예시 공고)",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/"
+  },
+  {
+   "date": "2026-11-17",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "label": "당첨자 발표",
+   "title": "구리갈매역세권 B-1블록 신안인스빌 디센트",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472"
+  },
+  {
+   "date": "2026-11-18",
+   "projectId": "seoul-90005",
+   "block": null,
+   "label": "1순위",
+   "title": "예시 강동E 아파트 (예시 공고)",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/"
+  },
+  {
+   "date": "2026-11-19",
+   "projectId": "seoul-90005",
+   "block": null,
+   "label": "2순위",
+   "title": "예시 강동E 아파트 (예시 공고)",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/"
+  },
+  {
+   "date": "2026-11-26",
+   "projectId": "seoul-90005",
+   "block": null,
+   "label": "당첨자 발표",
+   "title": "예시 강동E 아파트 (예시 공고)",
+   "rental": false,
+   "url": "https://www.applyhome.co.kr/"
+  }
+ ],
+ "feed": [
+  {
+   "id": "3c081ec28a209a5c",
+   "date": "2026-11-17",
+   "kind": "접수",
+   "projectId": "seoul-90005",
+   "block": null,
+   "title": "1순위 접수 (2026-11-18 마감)",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/",
+    "date": "2026-11-03",
+    "local": false
+   }
+  },
+  {
+   "id": "de05b5965a7a1180",
+   "date": "2026-11-10",
+   "kind": "단계",
+   "projectId": "seoul-90003",
+   "block": null,
+   "title": "단계 변경: 이주 → 착공",
+   "rental": false,
+   "source": {
+    "title": "서울시 정비사업 추진현황 (예시 데이터)",
+    "url": "https://data.seoul.go.kr/dataList/OA-22856/F/1/datasetView.do",
+    "date": null,
+    "local": false
+   }
+  },
+  {
+   "id": "51483531e6ba0e35",
+   "date": "2026-11-10",
+   "kind": "접수",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "title": "1순위 접수 (2026-11-10 마감)",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472",
+    "date": "2026-10-30",
+    "local": false
+   }
+  },
+  {
+   "id": "6f2d4d6b77b757db",
+   "date": "2026-11-08",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "title": "84㎡ 평균 분양가 7억7,356만 원, 인근 갈매역아이파크 84㎡ 평균 8억9,300만 원(국토부 기준)과 비교. 소규모 단지·중도금 20% 자납·거주의무 3년은 단점으로 꼽음",
+   "rental": false,
+   "source": {
+    "title": "스트레이트뉴스",
+    "url": "https://www.straightnews.co.kr/news/articleView.html?idxno=314854",
+    "date": "2026-11-08",
+    "local": false
+   }
+  },
+  {
+   "id": "93b54c52fc43522d",
+   "date": "2026-11-03",
+   "kind": "공고",
+   "projectId": "seoul-90005",
+   "block": null,
+   "title": "청약홈 공고: 예시 강동E 아파트 (예시 공고)",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/",
+    "date": "2026-11-03",
+    "local": false
+   }
+  },
+  {
+   "id": "349765f9fe9ff6b8",
+   "date": "2026-11-03",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "title": "신안인스빌 디센트 견본주택 10월 30일 개관. 특별공급 11월 9일, 1순위 10일, 2순위 11일, 당첨자 발표 17일",
+   "rental": false,
+   "source": {
+    "title": "메트로신문",
+    "url": "https://www.metroseoul.co.kr/article/20261103500089",
+    "date": "2026-11-03",
+    "local": false
+   }
+  },
+  {
+   "id": "1a0057c8673521d8",
+   "date": "2026-11-02",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "title": "최고 분양가 75㎡ 6억9,580만 원, 84㎡ 7억8,500만 원(모집공고 기준)",
+   "rental": false,
+   "source": {
+    "title": "투어코리아",
+    "url": "https://www.tournews21.com/news/articleView.html?idxno=147323",
+    "date": "2026-11-02",
+    "local": false
+   }
+  },
+  {
+   "id": "6e4f8ce03e155f71",
+   "date": "2026-10-30",
+   "kind": "공고",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "title": "청약홈 공고: 구리갈매역세권 B-1블록 신안인스빌 디센트",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000472&pblancNo=2026000472",
+    "date": "2026-10-30",
+    "local": false
+   }
+  },
+  {
+   "id": "bfa00264f25442ae",
+   "date": "2026-10-27",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "A-1",
+   "title": "A-1 행복주택 609가구 공급, 11월 10~12일 접수. LH 4분기 공공임대 공급 계획에 포함",
+   "rental": true,
+   "source": {
+    "title": "메트로신문",
+    "url": "https://www.metroseoul.co.kr/article/20261027500075",
+    "date": "2026-10-27",
+    "local": false
+   }
+  },
+  {
+   "id": "779d3bc7ba022622",
+   "date": "2026-10-27",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": null,
+   "title": "송파하남선(3호선 연장) 공구별 시공사 선정 단계, 2공구는 남광토건 컨소시엄 수주 눈앞. 착공 2027년·개통 2032년 목표",
+   "rental": false,
+   "source": {
+    "title": "머니투데이방송",
+    "url": "https://news.mtn.co.kr/article/2026102715442934162",
+    "date": "2026-10-27",
+    "local": false
+   }
+  },
+  {
+   "id": "27bec400537bc8f5",
+   "date": "2026-10-15",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": null,
+   "title": "(가칭)갈매역세권1초는 2027년 중앙투자심사, 2031년 개교 목표(구리남양주교육지원청 자료 인용)",
+   "rental": false,
+   "source": {
+    "title": "선데이뉴스신문",
+    "url": "https://www.newssunday.co.kr/news/view.php?no=254703",
+    "date": "2026-10-15",
+    "local": false
+   }
+  },
+  {
+   "id": "e981b792ec695691",
+   "date": "2026-10-05",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-1",
+   "title": "B-1블록 신안인스빌 디센트 213가구 공급 예정, 분양가상한제 적용",
+   "rental": false,
+   "source": {
+    "title": "파이낸셜뉴스",
+    "url": "https://www.fnnews.com/news/202610021332429533",
+    "date": "2026-10-05",
+    "local": false
+   }
+  },
+  {
+   "id": "10ce930aa2f234c3",
+   "date": "2026-08-12",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": null,
+   "title": "하남시의회, 송파하남선 조속 추진 촉구. 둔촌오륜역 연결 논의가 사업을 늦춰서는 안 된다는 입장",
+   "rental": false,
+   "source": {
+    "title": "서울신문",
+    "url": "https://m.go.seoul.co.kr/news/2026/08/12/20260812500136",
+    "date": "2026-08-12",
+    "local": false
+   }
+  },
+  {
+   "id": "61c1e8bdba2eec87",
+   "date": "2026-08-04",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": null,
+   "title": "교산3고(가칭) 교육부 중앙투자심사 통과, 2030년 3월 개교 목표. 교산 첫 고등학교",
+   "rental": false,
+   "source": {
+    "title": "한국교육신문",
+    "url": "https://hangyo.com/mobile/article.html?no=108727",
+    "date": "2026-08-04",
+    "local": false
+   }
+  },
+  {
+   "id": "2be1b8590a4c2a7e",
+   "date": "2026-07-24",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": "A5",
+   "title": "A5 사전청약 당첨자 대출 조건 갈등: 시의회가 나눔형 전용 모기지 원안 이행을 요구. 본청약 공고는 아직",
+   "rental": false,
+   "source": {
+    "title": "서울신문",
+    "url": "https://m.go.seoul.co.kr/news/2026/07/24/20260724500252",
+    "date": "2026-07-24",
+    "local": false
+   }
+  },
+  {
+   "id": "5b672f605e80cfdc",
+   "date": "2026-07-23",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": "A5",
+   "title": "시의원들이 A5 본청약 공고 전 주민설명회와 나눔형 모기지 원안 유지를 요구(이 날까지 본청약 공고 전)",
+   "rental": false,
+   "source": {
+    "title": "오마이뉴스",
+    "url": "https://www.ohmynews.com/NWS_Web/View/at_pg.aspx?CNTN_CD=A0003253568",
+    "date": "2026-07-23",
+    "local": false
+   }
+  },
+  {
+   "id": "6a6b912adee948bd",
+   "date": "2026-07-09",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": null,
+   "title": "하남시, 교산 현안 해결 촉구: 하남 거주자 우선공급 30%→50% 상향 요청(확정 아님), 광역교통대책 변경 협의 중단 지적",
+   "rental": false,
+   "source": {
+    "title": "파이낸셜뉴스",
+    "url": "https://www.fnnews.com/news/202607091343262181",
+    "date": "2026-07-09",
+    "local": false
+   }
+  },
+  {
+   "id": "c142e4d76624148c",
+   "date": "2026-05-06",
+   "kind": "일정",
+   "projectId": "town-guri-galmae-station",
+   "block": "S-1",
+   "title": "S-1블록 734가구 우미린 2026년 하반기 공급 예정",
+   "rental": false,
+   "source": {
+    "title": "한국경제",
+    "url": "https://www.hankyung.com/article/2026050694481",
+    "date": "2026-05-06",
+    "local": false
+   }
+  },
+  {
+   "id": "286b47f3b8df5ca6",
+   "date": "2026-04-27",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": "A3",
+   "title": "A3 통합공공임대 1,100가구(GH) 사업계획 승인(2026-04-23)",
+   "rental": true,
+   "source": {
+    "title": "글로벌이코노믹",
+    "url": "https://www.g-enews.com/article/General-News/2026/04/2026042710544162568fbfc802b3_1",
+    "date": "2026-04-27",
+    "local": false
+   }
+  },
+  {
+   "id": "d3a02f999de2e4f7",
+   "date": "2026-04-23",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": null,
+   "title": "GTX-B 갈매역 추가 정차: 구리시 자체 용역에서 B/C 1.0을 넘었다며 국토부에 재검증을 요청할 계획",
+   "rental": false,
+   "source": {
+    "title": "이코노미스트",
+    "url": "https://economist.co.kr/article/view/ecn202604230054",
+    "date": "2026-04-23",
+    "local": false
+   }
+  },
+  {
+   "id": "17238d68a8937310",
+   "date": "2026-04-22",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": null,
+   "title": "구리시, 갈매동 경춘선 약 3km 구간을 교통소음 관리지역으로 지정(GTX-B 개통 뒤 운행 증가 대비)",
+   "rental": false,
+   "source": {
+    "title": "뉴시스",
+    "url": "https://www.newsis.com/view/NISX20260422_0003601951",
+    "date": "2026-04-22",
+    "local": false
+   }
+  },
+  {
+   "id": "6e1544d10d6c3811",
+   "date": "2026-04-14",
+   "kind": "공고",
+   "projectId": "seoul-90011",
+   "block": null,
+   "title": "청약홈 공고: 예시 서초K 아파트 (예시 공고)",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/",
+    "date": "2026-04-14",
+    "local": false
+   }
+  },
+  {
+   "id": "c8a53ccd68a894cd",
+   "date": "2026-03-08",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "A9",
+   "title": "A9·A11 공공분양 2026년 하반기 공급 예정(교산 공급 로드맵 보도)",
+   "rental": false,
+   "source": {
+    "title": "하남일보",
+    "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11888",
+    "date": "2026-03-08",
+    "local": true
+   }
+  },
+  {
+   "id": "5069dd4bb4cde68d",
+   "date": "2026-03-08",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "A11",
+   "title": "A9·A11 공공분양 2026년 하반기 공급 예정(교산 공급 로드맵 보도)",
+   "rental": false,
+   "source": {
+    "title": "하남일보",
+    "url": "http://m.hanamilbo.net/news/articleView.html?idxno=11888",
+    "date": "2026-03-08",
+    "local": true
+   }
+  },
+  {
+   "id": "597c3ef2f8fa9367",
+   "date": "2026-02-06",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "A-4",
+   "title": "A-4 공공분양 본청약 92가구에 1만71명 신청(109.47 대 1). 사전청약 당첨자 189명 중 149명이 본청약으로 전환",
+   "rental": false,
+   "source": {
+    "title": "한국경제",
+    "url": "https://www.hankyung.com/article/2026020697301",
+    "date": "2026-02-06",
+    "local": false
+   }
+  },
+  {
+   "id": "1d2bc7c029a7be07",
+   "date": "2025-12-29",
+   "kind": "공고",
+   "projectId": "town-guri-galmae-station",
+   "block": "A-4",
+   "title": "청약홈 공고: 구리갈매역세권 A-4블록 6년 분양전환공공임대주택(본청약)",
+   "rental": true,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000647&pblancNo=2025000647",
+    "date": "2025-12-29",
+    "local": false
+   }
+  },
+  {
+   "id": "80d276aebb5d0fad",
+   "date": "2025-12-29",
+   "kind": "공고",
+   "projectId": "town-guri-galmae-station",
+   "block": "A-4",
+   "title": "청약홈 공고: 구리갈매역세권 A-4블록 공공분양주택(본청약)",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000646&pblancNo=2025000646",
+    "date": "2025-12-29",
+    "local": false
+   }
+  },
+  {
+   "id": "b0c87cbc5ddbf786",
+   "date": "2025-12-24",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": null,
+   "title": "국토부, GTX-B 갈매역 추가 정차에 '사업타당성 부족' 통보(별내역과 1.4km 거리, 수요 등)",
+   "rental": false,
+   "source": {
+    "title": "뉴시스",
+    "url": "https://www.newsis.com/view/NISX20251224_0003454066",
+    "date": "2025-12-24",
+    "local": false
+   }
+  },
+  {
+   "id": "3824ed60d666c726",
+   "date": "2025-12-13",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "A20",
+   "title": "A20 통합공공임대 2026-하반기 공급 예정 보도 (지역지)",
+   "rental": true,
+   "source": {
+    "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+    "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+    "date": "2025-12-13",
+    "local": true
+   }
+  },
+  {
+   "id": "ed7d64889c3922ac",
+   "date": "2025-12-13",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "D2",
+   "title": "D2 민간분양 2026-상반기 공급 예정 보도 (지역지)",
+   "rental": false,
+   "source": {
+    "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+    "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+    "date": "2025-12-13",
+    "local": true
+   }
+  },
+  {
+   "id": "9418c3ac9f10e0b7",
+   "date": "2025-12-13",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "D5",
+   "title": "D5 민간분양 2026-상반기 공급 예정 보도 (지역지)",
+   "rental": false,
+   "source": {
+    "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+    "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+    "date": "2025-12-13",
+    "local": true
+   }
+  },
+  {
+   "id": "73b672b7efda7979",
+   "date": "2025-12-13",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "S2",
+   "title": "S2 분양전환 공공임대(373)·선택형(41) 2026-하반기 공급 예정 보도 (지역지)",
+   "rental": true,
+   "source": {
+    "title": "하남교산 내년부터 일반⸱공공 분양체제 본격화 (하남Times, 지역지)",
+    "url": "http://m.hanamtimes.com/news/articleView.html?idxno=12557",
+    "date": "2025-12-13",
+    "local": true
+   }
+  },
+  {
+   "id": "d3f3ad8266517c21",
+   "date": "2025-12-04",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "A-2",
+   "title": "A-2 공공임대 362가구 아파트 3공구 시공사 입찰, 금강주택 컨소시엄이 종합심사 1순위(최종 낙찰은 미확인)",
+   "rental": true,
+   "source": {
+    "title": "헤럴드경제",
+    "url": "https://www.heraldk.com/article/2025120416454851370",
+    "date": "2025-12-04",
+    "local": false
+   }
+  },
+  {
+   "id": "6c057a49e169df17",
+   "date": "2025-11-24",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": null,
+   "title": "교산 39개 블록 중 16개 블록(1만4,339세대) 주택건설사업 승인",
+   "rental": false,
+   "source": {
+    "title": "시티뉴스",
+    "url": "http://www.ctnews.co.kr/39834",
+    "date": "2025-11-24",
+    "local": true
+   }
+  },
+  {
+   "id": "8bdf088ba6e11221",
+   "date": "2025-08-05",
+   "kind": "뉴스",
+   "projectId": "town-guri-galmae-station",
+   "block": "A-1",
+   "title": "A-1 신혼희망타운 1,182가구 본청약 공급. 사전청약 당첨자 8월 11~12일, 신규 신청자 13~14일 접수",
+   "rental": false,
+   "source": {
+    "title": "한국경제",
+    "url": "https://www.hankyung.com/article/2025080530681",
+    "date": "2025-08-05",
+    "local": false
+   }
+  },
+  {
+   "id": "0176fd770da2cfe0",
+   "date": "2025-07-29",
+   "kind": "공고",
+   "projectId": "town-guri-galmae-station",
+   "block": "A-1",
+   "title": "청약홈 공고: 구리갈매역세권 A-1블록 신혼희망타운(공공분양)(본청약)",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025820012&pblancNo=2025820012",
+    "date": "2025-07-29",
+    "local": false
+   }
+  },
+  {
+   "id": "92b32b8f65185d84",
+   "date": "2025-05-09",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": "A2",
+   "title": "A2 본청약 일반공급 201가구에 263.3 대 1, 특별공급 186가구에 134.5 대 1(사전청약 당첨자 몫 제외)",
+   "rental": false,
+   "source": {
+    "title": "뉴시스",
+    "url": "https://mobile.newsis.com/view/NISX20250509_0003170095",
+    "date": "2025-05-09",
+    "local": false
+   }
+  },
+  {
+   "id": "7f0c8ad410e05e68",
+   "date": "2025-05-04",
+   "kind": "일정",
+   "projectId": "town-guri-galmae-station",
+   "block": "B-2",
+   "title": "B-2 실버스테이 민간임대 2029-하반기 공급 예정 보도",
+   "rental": true,
+   "source": {
+    "title": "LH·SH·GH, 시니어 레지던스 사업 본격화 (머니투데이방송)",
+    "url": "https://news.mtn.co.kr/news-detail/2025050301112487749",
+    "date": "2025-05-04",
+    "local": false
+   }
+  },
+  {
+   "id": "5de2817ffb3a4bf5",
+   "date": "2025-03-31",
+   "kind": "공고",
+   "projectId": "town-hanam-gyosan",
+   "block": "A2",
+   "title": "청약홈 공고: 교산 푸르지오 더 퍼스트(본청약)",
+   "rental": false,
+   "source": {
+    "title": "청약홈",
+    "url": "https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000093&pblancNo=2025000093",
+    "date": "2025-03-31",
+    "local": false
+   }
+  },
+  {
+   "id": "3d98e06c784988f1",
+   "date": "2025-03-31",
+   "kind": "뉴스",
+   "projectId": "town-hanam-gyosan",
+   "block": "A2",
+   "title": "A2 교산 푸르지오 더 퍼스트 본청약 분양가, 사전청약 추정가보다 약 17% 올라",
+   "rental": false,
+   "source": {
+    "title": "뉴시스",
+    "url": "https://www.newsis.com/view/NISX20250331_0003120514",
+    "date": "2025-03-31",
+    "local": false
+   }
+  },
+  {
+   "id": "49aaf5e23e0c55c3",
+   "date": "2023-09-25",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "A5",
+   "title": "A5 나눔형 공공분양 사전청약 452가구",
+   "rental": false,
+   "source": {
+    "title": "국토부, '뉴:홈' 3300가구 사전청약 실시 (메트로신문)",
+    "url": "https://www.metroseoul.co.kr/article/20230920500364",
+    "date": "2023-09-20",
+    "local": false
+   }
+  },
+  {
+   "id": "9cab2f2207476f67",
+   "date": "2023-09-21",
+   "kind": "일정",
+   "projectId": "town-guri-galmae-station",
+   "block": "A4",
+   "title": "A4 공공분양(일반형 230)·선택형(285) 사전청약 515가구",
+   "rental": false,
+   "source": {
+    "title": "'구리 갈매 역세권지구 A4블록 사전청약' 서울시 장애인 특별공급 기관추천 안내 (서울시)",
+    "url": "https://news.seoul.go.kr/welfare/archives/555616",
+    "date": "2023-09-21",
+    "local": false
+   }
+  },
+  {
+   "id": "aae64a18cb1727ca",
+   "date": "2021-12-29",
+   "kind": "일정",
+   "projectId": "town-guri-galmae-station",
+   "block": "A1",
+   "title": "A1 신혼희망타운 사전청약 1125가구",
+   "rental": false,
+   "source": {
+    "title": "3기 신도시 등 수도권 공공택지에 사전청약 물량 1만7000호 공급 (이코노미스트)",
+    "url": "https://economist.co.kr/2021/12/28/realEstate/realEstateNormal/20211228190135672.html",
+    "date": "2021-12-28",
+    "local": false
+   }
+  },
+  {
+   "id": "eeaad8b4ce8e6b1e",
+   "date": "2021-11-18",
+   "kind": "일정",
+   "projectId": "town-hanam-gyosan",
+   "block": "A2",
+   "title": "A2 공공분양 사전청약 1056가구",
+   "rental": false,
+   "source": {
+    "title": "국토부, 내일 3차 사전청약 4100가구 모집공고 (뉴데일리)",
+    "url": "https://biz.newdaily.co.kr/site/data/html/2021/11/17/2021111700054.html",
+    "date": "2021-11-17",
+    "local": false
+   }
+  }
+ ],
+ "changes": {
+  "since": "2026-11-09T19:00:00+09:00",
+  "items": [
+   {
+    "projectId": "seoul-90003",
+    "from": "이주",
+    "to": "착공"
+   }
+  ]
+ },
+ "watchlist": [
+  {
+   "name": "남양주왕숙",
+   "kind": "3기 신도시",
+   "region": "경기",
+   "tracked": false,
+   "projectId": null
+  },
+  {
+   "name": "하남교산",
+   "kind": "3기 신도시",
+   "region": "경기",
+   "tracked": true,
+   "projectId": "town-hanam-gyosan"
+  },
+  {
+   "name": "고양창릉",
+   "kind": "3기 신도시",
+   "region": "경기",
+   "tracked": false,
+   "projectId": null
+  },
+  {
+   "name": "인천계양",
+   "kind": "3기 신도시",
+   "region": "인천",
+   "tracked": false,
+   "projectId": null
+  },
+  {
+   "name": "부천대장",
+   "kind": "3기 신도시",
+   "region": "경기",
+   "tracked": false,
+   "projectId": null
+  },
+  {
+   "name": "광명시흥",
+   "kind": "3기 신도시",
+   "region": "경기",
+   "tracked": false,
+   "projectId": null
+  },
+  {
+   "name": "구리갈매역세권",
+   "kind": "공공주택지구",
+   "region": "경기",
+   "tracked": true,
+   "projectId": "town-guri-galmae-station"
+  },
+  {
+   "name": "구리토평한강",
+   "kind": "공공주택지구",
+   "region": "경기",
+   "tracked": true,
+   "projectId": "town-guri-topyeong-hangang"
+  }
+ ]
 }

@@ -3,6 +3,17 @@
 # - 어떤 출처가 어떤 사실을 뒷받침하는지는 notes에 적는다.
 # - 날짜는 문자열로 따옴표를 붙인다 (YYYY-MM 또는 YYYY-MM-DD).
 asOf: "2026-11-10"
+# 지역 현황(대시보드)에 칸으로 보이는 지구. town은 아래 towns의 id(추적 중)이고, 비우면 '아직 추적하지 않음'으로만 보인다.
+# 추적하지 않는 지구에는 이름·구분·지역 말고 아무 사실도 적지 않는다(출처 없는 단계·일정을 싣지 않게).
+watchlist:
+  - { name: 남양주왕숙, kind: 3기 신도시, region: 경기 }
+  - { name: 하남교산, kind: 3기 신도시, region: 경기, town: hanam-gyosan }
+  - { name: 고양창릉, kind: 3기 신도시, region: 경기 }
+  - { name: 인천계양, kind: 3기 신도시, region: 인천 }
+  - { name: 부천대장, kind: 3기 신도시, region: 경기 }
+  - { name: 광명시흥, kind: 3기 신도시, region: 경기 }
+  - { name: 구리갈매역세권, kind: 공공주택지구, region: 경기, town: guri-galmae-station }
+  - { name: 구리토평한강, kind: 공공주택지구, region: 경기, town: guri-topyeong-hangang }
 towns:
   - id: hanam-gyosan
     name: 하남교산

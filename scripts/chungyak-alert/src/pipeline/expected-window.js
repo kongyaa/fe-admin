@@ -167,7 +167,10 @@ export function nameHasBlock(name, block) {
 // 청약홈 공고 유형 중 임대와 사전청약. site/app.js의 RENTAL_NOTICE_TYPES·NOTICE_PRE_SUBSCRIPTION과 같은 값.
 export const RENTAL_NOTICE_TYPES = ['민간임대', '공공지원민간임대'];
 export const NOTICE_PRE_SUBSCRIPTION = '민간사전청약';
-export const isRentalNotice = (notice) => RENTAL_NOTICE_TYPES.includes(notice?.typeLabel);
+// 임대 공고: 청약홈 임대 유형이거나, 유형·공고명에 '임대'·'행복주택'이 있는 공고('A-1블록 행복주택', 'A-4블록 6년 분양전환공공임대주택').
+// 블록별 현황에서 임대 공고는 그 블록의 임대 줄에만, 분양 공고는 분양 줄에만 붙는다. site/app.js isRentalNotice와 같은 규칙.
+export const isRentalNotice = (notice) => RENTAL_NOTICE_TYPES.includes(notice?.typeLabel)
+  || /임대|행복주택/.test(`${notice?.typeLabel ?? ''} ${notice?.name ?? ''}`);
 
 // 계획의 하한: 계획 보도일, 출처에 날짜가 없으면 지구의 블록별 분양 단계 날짜(stageDate), 그것도 없으면 null(하한 없음)
 export function planSince(plan, stageDate = null) {

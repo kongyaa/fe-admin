@@ -2,8 +2,9 @@ name: chungyak-map
 
 on:
   schedule:
-    # 매주 화요일 06:00 KST (월요일 21:00 UTC)
-    - cron: '0 21 * * 1'
+    # 하루 두 번: 07:00 KST(전날 22:00 UTC), 19:00 KST(10:00 UTC). 새 소식·접수 일정을 아침저녁으로 새로 모은다.
+    - cron: '0 22 * * *'
+    - cron: '0 10 * * *'
   workflow_dispatch:
   # main에 합쳐지면 바로 다시 배포한다(데이터·화면 수정이 다음 예약 실행까지 기다리지 않게)
   push:
@@ -46,6 +47,7 @@ jobs:
       - run: npm ci
 
       # 서울 자료가 실패하면 여기서 멈추고 이전 배포가 유지된다. 공고 연결은 실패해도 계속한다.
+      # 단계 변경(changes)은 지금 배포된 projects.json과 비교한다(MAP_PREVIOUS_URL로 바꿀 수 있음). 못 받으면 건너뛴다.
       - name: Build projects.json
         run: node src/pipeline/build-map.js --out site/projects.json
         env:

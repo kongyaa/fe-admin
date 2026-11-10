@@ -19,12 +19,43 @@
    3년을 보면 같은 지번의 예전 사업 공고도 이어질 수 있어서, 단계가 이주·착공·일반분양이거나 가장 늦은 공고일이 현재 단계 날짜(`stageDates[stage]`)와 같거나 뒤일 때만 `announced`로 바꾼다.
    그 밖(단계 날짜보다 이른 공고, 단계 날짜나 공고일이 없음)은 공고를 `notices`에 남기고 기간·상태·근거는 그대로 둔다.
    공공주택지구는 블록별로 여러 번 공고하므로 지난 블록 공고가 있어도 규칙·보도 기간과 구간을 그대로 두고, 공고는 상세의 분양 이력에 합쳐 보여 준다.
+   연결된 공고(`notices[]`)에는 청약홈 접수 단계 `stages: [{ name, start, end }]`(특별공급, 1순위 해당·경기·기타, 2순위 …, 무순위 접수 등)와 `winnerDate`(당첨자 발표일, 없으면 null)도 남긴다.
+5. 지구 기사: `news.js`가 `data/news.yaml`을 읽고 검사해 사업에 잇는다(아래 `data/news.yaml` 편집).
+6. 단계 변경: `previous.js`가 지금 배포된 `projects.json`(기본 `https://kongyaa.github.io/fe-admin/projects.json`, 환경 변수 `MAP_PREVIOUS_URL`로 바꿈, CLI `--previous <파일>`)을 한 번 받아 사업별 단계를 비교한다.
+   받지 못하면(`previous_http_404`, `previous_network`, `previous_json`, `previous_shape` 등) `changes`를 비우고 `sources.previous.skipped`와 로그에 종류만 남긴 채 계속한다.
+7. 새 소식·달력: `feed.js`가 공고 연결·블록별 현황 뒤의 사업으로 `feed`와 `calendar`를 만든다(아래 `projects.json`의 소식·달력).
 
 서울 자료가 실패하거나 `newtowns.yaml`이 형식에 맞지 않으면 0이 아닌 코드로 끝나 이전 배포가 유지된다.
 서울 자료에서 단계나 사업유형 값을 몰라 건너뛴 행(`skipped.stage + skipped.kind`)이 데이터 행의 5%를 넘어도 `seoul_values`로 멈춘다. 원자료의 값 이름이 바뀐 경우다. 건너뛴 수는 `sources.seoul.skipped`와 로그에 남는다.
 공고 연결 실패는 `notices.skipped`에 오류 종류만 남기고 계속한다. 키가 없으면 `skipped=no_key`.
 
-로그 예: `map seoul=496 skipped=0 asOf=2026-06 towns=3 notices checked=812 linked=4`(건너뛴 행이 있으면 `skipped=stage:1,duplicate:2`), 이어서 구간별·단계별 건수.
+로그 예: `map seoul=496 skipped=0 asOf=2026-06 towns=3 notices checked=812 linked=4 feed=72 calendar=11 changes=0 news=23`(건너뛴 행이 있으면 `skipped=stage:1,duplicate:2`), 이어서 구간별·단계별 건수.
+이전 배포를 못 받으면 `changes=skipped:<종류>`, `news.yaml`이 없으면 `news=skipped:news_missing`. 서울 자료에서 빠진 사업의 기사는 `news unmatched=<n>` 줄로 센다. 로그에는 건수와 오류 종류만 남는다.
+
+## `projects.json`의 소식·달력·지역 현황
+
+예전 필드는 그대로 두고 아래를 더한다. 사이트는 이 값만으로 화면을 그린다(사이트에서 숫자를 만들지 않는다).
+
+- `generatedAt`: 수집 시각, KST 초까지(`2026-11-10T07:30:00+09:00`). 예전 파일은 날짜만 있어 사이트는 둘 다 받는다.
+- `calendar`: 오늘부터 45일(오늘 포함) 안의 청약 일정. 모든 사업의 연결 공고에서 만든다. 날짜순.
+  `{ date, projectId, block, label, title, rental, url }`. `label`은 `특별공급`·`1순위`·`2순위`·`접수`(무순위·임의·재공급·일반공급 접수 포함)·`당첨자 발표`.
+  여러 날 걸친 단계는 날마다 한 줄(한 단계 최대 31일). 같은 공고의 같은 날·같은 라벨은 한 줄(1순위 해당·기타가 같은 날이면 하나).
+  `block`은 공공주택지구 공고명에서 읽은 블록(`구리갈매역세권 B-1블록 …` → `B-1`, 지구 블록 표기로 맞춤), 공고명에 없으면 분양 이력의 단지 이름으로 찾고, 서울 사업은 null.
+  `rental`은 임대 공고(청약홈 임대 유형, 유형이나 공고명에 `임대`·`행복주택`).
+- `feed`: 새 소식. 최신순. 오늘 뒤 날짜는 곧 시작하는 `접수`만.
+  서울 사업 소식은 최근 400일(오늘 포함), 최대 200건. 공공주택지구 소식은 지구 화면에 블록별 경과를 다 보이도록 날짜·건수 제한 없이 둔다(지구는 몇 곳뿐이라 건수가 적다).
+  중복 제거: 같은 `id`는 한 번만. 지구의 `일정` 소식(분양 이력·계획)이 같은 사업·같은 블록(`blockKey`)의 `news.yaml` 기사와 같은 주소를 출처로 쓰면 `일정` 소식을 빼고 기사만 둔다(날짜는 보지 않는다. 이력은 공고일, 기사는 보도일). 공고·접수 소식이 이미 보여 주는 사실만 담은 기사는 `news.yaml`에 넣지 않는다.
+  `{ id, date, kind, projectId, block, title, rental, source: { title, url, date, local } }`. `id`는 구분·사업·블록·날짜·제목의 해시(빌드마다 같다). 사이트는 이 id로 읽은 소식을 기억한다.
+  - `공고`: 연결된 청약홈 공고마다 한 건(날짜 = 공고일, 제목 `청약홈 공고: <공고명>`, 출처 청약홈).
+  - `접수`: 접수 중이거나 14일 안에 시작하는 공고. 날짜는 1순위 시작일(1순위가 없으면 첫 접수 단계), 제목 `1순위 접수 (<마감일> 마감)`·`무순위 접수 (…)`·`청약 접수 (…)`.
+  - `일정`: 지구의 보도된 블록 계획(`plans`)은 계획마다 한 건(여러 블록이면 `block: "A9·A11"`, 화면은 '·'로 나눠 블록마다 거른다. 날짜 = 가장 이른 보도일, 제목 `A9·A11 공공분양 2026-하반기 공급 예정 보도`, 지역지 보도면 끝에 `(지역지)`).
+    분양 이력(`history`)은 같은 블록·같은 분양/임대·같은 공고일의 연결 공고가 없을 때만 한 건(`A-1 행복주택 입주자 모집 공고 (609세대)`). 달까지만 아는 이력은 뺀다.
+  - `뉴스`: `data/news.yaml` 기사(`kind: 일정`으로 적은 기사는 일정). 출처 제목은 매체 이름, `local`은 지역지.
+  - `단계`: 이전 배포 대비 단계가 바뀐 사업(오늘 날짜, 제목 `단계 변경: 조합설립 → 사업시행인가`). 다음 빌드에서 비교 대상이 바뀌어도 사라지지 않게 이전 `feed`의 단계 소식을 이어 둔다(지금도 있는 사업만, 필드는 다시 검사).
+  - `rental`: 임대 블록 소식(같은 블록의 분양 줄과 임대 줄을 구분할 때). 모든 주소는 `safeHttpUrl`을 거친다(아니면 null).
+- `changes`: `{ since: 이전 배포의 generatedAt | null, items: [{ projectId, from, to }] }`. 이전 배포를 못 받으면 `since: null, items: []`.
+- `watchlist`: 지역 현황의 신도시 칸. `[{ name, kind, region, tracked, projectId }]`(`data/newtowns.yaml`의 `watchlist`). `tracked: false`인 지구에는 아무 사실도 싣지 않는다(화면은 '아직 추적하지 않음').
+- `sources.news`: `{ asOf, count, skipped, unmatched }`, `sources.previous`: `{ skipped }`.
 
 ## 예상 시기 규칙
 
@@ -122,6 +153,17 @@ towns:
 - 단계 이름이 목록에 없으면 `newtowns_stage`, 날짜 형식이 틀리면 `newtowns_date`, id가 겹치면 `newtowns_duplicate`, 필수 값(id, name)이 없거나 형식이 틀리면 `newtowns_field`, YAML 문법 오류는 `newtowns_yaml`로 빌드가 멈춘다. PR 실행에서 바로 드러난다.
 - `noticeMatch`는 너무 짧거나 흔한 글자(`토평`처럼 기존 단지 이름에도 쓰이는 것)를 피한다.
 - `sources`의 url은 http(s)만 남는다.
+
+### 지역 현황 목록(watchlist)
+
+```yaml
+watchlist:
+  - { name: 하남교산, kind: 3기 신도시, region: 경기, town: hanam-gyosan }   # 추적 중: town은 아래 towns의 id
+  - { name: 남양주왕숙, kind: 3기 신도시, region: 경기 }                      # 아직 추적하지 않음
+```
+
+- `kind`는 `3기 신도시` 또는 `공공주택지구`. 그 밖이면 `newtowns_field`, 없는 `town` id는 `newtowns_watchlist`, 같은 이름이 두 번이면 `newtowns_duplicate`.
+- 추적하지 않는 지구에는 단계·일정 같은 사실을 적지 않는다(모르는 키는 무시하고 출력에 싣지 않는다). 사실을 보이려면 `towns`에 출처와 함께 넣고 `town`을 단다.
 
 ### 분양 이력(history)과 다음 블록 계획(plans)
 
@@ -250,6 +292,32 @@ towns:
 - 480px 이하에서는 표 줄을 카드로 쌓는다(칸 이름은 `data-label`). 페이지 가로 스크롤은 없다. 모든 글자는 textContent, 주소는 `safeHttpUrl`을 거친다.
 - "분양 이력" 목록은 그대로 둔다(단지 이름·연결 공고 줄 등 표에 없는 정보가 있다).
 
+## `data/news.yaml` 편집
+
+지구·사업별 기사 목록. 새 소식의 `뉴스`로 보이고, 블록을 적으면 지구 화면에서 그 블록을 누를 때 그 블록 소식으로 보인다.
+
+```yaml
+asOf: "2026-11-10"
+items:
+  - town: guri-galmae-station   # newtowns.yaml 지구 id, 또는 서울 사업 id(seoul-1673)
+    block: B-1                  # 선택. 지구 전체 기사는 비운다
+    date: "2026-11-08"          # 기사 날짜 YYYY-MM-DD
+    title: "84㎡ 평균 분양가 …"   # 기사 제목이 아니라 우리가 쓴 한 줄 요약(기사에 적힌 사실만)
+    outlet: 스트레이트뉴스
+    url: https://www.straightnews.co.kr/news/articleView.html?idxno=314854
+    local: false                # 지역지(하남일보·하남Times 등)면 true
+    rental: false               # 선택. 임대 블록 기사면 true
+    kind: 뉴스                  # 선택. 뉴스(기본) 또는 일정
+```
+
+- 출처로 확인한 기사만 넣는다. 날짜·주소는 기사 그대로, 제목은 우리 요약이다.
+- 검사(형식이 틀리면 빌드가 멈춘다): YAML 문법 `news_yaml`, 최상위 꼴 `news_shape`, 필수 값(town·title·outlet)이나 `kind`·`local`·`rental` 값 `news_field`, 날짜 `news_date`, http(s) 주소 `news_url`,
+  같은 사업·블록·주소 두 번 `news_duplicate`, newtowns.yaml에 없는 지구 `news_town`, 그 지구의 블록(yaml blocks·history·plans, `A1`·`A-1`은 같은 블록)에 없거나 서울 사업에 적은 블록 `news_block`.
+- 여러 블록 기사는 한 건으로 `block: A9·A11`처럼 가운뎃점으로 잇는다. 나눈 블록이 모두 그 지구에 있어야 하고(아니면 `news_block`), 출력도 `A9·A11` 한 건이다.
+- 서울 사업 id가 서울 자료에서 빠지면(서울 자료는 우리가 고치지 않는 원자료) 그 기사만 건너뛰고 `news unmatched=<n>`로 센다.
+- 블록 이름은 지구 화면의 표기로 바꿔 내보낸다(`A1` → `A-1`). 서울 사업 기사는 400일이 지나면 새 소식에서 빠지고, 지구 기사는 날짜와 관계없이 남는다.
+- 청약홈 공고나 분양 이력 소식이 이미 보여 주는 내용(공고일·세대 수)만 담은 기사는 넣지 않는다. 분양 이력의 출처와 같은 기사를 넣으면 그 이력 소식 대신 기사가 보인다.
+
 ## 로컬 실행
 
 ```sh
@@ -258,14 +326,15 @@ npm ci
 npm run build-map                     # 서울 자료를 내려받아 site/projects.json 생성
 node src/pipeline/build-map.js --out site/projects.json --seoul-file ./seoul.xlsx   # 내려받은 파일로
 node src/pipeline/build-map.js --newtowns ./other.yaml                              # 다른 지구 파일로
+node src/pipeline/build-map.js --news ./other-news.yaml --previous ./old-projects.json # 다른 기사 파일, 이전 배포 대신 로컬 파일과 비교
 npx serve site                        # 또는 아무 정적 서버로 site/ 열기
 # 주소 뒤에 ?sample=1 을 붙이면 projects.json 대신 site/sample-projects.json(예시 자료, 예시 안내 표시)을 읽는다
 ```
 
-`DATA_GO_KR_KEY`가 없으면 공고 연결만 건너뛴다.
+`DATA_GO_KR_KEY`가 없으면 공고 연결만 건너뛴다(공고·접수 소식과 달력도 비어 있다). 이전 배포 비교는 기본으로 배포된 주소를 받는다(`MAP_PREVIOUS_URL`로 바꿈).
 
 ## 배포
 
-`.github/workflows/chungyak-map.yml`이 매주 화요일 06:00(KST), 수동 실행, `main`에 이 패키지나 워크플로 변경이 합쳐질 때(push) 만들고 `main`에서만 GitHub Pages로 배포한다.
+`.github/workflows/chungyak-map.yml`이 하루 두 번(07:00·19:00 KST, cron `0 22 * * *`·`0 10 * * *` UTC), 수동 실행, `main`에 이 패키지나 워크플로 변경이 합쳐질 때(push) 만들고 `main`에서만 GitHub Pages로 배포한다.
 PR에서는 빌드와 아티팩트 업로드까지만 한다.
 같은 PR 브랜치의 이전 실행은 새 커밋이 오면 취소되고, 예약·수동·push 실행(main)은 서로 취소하지 않고 차례로 돈다.

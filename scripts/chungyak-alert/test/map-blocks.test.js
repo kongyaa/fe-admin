@@ -291,3 +291,28 @@ test('plan blocks are cleared by the same rule as the window (blockAnnounced): h
     assert.equal(row.plan?.expected, '2026-하반기', typeLabel);
   }
 });
+
+test('rental notices join only the rental row of a block, sale notices only the sale row (구리갈매 A-1 신혼희망타운 + A-1 행복주택)', () => {
+  const history = [
+    hist('A-1', '2025-07-29', { type: '신혼희망타운', households: 1182 }),
+    hist('A-1', '2026-10-27', { type: '행복주택', households: 609, rental: true }),
+  ];
+  const sale = notice('구리갈매역세권 A-1블록 신혼희망타운(공공분양)(본청약)', '2025-07-29', '2025-08-14', { typeLabel: '신혼희망타운' });
+  // 행복주택 공고: 유형은 APT지만 공고명에 행복주택이 있어 임대 공고다
+  const happy = notice('구리갈매역세권 A-1블록 행복주택', '2026-10-27', '2026-11-12');
+  const rows = byBlock(townBlocks({ history, notices: [sale, happy], today }));
+  assert.equal(rows['A-1'].status, '본청약 공고');
+  assert.equal(rows['A-1'].statusDate, '2025-07-29');
+  assert.ok(!rows['A-1'].timeline.some((step) => step.stage === '접수 중'));
+  assert.ok(!rows['A-1'].sources.some((source) => source.url === happy.url));
+  assert.equal(rows['A-1(임대)'].status, '접수 중');
+  assert.equal(rows['A-1(임대)'].statusDate, '2026-11-12');
+  assert.ok(rows['A-1(임대)'].sources.some((source) => source.url === happy.url));
+  // 분양 공고는 임대 줄에 붙지 않는다
+  const rowsList = [{ key: 'A1|sale', rental: false, names: ['A-1'], history: [] }, { key: 'A1|rental', rental: true, names: ['A-1'], history: [] }];
+  assert.equal(noticeRowKey(sale, rowsList), 'A1|sale');
+  assert.equal(noticeRowKey(happy, rowsList), 'A1|rental');
+  assert.equal(noticeRowKey(notice('구리갈매역세권 A-4블록 6년 분양전환공공임대주택(본청약)', '2025-12-29', '2026-01-16'), [
+    { key: 'A4|sale', rental: false, names: ['A-4'], history: [] }, { key: 'A4|rental', rental: true, names: ['A-4'], history: [] },
+  ]), 'A4|rental');
+});

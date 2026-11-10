@@ -65,6 +65,18 @@ export function matchesProject(project, notice) {
   return keys.some((key) => both.includes(key));
 }
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const dayOrNull = (value) => (DAY.test(String(value ?? '')) ? String(value) : null);
+
+// 청약홈 접수 단계(특별공급, 1순위 해당, …, 무순위 접수). 시작일이 없는 단계는 뺀다. 달력·접수 소식(feed.js)이 쓴다.
+export function noticeStages(stages) {
+  return (Array.isArray(stages) ? stages : []).flatMap((stage) => {
+    const start = dayOrNull(stage?.start);
+    if (!start || !stage?.name) return [];
+    return [{ name: String(stage.name), start, end: dayOrNull(stage.end) }];
+  });
+}
+
 export function noticeSummary(notice) {
   return {
     key: notice.key,
@@ -73,6 +85,8 @@ export function noticeSummary(notice) {
     end: notice.overallEnd ?? null,
     url: safeHttpUrl(notice.url),
     typeLabel: notice.typeLabel ?? null,
+    stages: noticeStages(notice.stages),
+    winnerDate: dayOrNull(notice.winnerDate),
   };
 }
 

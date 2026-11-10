@@ -4,17 +4,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectApplyhome } from '../sources/applyhome.js';
 import { AppError, decodeServiceKey, kstToday, maskServiceKey, safeError, safeHttpUrl } from '../util.js';
 import { blockSummary, publicBlockTotal, townBlocks } from './blocks.js';
+import { buildCalendar, buildFeed, carriedStageItems, kstDateTime } from './feed.js';
 import {
   BUCKETS, LIKELY_SOLD_STAGES, applyWindow, bucketOf, isBlockTown, onOrAfter,
 } from './expected-window.js';
 import { linkNotices } from './link-notices.js';
+import { loadNews, resolveNews } from './news.js';
 import { TOWN_STAGES, loadNewtowns } from './newtowns.js';
+import { DEFAULT_PREVIOUS_URL, buildChanges, loadPrevious } from './previous.js';
 import { DATASET_URL, SEOUL_STAGES, collectSeoul, parseSeoulWorkbook } from './seoul-redevelop.js';
 
 // 분양 예정 지도의 projects.json을 만든다. 서울 자료가 실패하면 멈추고(이전 배포 유지),
 // 공고 연결은 실패해도 건너뛴다.
 
 export const DEFAULT_NEWTOWNS = fileURLToPath(new URL('../../data/newtowns.yaml', import.meta.url));
+export const DEFAULT_NEWS = fileURLToPath(new URL('../../data/news.yaml', import.meta.url));
 // 공고 연결은 최근 3년. 공공주택지구는 블록 공고 간격이 1년을 넘기도 해서(하남교산 A2 2025-03) 1년으로는 빠진다.
 // 서울 사업에 이어진 오래된 공고는 현재 단계 날짜 뒤의 공고일 때만 announced로 본다(markAnnounced).
 // 사업시행인가 전 서울 사업에는 공고를 잇지 않는다(canLinkNotices).
@@ -134,14 +138,48 @@ function tally(values) {
   return counts;
 }
 
+// 수집 시각(KST, 초까지). today를 따로 주면(테스트·재현) 그날 00:00으로 둔다.
+export function generatedAtFor(now, today) {
+  return kstToday(now) === today ? kstDateTime(now) : `${today}T00:00:00+09:00`;
+}
+
+// news.yaml: 파일이 없거나 newtowns.yaml이 없으면(지구 기사를 이을 곳이 없음) 건너뛴다. 형식 오류·없는 지구·없는 블록은 멈춘다.
+function collectNews({ newsFile, loadNewsFile, towns, projects }) {
+  if (!newsFile) return { items: [], asOf: null, skipped: 'no_news', unmatched: 0 };
+  const news = loadNewsFile(newsFile);
+  if (!news) return { items: [], asOf: null, skipped: 'news_missing', unmatched: 0 };
+  if (!towns) return { items: [], asOf: news.asOf, skipped: 'newtowns_missing', unmatched: 0 };
+  const resolved = resolveNews(news.items, projects);
+  return {
+    items: resolved.items, asOf: news.asOf, skipped: null, unmatched: resolved.skipped,
+  };
+}
+
+// 단계 소식의 출처: 서울 사업은 서울시 정비사업 자료, 공공주택지구는 날짜가 가장 늦은 지구 출처
+function stageSourceFor(seoul) {
+  return (project) => {
+    if (project.region === '서울') return { title: seoul.title ?? '서울시 정비사업 추진현황', url: DATASET_URL, date: null };
+    return [...(project.sources ?? [])].filter((source) => source?.date).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0]
+      ?? project.sources?.[0] ?? null;
+  };
+}
+
+/**
+ * previous: 이전 배포 자료를 어디서 읽을지. { url } 또는 { file }, null이면 읽지 않는다(changes 없음, skipped no_previous).
+ * CLI(run)는 기본으로 배포된 주소(MAP_PREVIOUS_URL로 바꿈)를 쓴다.
+ */
 export async function buildMap({
   fetch = globalThis.fetch,
   env = process.env,
-  today = kstToday(),
+  now = new Date(),
+  today = kstToday(now),
   seoulFile = null,
   newtownsFile = DEFAULT_NEWTOWNS,
+  newsFile = DEFAULT_NEWS,
+  previous = null,
   readFile = (path) => readFileSync(path),
   loadTowns = loadNewtowns,
+  loadNewsFile = loadNews,
   sleep,
 } = {}) {
   const seoul = seoulFile
@@ -155,11 +193,29 @@ export async function buildMap({
   const linkedResult = notices.skipped
     ? { projects: base, linked: 0, checked: 0 }
     : linkNotices(base, notices.notices, today);
-  const projects = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
-    .map((project) => toPublic({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
+  // 내부 사업(계획·이력 출처가 남아 있음). 소식은 이것으로 만들고, 출력은 toPublic으로 줄인다.
+  const internal = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
+    .map((project) => ({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
+
+  const news = collectNews({
+    newsFile, loadNewsFile, towns, projects: internal,
+  });
+  const prev = await loadPrevious({
+    fetch, ...(previous ?? {}), readFile, sleep,
+  });
+  const changes = buildChanges(prev.data, internal);
+  const feed = buildFeed({
+    projects: internal,
+    news: news.items,
+    changes: changes.items,
+    carried: carriedStageItems(prev.data?.feed, internal, today),
+    today,
+    sourceFor: stageSourceFor(seoul),
+  });
+  const projects = internal.map(toPublic);
 
   return {
-    generatedAt: today,
+    generatedAt: generatedAtFor(now, today),
     sources: {
       seoul: {
         asOf: seoul.asOf, title: seoul.title, url: DATASET_URL, count: seoul.projects.length, skipped: { ...seoul.skipped },
@@ -173,8 +229,16 @@ export async function buildMap({
         skipped: notices.skipped,
         errors: [...new Set(notices.errors)],
       },
+      news: {
+        asOf: news.asOf, count: news.items.length, skipped: news.skipped, unmatched: news.unmatched,
+      },
+      previous: { skipped: prev.skipped },
     },
     stages: { seoul: [...SEOUL_STAGES], town: [...TOWN_STAGES] },
+    watchlist: towns?.watchlist ?? [],
+    calendar: buildCalendar(internal, today),
+    feed,
+    changes,
     projects,
   };
 }
@@ -185,8 +249,13 @@ export function summaryLines(data) {
     ? `notices skipped=${notices.skipped}`
     : `notices checked=${notices.checked} linked=${notices.linked}`;
   const skipped = Object.entries(seoul.skipped ?? {}).map(([reason, count]) => `${reason}:${count}`).join(',') || '0';
-  const lines = [`map seoul=${seoul.count} skipped=${skipped} asOf=${seoul.asOf} towns=${newtowns.count} ${noticePart}`];
+  const previousSkipped = data.sources.previous?.skipped;
+  const changesPart = previousSkipped ? `skipped:${previousSkipped}` : String(data.changes?.items.length ?? 0);
+  const newsPart = data.sources.news?.skipped ? `skipped:${data.sources.news.skipped}` : String(data.sources.news?.count ?? 0);
+  const lines = [`map seoul=${seoul.count} skipped=${skipped} asOf=${seoul.asOf} towns=${newtowns.count} ${noticePart}`
+    + ` feed=${data.feed?.length ?? 0} calendar=${data.calendar?.length ?? 0} changes=${changesPart} news=${newsPart}`];
   if (newtowns.skipped) lines.push(`newtowns skipped=${newtowns.skipped}`);
+  if (data.sources.news?.unmatched) lines.push(`news unmatched=${data.sources.news.unmatched}`);
   if (!notices.skipped && notices.errors.length > 0) lines.push(`notices errors=${notices.errors.join(',')}`);
   const buckets = tally(data.projects.map((project) => project.bucket));
   lines.push(`map buckets ${BUCKETS.map((bucket) => `${bucket}=${buckets[bucket] ?? 0}`).join(' ')}`);
@@ -196,16 +265,19 @@ export function summaryLines(data) {
 }
 
 export function parseArgs(argv) {
-  const args = { out: 'site/projects.json', seoulFile: null, newtownsFile: DEFAULT_NEWTOWNS };
+  const args = {
+    out: 'site/projects.json', seoulFile: null, newtownsFile: DEFAULT_NEWTOWNS, newsFile: DEFAULT_NEWS, previousFile: null,
+  };
+  const keys = {
+    '--out': 'out', '--seoul-file': 'seoulFile', '--newtowns': 'newtownsFile', '--news': 'newsFile', '--previous': 'previousFile',
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
-    if (flag === '--out' || flag === '--seoul-file' || flag === '--newtowns') {
+    if (Object.hasOwn(keys, flag)) {
       if (!value || value.startsWith('--')) throw new AppError('map_args');
       i += 1;
-      if (flag === '--out') args.out = value;
-      else if (flag === '--seoul-file') args.seoulFile = value;
-      else args.newtownsFile = value;
+      args[keys[flag]] = value;
     } else {
       throw new AppError('map_args');
     }
@@ -213,10 +285,27 @@ export function parseArgs(argv) {
   return args;
 }
 
-export async function run({ argv = [], env = process.env, fetch = globalThis.fetch, log = console.log, today } = {}) {
+// 이전 배포 자료: --previous 파일, 없으면 MAP_PREVIOUS_URL, 없으면 배포된 주소
+export function previousSource(args, env) {
+  if (args.previousFile) return { file: args.previousFile };
+  return { url: env.MAP_PREVIOUS_URL || DEFAULT_PREVIOUS_URL };
+}
+
+export async function run({
+  argv = [], env = process.env, fetch = globalThis.fetch, log = console.log, today, now,
+} = {}) {
   try {
     const args = parseArgs(argv);
-    const data = await buildMap({ fetch, env, today, seoulFile: args.seoulFile, newtownsFile: args.newtownsFile });
+    const data = await buildMap({
+      fetch,
+      env,
+      ...(now ? { now } : {}),
+      ...(today ? { today } : {}),
+      seoulFile: args.seoulFile,
+      newtownsFile: args.newtownsFile,
+      newsFile: args.newsFile,
+      previous: previousSource(args, env),
+    });
     mkdirSync(dirname(args.out), { recursive: true });
     writeFileSync(args.out, `${JSON.stringify(data)}\n`);
     for (const line of summaryLines(data)) log(line);
