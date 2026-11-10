@@ -2,14 +2,20 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectApplyhome } from '../sources/applyhome.js';
-import { AppError, decodeServiceKey, kstToday, maskServiceKey, safeError, safeHttpUrl } from '../util.js';
+import {
+  AppError, decodeServiceKey, kstToday, maskServiceKey, maskValue, safeError, safeHttpUrl,
+} from '../util.js';
+import { attachPerformance, buildPerformance, performanceTargets } from './block-performance.js';
 import { blockSummary, publicBlockTotal, townBlocks } from './blocks.js';
 import { buildCalendar, buildFeed, carriedStageItems, kstDateTime } from './feed.js';
 import {
   BUCKETS, LIKELY_SOLD_STAGES, applyWindow, bucketOf, isBlockTown, onOrAfter,
 } from './expected-window.js';
 import { linkNotices } from './link-notices.js';
-import { loadNews, resolveNews } from './news.js';
+import { loadNews, resolveNews } from './curated-news.js';
+import {
+  NEWS_PUBLISH_DAYS, collectNews, createNewsClient, newsTargets,
+} from './news.js';
 import { TOWN_STAGES, loadNewtowns } from './newtowns.js';
 import { DEFAULT_PREVIOUS_URL, buildChanges, loadPrevious } from './previous.js';
 import { DATASET_URL, SEOUL_STAGES, collectSeoul, parseSeoulWorkbook } from './seoul-redevelop.js';
@@ -64,16 +70,91 @@ export function withBlocks(project, today) {
 
 // 공고 연결과 예상 시기 계산에만 쓰는 내부 값(noticeMatch, expected, plans, blockEntries)은 출력에서 뺀다.
 // 공공주택지구는 history(분양 이력)와 blocks(블록별 현황)를 늘 배열로 내보낸다.
+// news(관련 소식)는 기사가 있는 사업에만 있고, 약관상 저장해도 되는 네 값(제목·언론사·날짜·링크)만 남긴다.
 function toPublic(project) {
   const {
-    noticeMatch, expected, plans, history, blockEntries, ...rest
+    noticeMatch, expected, plans, history, blockEntries, news, ...rest
   } = project;
+  const publicNews = (news ?? []).flatMap(({ title, outlet, date, url }) => {
+    const safe = safeHttpUrl(url);
+    return title && safe ? [{ title, outlet: outlet ?? null, date: date ?? null, url: safe }] : [];
+  });
   return {
     ...rest,
     ...(Array.isArray(history) ? { history: history.map(publicHistory) } : {}),
+    ...(publicNews.length ? { news: publicNews } : {}),
     sources: publicSources(rest.sources),
     notices: (rest.notices ?? []).map((notice) => ({ ...notice, url: safeHttpUrl(notice.url) })),
   };
+}
+
+// 분양 성과(블록별 분양 지구의 공고 난 블록): 분양가, 주변 시세 비교, 경쟁률. 공고 연결·블록별 현황 뒤에 부른다.
+// 어떤 실패도 지도 빌드를 멈추지 않는다(블록마다 따로 처리하고, 남은 예외는 performance_failed로 센다).
+async function collectPerformance(projects, {
+  fetch, env, today, sleep, fullNotices, performance, config,
+}) {
+  const empty = (errors, skipped = null) => ({
+    results: new Map(),
+    stats: {
+      blocks: 0, priced: 0, estimated: 0, competition: 0, calls: 0, errors, skipped,
+    },
+  });
+  try {
+    const key = decodeServiceKey(env.DATA_GO_KR_KEY) || null;
+    const fullByKey = new Map(fullNotices.map((notice) => [notice.key, notice]));
+    const targets = projects.flatMap((project) => performanceTargets(project, { fullByKey, today }));
+    if (targets.length === 0) return empty([], key ? null : 'no_key');
+    return await performance(targets, {
+      fetch, key, today, sleep, ...(config ? { config } : {}),
+    });
+  } catch {
+    return empty(['performance_failed']);
+  }
+}
+
+// 관련 소식(네이버 뉴스 검색). 구간(bucket)과 noticeMatch가 필요해 bucketOf 뒤, toPublic 전에 부른다.
+// 기사는 오늘 기준 14일(NEWS_PUBLISH_DAYS)까지만 싣는다. 지도는 하루 두 번 다시 만들지만 다음 빌드까지 남는 기간을
+// 넉넉히 7일(MAP_REBUILD_DAYS)로 잡아 14 + 7 = 21일, 약관의 서버 보관 한도(21일) 안에 든다. 새 소식(feed)의 네이버 기사도
+// 이번 빌드의 news에서만 만든다(이전 배포에서 잇지 않는다).
+// 키가 없으면 skipped=no_key. 어떤 실패도 지도 빌드를 멈추지 않는다(사업별 실패는 collectNews가, 남은 예외는 여기서 kind로 센다).
+// stats.projects는 검색 대상 사업 수(newsTargets), checked는 실제로 검색한 수(멈추면 더 적다), matched는 기사가 남은 수.
+async function collectMapNews(projects, {
+  fetch, env, today, sleep, news,
+}) {
+  const empty = (extra) => ({
+    byId: {},
+    stats: {
+      checked: 0, matched: 0, projects: 0, skipped: null, errors: [], stopped: null, ...extra,
+    },
+  });
+  try {
+    const id = String(env.NAVER_CLIENT_ID ?? '').trim();
+    const secret = String(env.NAVER_CLIENT_SECRET ?? '').trim();
+    if (!id || !secret) return empty({ skipped: 'no_key' });
+    maskValue(id, env);
+    maskValue(secret, env);
+    const targets = newsTargets(projects);
+    const result = await news({
+      projects: targets,
+      client: createNewsClient({ fetch, env, sleep }),
+      today,
+      maxAgeDays: NEWS_PUBLISH_DAYS,
+      sleep,
+    });
+    return {
+      byId: result.byId ?? {},
+      stats: {
+        checked: result.checked ?? 0,
+        matched: result.matched ?? 0,
+        projects: targets.length,
+        skipped: null,
+        errors: [...new Set(result.errors ?? [])],
+        stopped: result.stopped ?? null,
+      },
+    };
+  } catch (error) {
+    return empty({ errors: [error instanceof AppError ? error.kind : 'news_failed'] });
+  }
 }
 
 async function collectNotices({ fetch, env, today, sleep }) {
@@ -143,8 +224,9 @@ export function generatedAtFor(now, today) {
   return kstToday(now) === today ? kstDateTime(now) : `${today}T00:00:00+09:00`;
 }
 
-// news.yaml: 파일이 없거나 newtowns.yaml이 없으면(지구 기사를 이을 곳이 없음) 건너뛴다. 형식 오류·없는 지구·없는 블록은 멈춘다.
-function collectNews({ newsFile, loadNewsFile, towns, projects }) {
+// 손으로 고른 기사(data/news.yaml, curated-news.js): 파일이 없거나 newtowns.yaml이 없으면(지구 기사를 이을 곳이 없음) 건너뛴다.
+// 형식 오류·없는 지구·없는 블록은 멈춘다. 네이버 관련 소식(collectMapNews)과는 따로다.
+function collectCuratedNews({ newsFile, loadNewsFile, towns, projects }) {
   if (!newsFile) return { items: [], asOf: null, skipped: 'no_news', unmatched: 0 };
   const news = loadNewsFile(newsFile);
   if (!news) return { items: [], asOf: null, skipped: 'news_missing', unmatched: 0 };
@@ -175,12 +257,16 @@ export async function buildMap({
   today = kstToday(now),
   seoulFile = null,
   newtownsFile = DEFAULT_NEWTOWNS,
+  // 손으로 고른 기사 파일(data/news.yaml). news는 네이버 관련 소식 수집 함수(테스트에서 바꿔 끼운다)
   newsFile = DEFAULT_NEWS,
   previous = null,
   readFile = (path) => readFileSync(path),
   loadTowns = loadNewtowns,
   loadNewsFile = loadNews,
   sleep,
+  performance = buildPerformance,
+  news = collectNews,
+  config = null,
 } = {}) {
   const seoul = seoulFile
     ? parseSeoulWorkbook(readFile(seoulFile), { fileName: basename(seoulFile) })
@@ -194,20 +280,35 @@ export async function buildMap({
     ? { projects: base, linked: 0, checked: 0 }
     : linkNotices(base, notices.notices, today);
   // 내부 사업(계획·이력 출처가 남아 있음). 소식은 이것으로 만들고, 출력은 toPublic으로 줄인다.
-  const internal = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
+  const staged = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
     .map((project) => ({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
 
-  const news = collectNews({
-    newsFile, loadNewsFile, towns, projects: internal,
+  // 손으로 고른 기사(data/news.yaml)는 형식 오류면 멈추므로 API 호출(분양 성과·관련 소식) 전에 읽는다
+  const curated = collectCuratedNews({
+    newsFile, loadNewsFile, towns, projects: staged,
   });
+  const perf = await collectPerformance(staged, {
+    fetch, env, today, sleep, fullNotices: notices.notices, performance, config,
+  });
+  const newsResult = await collectMapNews(staged, {
+    fetch, env, today, sleep, news,
+  });
+  // 분양 성과(블록 줄)와 관련 소식(네이버, 이번 빌드에서 받은 것만)을 붙인 내부 사업
+  const internal = staged.map((project) => {
+    const withPerf = attachPerformance(project, perf.results);
+    const items = newsResult.byId[project.id];
+    return Array.isArray(items) && items.length ? { ...withPerf, news: items } : withPerf;
+  });
+
   const prev = await loadPrevious({
     fetch, ...(previous ?? {}), readFile, sleep,
   });
   // 이전 배포를 못 읽으면 changes는 since: null, items: [](buildChanges), 이어 오던 단계 소식도 없다
   const changes = buildChanges(prev.data, internal);
+  // 새 소식의 뉴스: news.yaml 기사(계속 둔다)와 네이버 관련 소식(internal의 news, 이번 빌드의 14일 안 기사만. 이전 배포에서 잇지 않는다)
   const feed = buildFeed({
     projects: internal,
-    news: news.items,
+    news: curated.items,
     changes: changes.items,
     carried: carriedStageItems(prev.data?.feed, internal, today),
     today,
@@ -230,8 +331,12 @@ export async function buildMap({
         skipped: notices.skipped,
         errors: [...new Set(notices.errors)],
       },
-      news: {
-        asOf: news.asOf, count: news.items.length, skipped: news.skipped, unmatched: news.unmatched,
+      performance: { ...perf.stats },
+      // 관련 소식(네이버 뉴스 검색) 수집 결과
+      news: { ...newsResult.stats },
+      // 손으로 고른 기사(data/news.yaml)
+      curatedNews: {
+        asOf: curated.asOf, count: curated.items.length, skipped: curated.skipped, unmatched: curated.unmatched,
       },
       previous: { skipped: prev.skipped },
     },
@@ -244,6 +349,21 @@ export async function buildMap({
   };
 }
 
+// 분양 성과 한 줄(건수만). 키가 없으면 끝에 skipped=no_key.
+export function performanceLine(stats) {
+  const errors = Array.isArray(stats.errors) ? stats.errors.length : 0;
+  return `map performance blocks=${stats.blocks} priced=${stats.priced} estimated=${stats.estimated} `
+    + `competition=${stats.competition} calls=${stats.calls} errors=${errors}${stats.skipped ? ` skipped=${stats.skipped}` : ''}`;
+}
+
+// 관련 소식 한 줄(건수와 오류 종류만). 키가 없으면 skipped=no_key. 오류가 있으면 끝에 종류(kinds=…)를 붙인다.
+export function newsLine(stats) {
+  if (stats.skipped) return `map news skipped=${stats.skipped}`;
+  const errors = Array.isArray(stats.errors) ? stats.errors : [];
+  return `map news checked=${stats.checked} matched=${stats.matched} projects=${stats.projects} `
+    + `errors=${errors.length} stopped=${stats.stopped ?? 'none'}${errors.length ? ` kinds=${errors.join(',')}` : ''}`;
+}
+
 export function summaryLines(data) {
   const { seoul, newtowns, notices } = data.sources;
   const noticePart = notices.skipped
@@ -252,18 +372,21 @@ export function summaryLines(data) {
   const skipped = Object.entries(seoul.skipped ?? {}).map(([reason, count]) => `${reason}:${count}`).join(',') || '0';
   const previousSkipped = data.sources.previous?.skipped;
   const changesPart = previousSkipped ? `skipped:${previousSkipped}` : String(data.changes?.items.length ?? 0);
-  const newsPart = data.sources.news?.skipped ? `skipped:${data.sources.news.skipped}` : String(data.sources.news?.count ?? 0);
+  const curated = data.sources.curatedNews;
+  const curatedPart = curated?.skipped ? `skipped:${curated.skipped}` : String(curated?.count ?? 0);
   const lines = [`map seoul=${seoul.count} skipped=${skipped} asOf=${seoul.asOf} towns=${newtowns.count} ${noticePart}`
-    + ` feed=${data.feed?.length ?? 0} calendar=${data.calendar?.length ?? 0} changes=${changesPart} news=${newsPart}`];
+    + ` feed=${data.feed?.length ?? 0} calendar=${data.calendar?.length ?? 0} changes=${changesPart} curated=${curatedPart}`];
   if (newtowns.skipped) lines.push(`newtowns skipped=${newtowns.skipped}`);
   // 이전 배포를 못 읽은 종류(no_previous는 비교를 하지 않은 경우라 남기지 않는다)
   if (previousSkipped && previousSkipped !== 'no_previous') lines.push(`previous skipped=${previousSkipped}`);
-  if (data.sources.news?.unmatched) lines.push(`news unmatched=${data.sources.news.unmatched}`);
+  if (curated?.unmatched) lines.push(`curated unmatched=${curated.unmatched}`);
   if (!notices.skipped && notices.errors.length > 0) lines.push(`notices errors=${notices.errors.join(',')}`);
   const buckets = tally(data.projects.map((project) => project.bucket));
   lines.push(`map buckets ${BUCKETS.map((bucket) => `${bucket}=${buckets[bucket] ?? 0}`).join(' ')}`);
   const stages = tally(data.projects.map((project) => project.stage));
   lines.push(`map stages ${Object.entries(stages).map(([stage, count]) => `${stage}=${count}`).join(' ')}`);
+  if (data.sources.news) lines.push(newsLine(data.sources.news));
+  if (data.sources.performance) lines.push(performanceLine(data.sources.performance));
   return lines;
 }
 

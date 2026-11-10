@@ -460,6 +460,25 @@ a.watch-cell:hover { border-color: var(--ink); color: var(--ink); }
 }
 .bcard-latest { color: var(--muted); min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .bcard-foot .muted { flex: none; font-size: .75rem; }
+/* 블록 카드 안의 분양 성과(공고 난 분양 블록): 분양가·경쟁률·주변 시세 비교. 칸 이름 | 값, 카드가 좁으면 칸 이름을 값 위에 */
+.bcard { container-type: inline-size; }
+.perf { width: 100%; display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--rule); background: var(--sheet); font-size: .8125rem; min-width: 0; }
+.perf-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.perf-head b { font-weight: 700; }
+.perf-head a, .perf a { position: relative; z-index: 1; white-space: nowrap; }
+.perf-list { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; }
+.perf-list dt { color: var(--muted); font-size: .75rem; padding-top: 1px; }
+.perf-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.perf-points { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.perf-caveat { display: block; color: var(--muted); font-size: .75rem; margin-top: 2px; }
+@container (max-width: 360px) {
+  .perf { padding: 8px 10px; }
+  .perf-list { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .perf-list dd + dt { margin-top: 6px; }
+}
+/* 네이버 뉴스 검색으로 찾은 관련 소식의 표시('검색: NAVER') */
+.news-credit { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+.news-note .news-credit { margin-left: 2px; }
 
 /* 사업 화면 */
 .notice-box { border: 2px solid var(--green); background: var(--green-soft); padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
@@ -569,7 +588,7 @@ a.watch-cell:hover { border-color: var(--ink); color: var(--ink); }
   .theme-seg button { min-width: 44px; }
   .fold > summary, .memo summary { min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; }
   /* 소식 줄의 사업 링크·출처 링크, 블록 카드의 출처 링크도 높이 44px 이상 */
-  .frow-proj, .frow-src a, .tl-src a, .bcard-src a { display: inline-flex; align-items: center; min-height: 44px; }
+  .frow-proj, .frow-src a, .tl-src a, .bcard-src a, .perf a { display: inline-flex; align-items: center; min-height: 44px; }
   .frow-meta, .tl-meta { row-gap: 0; }
   .frow-body, .tl-item { gap: 0; }
   .bcard-src { display: flex; flex-wrap: wrap; align-items: center; column-gap: 4px; }

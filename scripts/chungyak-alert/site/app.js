@@ -304,6 +304,44 @@ export function sourceOutlet(source) {
   return url ? new URL(url).hostname.replace(/^(www|m)\./, '') : '출처';
 }
 
+// --- 관련 소식(네이버 뉴스 검색) ---
+export const NEWS_LIMIT = 5;
+// 파이프라인은 빌드 날 기준 14일 안의 기사만 싣는다(src/pipeline/news.js NEWS_PUBLISH_DAYS).
+// 빌드가 멈춰 예전 배포가 오래 남더라도 약관의 보관 한도(21일)가 지난 기사는 화면에 보이지 않게 한 번 더 거른다.
+export const NEWS_SHOW_DAYS = 21;
+export const NEWS_NOTE = '네이버 뉴스 검색 결과에서 제목에 사업명이 들어간 최근 2주 기사만 보여 줍니다. 출처: 각 언론사';
+export const NEWS_CREDIT = '검색: NAVER';
+
+/** 'YYYY-MM-DD' 에서 days 일 전 날짜. 형식이 아니면 null */
+export function ymdDaysBefore(ymd, days) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim());
+  if (!m) return null;
+  const time = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - days * 24 * 60 * 60 * 1000;
+  return Number.isNaN(time) ? null : new Date(time).toISOString().slice(0, 10);
+}
+
+/**
+ * 사업의 관련 소식: [{ title, outlet, date, url }] 최신순 NEWS_LIMIT 건.
+ * 제목이 있고 주소가 http(s)인 것만, 날짜가 today 기준 NEWS_SHOW_DAYS 일 안(그날 포함, 미래 제외)인 것만 남긴다.
+ * news 가 없거나 배열이 아니면 빈 배열
+ */
+export function newsItems(project, today) {
+  const cutoff = ymdDaysBefore(today, NEWS_SHOW_DAYS);
+  if (!cutoff) return [];
+  return entriesOf(project?.news).flatMap((n) => {
+    const title = textOrNull(n.title);
+    const url = safeHttpUrl(n.url);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(n.date ?? '')) ? n.date : null;
+    if (!title || !url || !date || date < cutoff || date > today) return [];
+    return [{ title, outlet: textOrNull(n.outlet), date, url }];
+  }).sort((a, b) => b.date.localeCompare(a.date)).slice(0, NEWS_LIMIT);
+}
+
+/** 관련 소식 한 줄의 덧말: '언론사 · 날짜'(없는 값은 뺀다) */
+export function newsMetaText(item) {
+  return [item?.outlet, item?.date].filter(Boolean).join(' · ');
+}
+
 // 비교용 이름: 공백·가운뎃점과 글자-숫자 사이 '-'를 뺀다(blockKey 와 같은 '-' 규칙)
 const compactName = (value) => String(value ?? '').toUpperCase().replace(/[\s·]/g, '').replace(/(?<=[A-Z])-(?=\d)/g, '');
 
@@ -505,6 +543,8 @@ export function blockRows(project, today) {
       plan,
       note: textOrNull(b.note),
       sources: cleanLinks(b.sources),
+      // 분양 성과(공고 난 분양 줄만, 없으면 null). 임대 줄에는 보이지 않는다.
+      performance: b.rental === true ? null : cleanPerformance(b.performance),
     };
   }).sort((a, b) => BLOCK_STATUS_ORDER.indexOf(a.status) - BLOCK_STATUS_ORDER.indexOf(b.status)
     || naturalBlock(a.block, b.block) || Number(a.rental) - Number(b.rental));
@@ -555,6 +595,157 @@ export function blockPlanLabel(plan, todayYm) {
   const src = plan.source ? `${sourceOutlet(plan.source)}${plan.source.date ? ` ${plan.source.date}` : ''}` : null;
   const passed = plan.to && todayYm && monthsBetween(todayYm, plan.to) < 0;
   return `${plan.expected}${src ? ` (${src})` : ''}${passed ? ' · 지남' : ''}`;
+}
+
+// --- 분양 성과(공고 난 블록의 분양가·경쟁률·주변 시세 비교) ------------------------
+
+/** 시세 숫자를 하나라도 보일 때 붙이는 안내 */
+export const MARKET_CAVEAT = '주변 단지 실거래로 추정한 값이며 이 단지의 시세가 아닙니다 (전매제한·미입주)';
+/** 공고 당시 값은 오늘 받은 실거래(늦은 신고·취소 반영)로 다시 계산한 것이라는 표시 */
+export const AT_NOTICE_NOTE = '(현재 집계 기준)';
+/** 청약홈 경쟁률 API 값의 안내(실시간 집계) */
+export const LIVE_COMPETITION_NOTE = '청약홈 실시간 집계, 최종 발표와 다를 수 있음';
+
+const finite = (n) => typeof n === 'number' && Number.isFinite(n);
+const positive = (n) => finite(n) && n > 0;
+
+/** 만원 → '6억 4,000만 원', '9,800만 원', '6억 원' */
+export function fmtManwon(value) {
+  if (!positive(value)) return '-';
+  const n = Math.round(value);
+  const eok = Math.floor(n / 10000);
+  const rest = n % 10000;
+  if (!eok) return `${rest.toLocaleString('ko-KR')}만 원`;
+  return rest ? `${eok}억 ${rest.toLocaleString('ko-KR')}만 원` : `${eok}억 원`;
+}
+
+/** 할인율 → '29% 낮음', '-0.12' → '12% 높음', 반올림해 0이면 '비슷함'. 값이 없으면 null */
+export function discountLabel(rate) {
+  if (!finite(rate)) return null;
+  const pct = Math.round(Math.abs(rate) * 100);
+  if (pct === 0) return '비슷함';
+  return `${pct}% ${rate > 0 ? '낮음' : '높음'}`;
+}
+
+const areaLabel = (area) => `${Number(area.toFixed(2))}㎡`;
+
+function cleanPoint(point) {
+  if (!point || typeof point !== 'object') return null;
+  const head = { asOf: ymdOrNull(point.asOf), period: textOrNull(point.period) };
+  if (!positive(point.estimate)) return { ...head, shown: false, reason: textOrNull(point.reason) ?? '추정하지 않았습니다' };
+  return {
+    ...head,
+    shown: true,
+    estimate: point.estimate,
+    unit: positive(point.unit) ? point.unit : null,
+    discountRate: finite(point.discountRate) ? point.discountRate : null,
+    confidence: textOrNull(point.confidence),
+    scopeLabel: textOrNull(point.scopeLabel) ?? textOrNull(point.scope),
+    same: point.scope === '같은 단지',
+    comparables: (Array.isArray(point.comparables) ? point.comparables : []).map(textOrNull).filter(Boolean).slice(0, 5),
+    comparableCount: countOrNull(point.comparableCount),
+    samples: countOrNull(point.samples),
+  };
+}
+
+function cleanCompetition(c) {
+  if (!c || typeof c !== 'object' || !positive(c.rate)) return null;
+  const ref = c.ref ? cleanLinks([c.ref])[0] ?? null : null;
+  return {
+    api: c.source === '청약홈',
+    scope: textOrNull(c.scope),
+    rate: c.rate,
+    applicants: countOrNull(c.applicants),
+    households: countOrNull(c.households),
+    shortfall: c.shortfall === true,
+    ref,
+  };
+}
+
+/**
+ * projects.json 의 블록 줄 performance 를 화면용으로 정리한다. 모양이 틀리면 null.
+ * { name, noticeDate, noticeUrl, representative, typeCount, pricesReason, atNotice, now, marketReason, competition, competitionReason }
+ */
+export function cleanPerformance(perf) {
+  if (!perf || typeof perf !== 'object' || Array.isArray(perf)) return null;
+  const rep = perf.representative;
+  const representative = rep && positive(rep.area) && positive(rep.topPrice)
+    ? {
+      houseType: textOrNull(rep.houseType), area: rep.area, topPrice: rep.topPrice, unitPrice: positive(rep.unitPrice) ? rep.unitPrice : null,
+    }
+    : null;
+  const market = perf.market && typeof perf.market === 'object' ? perf.market : null;
+  return {
+    name: textOrNull(perf.name),
+    noticeDate: ymdOrNull(perf.noticeDate),
+    noticeUrl: safeHttpUrl(perf.noticeUrl),
+    representative,
+    typeCount: Array.isArray(perf.prices) ? perf.prices.length : 0,
+    pricesReason: textOrNull(perf.pricesReason),
+    atNotice: cleanPoint(market?.atNotice),
+    now: cleanPoint(market?.now),
+    marketReason: textOrNull(perf.marketReason),
+    competition: cleanCompetition(perf.competition),
+    competitionReason: textOrNull(perf.competitionReason),
+  };
+}
+
+/** 대표 주택형 분양가: '84.98㎡(084.9800A) 최고 6억 4,000만 원 · 전용㎡당 753만 원' */
+export function performancePriceText(rep) {
+  if (!rep) return null;
+  const type = rep.houseType && rep.houseType !== '-' ? `(${rep.houseType})` : '';
+  const unit = rep.unitPrice ? ` · 전용㎡당 ${Math.round(rep.unitPrice).toLocaleString('ko-KR')}만 원` : '';
+  return `대표 ${areaLabel(rep.area)}${type} 최고 ${fmtManwon(rep.topPrice)}${unit}`;
+}
+
+/** 경쟁률: '1순위 263.3:1 (접수 52,920건 / 201가구)', 보도는 출처 범위 그대로 '일반공급 263.3:1 (52,920명 / 201가구)' */
+export function competitionText(c) {
+  if (!c) return null;
+  const scope = c.scope ?? (c.api ? '1순위' : '');
+  const rate = `${Number(c.rate.toFixed(1)).toLocaleString('ko-KR')}:1`;
+  const count = c.applicants !== null && c.households !== null
+    ? ` (${c.api ? '접수 ' : ''}${c.applicants.toLocaleString('ko-KR')}${c.api ? '건' : '명'} / ${c.households.toLocaleString('ko-KR')}가구)`
+    : '';
+  return `${scope ? `${scope} ` : ''}${rate}${count}${c.shortfall ? ' · 미달' : ''}`;
+}
+
+/**
+ * 시세 비교 한 줄. label 은 '공고 당시' 또는 '현재 기준'.
+ * '공고 당시 주변 신축 환산 시세 대비 29% 낮음 (신뢰도 중, 하남시 비교 3개 단지: A·B·C, 실거래 41건, 2024-09~2025-02)'
+ * 숨긴 값은 '공고 당시: 사유'
+ */
+export function marketPointText(point, label) {
+  if (!point) return null;
+  if (!point.shown) return `${label}: ${point.reason}${point.period ? ` (${point.period})` : ''}`;
+  const diff = discountLabel(point.discountRate);
+  const head = `${label} 주변 신축 환산 시세${point.estimate ? ` ${fmtManwon(point.estimate)}` : ''}${diff ? ` 대비 분양가 ${diff}` : ''}`;
+  const total = Math.max(point.comparableCount ?? 0, point.comparables.length);
+  const more = total > point.comparables.length && point.comparables.length ? ` 외 ${total - point.comparables.length}곳` : '';
+  const where = point.same
+    ? '같은 단지 거래'
+    : `${point.scopeLabel ? `${point.scopeLabel} ` : ''}비교 ${total}개 단지${point.comparables.length ? `: ${point.comparables.join('·')}${more}` : ''}`;
+  const parts = [
+    point.confidence ? `신뢰도 ${point.confidence}` : null,
+    where,
+    point.samples !== null ? `실거래 ${point.samples.toLocaleString('ko-KR')}건` : null,
+    point.period,
+  ].filter(Boolean);
+  return `${head} (${parts.join(', ')})`;
+}
+
+/**
+ * 주변 시세 비교 칸: 공고 당시·현재 기준 줄과 안내. 공고 당시 숫자 줄에는 AT_NOTICE_NOTE 를 붙인다.
+ * 안내(MARKET_CAVEAT)는 숫자를 보인 줄이 하나라도 있을 때만(사유만 있으면 null).
+ * { points: [{ shown, text }], caveat }
+ */
+export function marketLines(perf) {
+  const points = [];
+  if (perf?.atNotice) {
+    const text = marketPointText(perf.atNotice, '공고 당시');
+    points.push({ shown: perf.atNotice.shown, text: perf.atNotice.shown ? `${text} ${AT_NOTICE_NOTE}` : text });
+  }
+  if (perf?.now) points.push({ shown: perf.now.shown, text: marketPointText(perf.now, '현재 기준') });
+  return { points, caveat: points.some((p) => p.shown) ? MARKET_CAVEAT : null };
 }
 
 /**
@@ -860,10 +1051,36 @@ export function cleanFeed(list) {
       block: textOrNull(f.block),
       rental: f.rental === true,
       source: {
-        title: textOrNull(src.title), url: safeHttpUrl(src.url), date: textOrNull(src.date), outlet: textOrNull(src.outlet), local: src.local === true,
+        title: textOrNull(src.title),
+        url: safeHttpUrl(src.url),
+        date: textOrNull(src.date),
+        outlet: textOrNull(src.outlet),
+        local: src.local === true,
+        provider: src.provider === NAVER_PROVIDER ? NAVER_PROVIDER : null,
       },
     }];
   }).sort((a, b) => b.date.localeCompare(a.date) || a.i - b.i).map(({ i, ...f }) => f);
+}
+
+// 네이버 뉴스 검색으로 찾은 관련 소식의 source.provider(파이프라인 feed.js NAVER_PROVIDER)
+export const NAVER_PROVIDER = 'naver';
+
+/** 네이버 관련 소식인지(제목은 언론사 제목 그대로, 출처에 '검색: NAVER' 표시) */
+export const isNaverItem = (item) => item?.source?.provider === NAVER_PROVIDER;
+
+/**
+ * 화면에 보일 소식: 네이버 관련 소식은 today 기준 NEWS_SHOW_DAYS(21)일 안(그날 포함, 미래 제외)만 남긴다.
+ * 파이프라인은 14일 안의 기사만 싣지만, 빌드가 멈춰 예전 배포가 오래 남아도 약관의 보관 한도가 지난 기사는 숨긴다(newsItems 와 같은 기준).
+ * 그 밖의 소식(공고·일정·손으로 고른 기사 등)은 그대로.
+ */
+export function visibleFeed(feed, today) {
+  const cutoff = ymdDaysBefore(today, NEWS_SHOW_DAYS);
+  return (Array.isArray(feed) ? feed : []).filter((f) => !isNaverItem(f) || (cutoff !== null && f.date >= cutoff && f.date <= today));
+}
+
+/** 사업 목록의 '소식 N': 그 사업의 뉴스 소식 수(손으로 고른 기사와 네이버 관련 소식, visibleFeed 뒤의 feed) */
+export function projectNewsCount(feed, projectId) {
+  return (Array.isArray(feed) ? feed : []).filter((f) => f.kind === '뉴스' && f.projectId === projectId).length;
 }
 
 /** 소식의 블록(비교용 key): 'A9·A11' → ['A9', 'A11'], 블록이 없으면 [] */
@@ -1462,7 +1679,7 @@ function start(data, { refreshed = false } = {}) {
   state.bucket = new Map(state.projects.map((p) => [p.id, bucketOf(p, state.todayYm)]));
   state.hay = new Map(state.projects.map((p) => [p.id, searchText(p)]));
   state.hasFeed = Array.isArray(data.feed);
-  state.feed = cleanFeed(data.feed);
+  state.feed = visibleFeed(cleanFeed(data.feed), state.today);
   state.calendar = cleanCalendar(data.calendar);
   state.watch = cleanWatchlist(data.watchlist);
   if (!refreshed) state.baseline = loadBaseline();
@@ -1517,6 +1734,19 @@ function renderSources() {
       townSources.size
         ? h('ul', {}, [...townSources.values()].map((src) => h('li', {}, extLink(src.url, src.title || src.url), src.date ? h('span', { class: 'muted' }, ` · ${src.date}`) : null)))
         : null));
+  }
+  const curated = s.curatedNews;
+  if (curated && !curated.skipped && Number(curated.count) > 0) {
+    items.push(h('li', {},
+      h('span', {}, '뉴스: 보도 기사를 읽고 한 줄로 요약해 정리한 목록(원문 링크)'),
+      h('span', { class: 'muted' }, curated.asOf ? ` · ${curated.asOf} 확인` : '', ` · ${Number(curated.count).toLocaleString('ko-KR')}건`)));
+  }
+  const naver = s.news;
+  if (naver && !naver.skipped) {
+    items.push(h('li', {},
+      extLink('https://search.naver.com/', '네이버 뉴스 검색'),
+      h('span', { class: 'muted' }, ` · 관련 소식: 제목에 사업명이 들어간 최근 2주 기사의 제목·언론사·날짜·링크만 보여 줍니다`,
+        typeof naver.matched === 'number' ? ` · 이번 생성에서 ${naver.matched.toLocaleString('ko-KR')}곳` : '')));
   }
   const n = s.notices;
   items.push(h('li', {},
@@ -1769,8 +1999,13 @@ function feedRow(f) {
       sourceLine(f, 'frow-src')));
 }
 
-/** 소식의 출처 줄: '메트로신문 2026-11-03'(링크), 지역지면 꼬리표 */
+/** 소식의 출처 줄: '메트로신문 2026-11-03'(링크), 지역지면 꼬리표. 네이버 관련 소식은 '언론사 · 날짜'(원문 링크)와 '검색: NAVER' */
 function sourceLine(f, cls) {
+  if (isNaverItem(f)) {
+    return h('span', { class: cls },
+      extLink(f.source.url, newsMetaText({ outlet: f.source.title, date: f.source.date ?? f.date }) || '원문'),
+      ' ', h('small', { class: 'news-credit' }, NEWS_CREDIT));
+  }
   if (!f.source.url && !f.source.title) return null;
   const local = f.source.local && !/지역지/.test(`${f.source.title ?? ''} ${f.title}`);
   return h('span', { class: cls }, extLink(f.source.url, feedSourceLabel(f.source)), local ? h('span', { class: 'local-tag' }, '지역지') : null);
@@ -1949,6 +2184,7 @@ function clearQuery() {
 function listItem(p) {
   const range = windowRangeLabel(p, state.todayYm);
   const sold = stageGroup(p) === 'town' ? latestSale(p) : null;
+  const news = projectNewsCount(state.feed, p.id);
   return h('a', {
     class: 'item', href: linkFor(p, { district: state.filters.district }), 'data-nav': '', 'data-key': `li:${p.id}`, 'data-back': '사업 목록으로',
   },
@@ -1959,7 +2195,8 @@ function listItem(p) {
     h('span', {}, p.region === '서울' ? shortDistrict(p.district) : placeLabel(p)),
     h('span', {}, p.stage ?? ''),
     range ? h('span', {}, `${windowPrefix(p)} ${range}`) : null,
-    sold ? h('span', {}, `최근 분양 ${sold}`) : null));
+    sold ? h('span', {}, `최근 분양 ${sold}`) : null,
+    news ? h('span', {}, `소식 ${news}`) : null));
 }
 
 /** 결과가 없을 때의 안내 하나: 걸린 조건과 되돌릴 버튼 */
@@ -2154,6 +2391,39 @@ function setView(...nodes) {
   $('view').replaceChildren(...nodes.filter(Boolean));
 }
 
+/**
+ * 블록 카드 안의 분양 성과: 대표 주택형 분양가, 경쟁률(출처), 주변 시세 비교(공고 당시·현재 기준)와 안내.
+ * 숫자를 숨긴 항목은 사유를 보인다. 모든 글자는 텍스트 노드, 주소는 safeHttpUrl 을 거친다(h).
+ */
+function performanceBox(block, perf) {
+  const muted = (text) => h('span', { class: 'muted' }, text);
+  const price = performancePriceText(perf.representative);
+  const comp = competitionText(perf.competition);
+  const c = perf.competition;
+  const compSource = !c ? null
+    : c.api ? muted(` · ${LIVE_COMPETITION_NOTE}`)
+      : [' · ', c.ref ? sourceLink(c.ref) : muted('보도')];
+  const market = marketLines(perf);
+  const points = market.points.map((pt) => h('li', { class: pt.shown ? null : 'muted' }, pt.text));
+  const head = [perf.noticeDate ? `공고 ${perf.noticeDate}` : null, perf.name].filter(Boolean).join(' · ');
+  return h('div', { class: 'perf', role: 'group', 'aria-label': `${block} 분양 성과` },
+    h('p', { class: 'perf-head' },
+      h('b', {}, '분양 성과'),
+      head ? [' ', muted(head)] : null,
+      perf.noticeUrl ? [' ', h('a', { href: perf.noticeUrl, target: '_blank', rel: 'noopener noreferrer' }, '청약홈 공고')] : null),
+    h('dl', { class: 'perf-list' },
+      h('dt', {}, '분양가'),
+      h('dd', {}, price
+        ? [price, perf.typeCount > 1 ? muted(` · 주택형 ${perf.typeCount}개 중`) : null]
+        : muted(perf.pricesReason ?? '분양가 정보 없음')),
+      h('dt', {}, '경쟁률'),
+      h('dd', {}, comp ? [comp, compSource] : muted(perf.competitionReason ?? '경쟁률 정보 없음')),
+      h('dt', {}, '주변 시세 비교'),
+      h('dd', {},
+        points.length ? h('ul', { class: 'perf-points' }, points) : muted(perf.marketReason ?? '시세 비교 없음'),
+        market.caveat ? h('small', { class: 'perf-caveat' }, market.caveat) : null)));
+}
+
 function renderMissing(id) {
   setView(
     backLink(),
@@ -2201,13 +2471,17 @@ function renderTownView(id, block) {
             h('summary', {}, '출처로 확인한 블록만 보여 줍니다. ', h('span', { class: 'fold-more' }, '자세히')),
             h('p', {}, '사업승인 날짜는 승인일을 모르면 보도일이고, 유형이 출처에 없으면 "유형 미확인"입니다. '
               + '분양과 임대가 함께 있는 블록은 카드를 나누지만 소식은 블록 이름으로 묶습니다.'
+              + (rows.some((r) => r.performance)
+                ? ' 분양 성과의 시세 비교는 주변 단지 실거래로 추정한 신축 환산 값이며, 신뢰도가 낮거나 차익 공유 유형이면 숫자를 보이지 않습니다.'
+                : '')
               + (totalText ? ' 위 전체 블록 수 문구는 그 출처가 보도한 수치라 카드 수와 같은 기준이 아닙니다.' : '')))
           : null),
       h('section', { class: 'tnews', 'aria-labelledby': 'tnews-title' },
         h('div', { class: 'sec-head' }, h('h3', { id: 'tnews-title', tabindex: '-1' }), h('span', { id: 'tnews-reset' })),
         h('div', { class: 'chips', id: 'tnews-chips', role: 'group', 'aria-label': '블록으로 소식 거르기' }),
         h('ol', { class: 'tline', id: 'tnews-list' }),
-        h('p', { class: 'note' }, '소식은 하루 두 번 모읍니다. 제목은 기사 내용을 요약한 것이고, 원문은 링크로 봅니다.'))),
+        h('p', { class: 'note' }, '소식은 하루 두 번 모읍니다. 뉴스 제목은 기사 내용을 요약한 것이고, 원문은 링크로 봅니다. ',
+          '"검색: NAVER" 표시 기사는 언론사 제목 그대로이며 제목에서 블록 이름을 읽지 못하면 지구 전체로 묶습니다.'))),
     typeof p.notes === 'string' && p.notes.trim() ? h('details', { class: 'memo' }, h('summary', {}, '조사 메모'), h('p', {}, p.notes)) : null,
   );
   renderTownBlocks();
@@ -2248,6 +2522,7 @@ function renderTownBlocks() {
       h('ol', { class: 'bsteps', 'aria-label': `${r.block} 진행` }, blockSteps(r).map((s) => h('li', { class: `st-${s.state}` },
         h('span', { class: 'visually-hidden' }, s.state === 'done' ? '지난 단계: ' : s.state === 'now' ? '지금: ' : '다음: '),
         s.label, s.date ? h('small', {}, s.date) : null))),
+      r.performance ? performanceBox(r.block, r.performance) : null,
       r.note ? h('p', { class: 'bcard-note' }, r.note) : null,
       r.sources.length ? h('p', { class: 'bcard-src' }, '출처 ', joinLinks(r.sources)) : null,
       h('p', { class: 'bcard-foot' },
@@ -2415,7 +2690,8 @@ function renderProjectView(id) {
         news.length ? h('ol', { class: 'tline' }, news.map((f) => timelineItem(f))) : null,
         h('p', { class: 'note' }, news.length
           ? '청약홈 공고, 단계 변경, 모은 기사를 날짜 순으로 보여 줍니다.'
-          : '이 사업으로 모은 소식이 아직 없습니다. 청약홈 공고나 단계 변경이 생기면 여기에 쌓입니다.')),
+          : '이 사업으로 모은 소식이 아직 없습니다. 청약홈 공고나 단계 변경이 생기면 여기에 쌓입니다.'),
+        news.some(isNaverItem) ? h('p', { class: 'note news-note' }, NEWS_NOTE, ' ', h('small', { class: 'news-credit' }, NEWS_CREDIT)) : null),
       h('aside', { class: 'pj-src', 'aria-labelledby': 'pj-src' },
         h('h3', { id: 'pj-src' }, '출처와 기준일'),
         h('ul', {},

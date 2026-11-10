@@ -20,18 +20,22 @@
    그 밖(단계 날짜보다 이른 공고, 단계 날짜나 공고일이 없음)은 공고를 `notices`에 남기고 기간·상태·근거는 그대로 둔다.
    공공주택지구는 블록별로 여러 번 공고하므로 지난 블록 공고가 있어도 규칙·보도 기간과 구간을 그대로 두고, 공고는 상세의 분양 이력에 합쳐 보여 준다.
    연결된 공고(`notices[]`)에는 청약홈 접수 단계 `stages: [{ name, start, end }]`(특별공급, 1순위 해당·경기·기타, 2순위 …, 무순위 접수 등)와 `winnerDate`(당첨자 발표일, 없으면 null)도 남긴다.
-5. 지구 기사: `news.js`가 `data/news.yaml`을 읽고 검사해 사업에 잇는다(아래 `data/news.yaml` 편집).
-6. 단계 변경: `previous.js`가 지금 배포된 `projects.json`(기본 `https://kongyaa.github.io/fe-admin/projects.json`, 환경 변수 `MAP_PREVIOUS_URL`로 바꿈, CLI `--previous <파일>`)을 받아(실패하면 한 번 더) 사업별 단계를 비교한다. 10MB를 넘는 자료는 읽지 않는다(`previous_too_large`).
+5. 손으로 고른 기사: `curated-news.js`가 `data/news.yaml`을 읽고 검사해 사업에 잇는다(아래 `data/news.yaml` 편집). 형식이 틀리면 멈추므로 아래 API 단계보다 먼저 읽는다.
+6. 분양 성과: 블록별 분양 지구에서 공고가 난 분양 블록의 분양가, 경쟁률, 주변 시세 비교를 블록별 현황 줄에 붙인다(아래 "분양 성과"). 실패해도 빌드는 계속한다.
+7. 관련 소식: `NAVER_CLIENT_ID`와 `NAVER_CLIENT_SECRET`이 모두 있으면 `news.js`가 대상 사업마다 네이버 뉴스를 검색해 최근 14일 기사 5건까지 `news`로 붙인다(아래 "사업별 최근 뉴스"). 키가 없으면 건너뛰고(`skipped=no_key`), 실패해도 빌드는 계속한다.
+8. 단계 변경: `previous.js`가 지금 배포된 `projects.json`(기본 `https://kongyaa.github.io/fe-admin/projects.json`, 환경 변수 `MAP_PREVIOUS_URL`로 바꿈, CLI `--previous <파일>`)을 받아(실패하면 한 번 더) 사업별 단계를 비교한다. 10MB를 넘는 자료는 읽지 않는다(`previous_too_large`).
    받지 못하면(`previous_http_404`, `previous_network`, `previous_json`, `previous_shape`, `previous_too_large` 등) `changes`를 `{ since: null, items: [] }`로 두고 `sources.previous.skipped`와 로그(`previous skipped=<종류>`)에 종류만 남긴 채 계속한다.
    이때 이전 `feed`에서 이어 오던 단계 소식도 읽지 못해 이번 빌드부터 사라진다(되살리지 않는다). 하루 두 번 도는 빌드에서 드문 일이라 받아들인 손실이다.
-7. 새 소식·달력: `feed.js`가 공고 연결·블록별 현황 뒤의 사업으로 `feed`와 `calendar`를 만든다(아래 `projects.json`의 소식·달력).
+9. 새 소식·달력: `feed.js`가 공고 연결·블록별 현황·분양 성과·관련 소식 뒤의 사업으로 `feed`와 `calendar`를 만든다. `뉴스` 소식은 손으로 고른 기사와 네이버 관련 소식을 합친다(아래 `projects.json`의 소식·달력).
 
 서울 자료가 실패하거나 `newtowns.yaml`이 형식에 맞지 않으면 0이 아닌 코드로 끝나 이전 배포가 유지된다.
 서울 자료에서 단계나 사업유형 값을 몰라 건너뛴 행(`skipped.stage + skipped.kind`)이 데이터 행의 5%를 넘어도 `seoul_values`로 멈춘다. 원자료의 값 이름이 바뀐 경우다. 건너뛴 수는 `sources.seoul.skipped`와 로그에 남는다.
 공고 연결 실패는 `notices.skipped`에 오류 종류만 남기고 계속한다. 키가 없으면 `skipped=no_key`.
 
-로그 예: `map seoul=496 skipped=0 asOf=2026-06 towns=3 notices checked=812 linked=4 feed=72 calendar=11 changes=0 news=23`(건너뛴 행이 있으면 `skipped=stage:1,duplicate:2`), 이어서 구간별·단계별 건수.
-이전 배포를 못 받으면 `changes=skipped:<종류>`, `news.yaml`이 없으면 `news=skipped:news_missing`. 서울 자료에서 빠진 사업의 기사는 `news unmatched=<n>` 줄로 센다. 로그에는 건수와 오류 종류만 남는다.
+로그 예: `map seoul=496 skipped=0 asOf=2026-06 towns=3 notices checked=812 linked=4 feed=72 calendar=11 changes=0 curated=23`(건너뛴 행이 있으면 `skipped=stage:1,duplicate:2`), 이어서 구간별·단계별 건수,
+관련 소식(네이버) 건수 `map news checked=122 matched=40 projects=122 errors=0 stopped=none`(키가 없으면 `map news skipped=no_key`, 오류가 있으면 끝에 `kinds=news_http_500,…`),
+마지막에 분양 성과 건수 `map performance blocks=4 priced=4 estimated=2 competition=3 calls=60 errors=0`(키가 없으면 끝에 `skipped=no_key`).
+이전 배포를 못 받으면 `changes=skipped:<종류>`, `news.yaml`이 없으면 `curated=skipped:news_missing`. 서울 자료에서 빠진 사업의 손으로 고른 기사는 `curated unmatched=<n>` 줄로 센다. 로그에는 건수와 오류 종류만 남는다.
 
 ## `projects.json`의 소식·달력·지역 현황
 
@@ -46,17 +50,31 @@
 - `feed`: 새 소식. 최신순. 오늘 뒤 날짜는 곧 시작하는 `접수`만.
   서울 사업 소식은 최근 400일(오늘 포함), 최대 200건. 그중 `단계` 소식은 먼저 최신 50건까지만 남긴다(분기마다 서울 자료가 바뀌면 수십 건이 한꺼번에 생겨 공고 소식을 밀어내지 않게). 공공주택지구 소식은 지구 화면에 블록별 경과를 다 보이도록 날짜·건수 제한 없이 둔다(지구는 몇 곳뿐이라 건수가 적다).
   중복 제거: 같은 `id`는 한 번만. 지구의 `일정` 소식(분양 이력·계획)이 같은 사업·같은 블록(`blockKey`)의 `news.yaml` 기사와 같은 주소를 출처로 쓰면 `일정` 소식을 빼고 기사만 둔다(날짜는 보지 않는다. 이력은 공고일, 기사는 보도일). 공고·접수 소식이 이미 보여 주는 사실만 담은 기사는 `news.yaml`에 넣지 않는다.
-  `{ id, date, kind, projectId, block, title, rental, source: { title, url, date, local } }`. `id`는 구분·사업·블록·날짜·제목의 해시(빌드마다 같다). 단, `접수` 소식은 제목이 날마다 바뀌므로 제목 대신 공고 key(`접수:<key>`)로 해시한다. 사이트는 이 id로 읽은 소식을 기억한다.
+  네이버 관련 소식이 같은 사업의 다른 소식(`news.yaml` 기사, 일정 등)과 같은 주소면 네이버 쪽을 뺀다(`dropCoveredNaver`, 우리 요약이 남는다. 블록은 보지 않는다).
+  `{ id, date, kind, projectId, block, title, rental, source: { title, url, date, local, provider? } }`. `id`는 구분·사업·블록·날짜·제목의 해시(빌드마다 같다). 단, `접수` 소식은 제목이 날마다 바뀌므로 제목 대신 공고 key(`접수:<key>`)로 해시한다. 사이트는 이 id로 읽은 소식을 기억한다.
   - `공고`: 연결된 청약홈 공고마다 한 건(날짜 = 공고일, 제목 `청약홈 공고: <공고명>`, 출처 청약홈).
   - `접수`: 접수 중이거나 14일 안에 시작하는 공고. 날짜는 1순위 시작일(1순위가 없으면 첫 접수 단계)로 고정. 제목은 오늘이 든 단계, 없으면 다음 단계(모두 지났으면 마지막 단계)를 적어 `1순위 접수, 전체 마감 2026-11-11`·`무순위 접수, 전체 마감 …`·`청약 접수, 전체 마감 …`(화면의 접수 타일·블록 카드와 같은 말). 단계는 특별공급·1순위·2순위·그 밖 접수로 묶는다.
   - `일정`: 지구의 보도된 블록 계획(`plans`)은 계획마다 한 건(여러 블록이면 `block: "A9·A11"`, 화면은 '·'로 나눠 블록마다 거른다. 날짜 = 가장 이른 보도일, 제목 `A9·A11 공공분양 2026-하반기 공급 예정 보도`, 지역지 보도면 끝에 `(지역지)`).
     분양 이력(`history`)은 같은 블록·같은 분양/임대·같은 공고일의 연결 공고가 없을 때만 한 건(`A-1 행복주택 입주자 모집 공고 (609세대)`). 달까지만 아는 이력은 뺀다.
-  - `뉴스`: `data/news.yaml` 기사(`kind: 일정`으로 적은 기사는 일정). 출처 제목은 매체 이름, `local`은 지역지.
+  - `뉴스`: 두 출처를 합친다.
+    - 손으로 고른 기사(`data/news.yaml`, `curated-news.js`): 제목은 우리 한 줄 요약(`kind: 일정`으로 적은 기사는 일정). 출처 제목은 매체 이름, `local`은 지역지. 지구 기사는 날짜와 관계없이 계속 남는다.
+    - 네이버 관련 소식(이번 빌드의 사업 `news`, `naverItems`): 제목은 언론사 제목 그대로, 출처 제목은 언론사(모르면 빈 글자), `source.provider: "naver"`.
+      이번 빌드가 받은 기사 중 오늘 기준 14일(`NEWS_PUBLISH_DAYS`) 안의 것만 쓰고 이전 배포의 `feed`에서 잇지 않는다(보관 기간을 늘리지 않는다. 이어 오는 것은 `단계` 소식뿐).
+      공공주택지구 기사는 제목이 그 지구의 블록을 분명히 말할 때만(공고명과 같은 `parseBlock`으로 읽은 이름이 블록별 현황에 있을 때) 그 블록, 아니면 `block: null`(지구 전체). 서울 사업은 늘 null.
   - `단계`: 이전 배포 대비 단계가 바뀐 사업(오늘 날짜, 제목 `단계 변경: 조합설립 → 사업시행인가`). 다음 빌드에서 비교 대상이 바뀌어도 사라지지 않게 이전 `feed`의 단계 소식을 최근 90일까지 이어 둔다(지금도 있는 사업만, 필드는 다시 검사).
   - `rental`: 임대 블록 소식(같은 블록의 분양 줄과 임대 줄을 구분할 때). 모든 주소는 `safeHttpUrl`을 거친다(아니면 null).
 - `changes`: `{ since: 이전 배포의 generatedAt | null, items: [{ projectId, from, to }] }`. 이전 배포를 못 받으면 `since: null, items: []`.
 - `watchlist`: 지역 현황의 신도시 칸. `[{ name, kind, region, tracked, projectId }]`(`data/newtowns.yaml`의 `watchlist`). `tracked: false`인 지구에는 아무 사실도 싣지 않는다(화면은 '아직 추적하지 않음').
-- `sources.news`: `{ asOf, count, skipped, unmatched }`, `sources.previous`: `{ skipped }`.
+- `sources.curatedNews`: 손으로 고른 기사 `{ asOf, count, skipped, unmatched }`. `sources.news`: 네이버 관련 소식 수집 결과 `{ checked, matched, projects, skipped, errors, stopped }`(아래 "사업별 최근 뉴스"). `sources.performance`: 분양 성과(아래). `sources.previous`: `{ skipped }`.
+
+사이트에서 두 뉴스 출처가 보이는 곳:
+
+- 새 소식(첫 화면), 지구 화면의 블록별 소식, 사업 화면의 "이 사업 소식"이 모두 `feed`를 거른 것이라 두 출처가 함께 날짜순으로 나온다(구분 `뉴스`).
+- 네이버 관련 소식은 출처 줄에 `언론사 · 날짜`(원문 링크, 새 탭)와 작은 `검색: NAVER`를 붙인다. 사업 화면에 네이버 기사가 있으면 아래에 `네이버 뉴스 검색 결과에서 제목에 사업명이 들어간 최근 2주 기사만 보여 줍니다. 출처: 각 언론사`를 붙인다.
+  사이트(`visibleFeed`)는 네이버 기사 중 오늘 기준 21일(`NEWS_SHOW_DAYS`)이 지난 것과 미래 날짜를 숨긴다(빌드가 멈춰 예전 배포가 남은 경우). 손으로 고른 기사는 숨기지 않는다.
+- 지구 화면에서 블록을 고르면 그 블록 소식만 보인다. 블록을 읽지 못한 네이버 기사는 "지구 전체" 칩에 모인다.
+- 사업 목록 줄의 `소식 N`은 그 사업의 `뉴스` 소식 수(두 출처 합, 숨긴 네이버 기사 제외)다.
+- 바닥글 안내에 `"검색: NAVER" 표시 뉴스는 네이버 뉴스 검색으로 찾은 기사의 제목·언론사·날짜만 보여 주고 원문으로 연결하며, 21일이 지나면 보이지 않습니다`를 적는다. 데이터 출처 목록에도 두 출처를 적는다.
 
 ## 예상 시기 규칙
 
@@ -123,6 +141,51 @@
   현재 단계가 사업시행인가 전(구역지정·추진위·조합설립·건축심의)이면 맞는 공고가 있어도 잇지 않는다(`canLinkNotices`, 위 파이프라인 4 참고).
 - 공공주택지구: 공고 주소나 이름에 시 이름(`하남`)과 `noticeMatch` 중 하나가 있어야 한다.
 
+## 사업별 최근 뉴스 (`src/pipeline/news.js`)
+
+네이버 뉴스 검색 API(공식)로 사업마다 최근 기사 몇 건을 모아 `projects.json`의 `news`로 싣고, 새 소식(`feed`)의 `뉴스`로도 넣어 사이트의 새 소식·지구 화면·사업 화면 "이 사업 소식"에 보여 준다. 스크래핑은 하지 않는다.
+손으로 고른 기사(`data/news.yaml`, `curated-news.js`)와는 다른 출처다. 둘을 합치는 규칙은 위 `feed`의 `뉴스`.
+
+- 키: `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`(GitHub Secrets, 워크플로가 빌드 단계에 넘긴다). 둘 중 하나라도 비어 있으면 뉴스 단계를 건너뛴다(`sources.news.skipped: no_key`, 호출 없음). Actions에서는 두 값을 `::add-mask::`로 가린다. `NAVER_NEWS_ENDPOINT`는 비밀이 아닌 설정이라 저장소 Variables(`vars.NAVER_NEWS_ENDPOINT`)에서 읽는다. `hub`(기본, 네이버 API 허브 `naverapihub.apigw.ntruss.com/search/v1/news`, 헤더 `X-NCP-APIGW-API-KEY-ID`/`X-NCP-APIGW-API-KEY`) 또는 `legacy`(developers.naver.com `openapi.naver.com/v1/search/news.json`, 헤더 `X-Naver-Client-Id`/`X-Naver-Client-Secret`). 키는 헤더로만 보내 주소와 오류 문구에 남지 않는다. 키가 없으면 `news_no_key`, 다른 값이면 `news_endpoint`.
+- 대상(`newsTargets`): 공공주택지구 전부 + 서울 정비사업 중 `live`·`soon`·`mid`. 서울은 `live` > `soon` > `mid`, 같은 구간은 예상 시기 시작이 이른 순으로 150개까지(`maxSeoul`).
+  사업 하나에 검색 한 번이라 호출 수는 대상 수와 같다(5xx·시간 초과는 한 번 재시도, 429도 한 번 재시도 후 멈춤). 2026-06 서울 자료(공고 연결 없이)로는 공공주택지구 3 + 서울 `soon`·`mid` 119 = 122건이고, 상한은 공공주택지구 수 + 150이다. 하루 한도(25,000건)보다 훨씬 적다.
+  예약 실행(하루 두 번) 말고도 `main` push와 PR 실행마다 같은 수만큼 부른다(PR은 같은 저장소 브랜치일 때만 Secrets가 넘어간다). PR 실행에서도 일부러 켜 둔다: 실행당 약 120건은 하루 한도에 비해 작고, PR에서 실제 자료로 결과를 확인할 수 있다.
+- 시간 한도: 호출 하나는 10초(`NEWS_TIMEOUT_MS`)에 끊고(`news_timeout`) 한 번 재시도하므로 사업 하나에 약 20초를 넘지 않는다. 뉴스 단계 전체는 3분(`NEWS_BUDGET_MS = 180000`, `collectNews`의 `budgetMs`)이 한도다.
+  다음 사업을 검색하기 전에 시계(`now`, 테스트에서 바꿔 끼움)로 재어 넘었으면 `stopped: news_budget`으로 멈추고 그때까지 모은 기사는 싣는다. 진행 중인 호출은 끝까지 기다리므로 실제 상한은 3분 20초 남짓이고, 지도 빌드 작업 시간(15분)을 넘기지 않는다.
+- 검색어(`newsQuery`): 공공주택지구는 이름(`하남교산`). 서울은 `<구에서 '구'를 뺀 이름> <구역명> <재개발|재건축>`(`종로 신영1구역 재개발`). `중구`는 줄이지 않는다. 최신순(`sort=date`) 20건을 받는다.
+  구역명 자리(`seoulNewsName`의 `queryName`)는 끝 괄호를 뗀 이름이고(`반포주공1단지(1,2,4주구)` → `서초 반포주공1단지 재건축`), 숫자로 끝나면 `구역`을 붙인다(`신영1` → `신영1구역`, `반포미도2차`·`마포로1구역 제8지구`는 그대로).
+  `<앞>-<n>,<n>,…` 목록은 첫 구역으로 찾는다(`세운3-8,9,10` → `중구 세운3-8구역 재개발`). 3글자 미만 재건축은 `<이름>아파트`(`은마` → `강남 은마아파트 재건축`), 3글자 미만 재개발은 이름 그대로다.
+- 관련성(`relevant`): 제목(태그·엔티티 제거, 공백 제거)에 비교값(key)이 있어야 남긴다. 숫자로 끝나는 key 뒤에 숫자, `차`, `단지`, `동`, `가`가 오면 다른 것으로 본다(`신당1` ≠ `신당10`, `신길2` ≠ `신길2차`).
+  공공주택지구는 이름 또는 `noticeMatch`(2글자 이상)가 key다. 서울 key(`seoulNewsName`)는 공고 연결의 `zoneKey`(`link-notices.js`, 그대로 둔다)와 따로 만든다.
+  - 끝 괄호는 떼고, 괄호 안(`,`·`·`·공백을 뺀 값, `124주구`)은 선택 문맥(`extras`)으로 둔다.
+  - `구역`은 끝에 있을 때만 뗀다(`한남3구역` → `한남3`, `마포로1구역 제8지구` → `마포로1구역제8지구`. `마포로1구역`만으로는 다른 지구와 섞여 key로 쓰지 않는다).
+  - `<앞>-<n>,<n>,…`은 하나씩 펼친다(`세운3-8,9,10` → `세운3-8`, `세운3-9`, `세운3-10`).
+  - 3글자 미만이면 재건축은 `<이름>아파트`·`<이름>재건축`(`은마아파트`, `은마재건축`), 그 밖은 `<이름>구역`(`수표구역`)만 쓴다.
+  - 비교 전에 제목에서 `뉴타운`, `재정비촉진지구`, `재정비촉진구역`과 공백을 지운다(`한남뉴타운 3구역` → `한남3구역`이 `한남3`에 맞음).
+  - 숫자로 끝나지 않는 key(`을지로3가`, `반포미도2차`, `신반포4지구`, `은마아파트`)는 제목에 정비 문맥 낱말(`재개발|재건축|정비|구역|조합|시공|분양|착공|이주|관리처분|사업시행|인가`) 또는 괄호 안 값이 함께 있어야 한다(`을지로3가역 상권` 제외).
+  - 제목이 서울 25개 구 중 사업의 구가 아닌 구(`<X>구`, 낱말 처음에서만)만 말하면 뺀다(`성동구 신당1구역`은 중구 신당1이 아님). 사업의 구도 함께 있으면(`성동구·중구 …`) 남긴다.
+- 정리: 같은 링크나 같은 제목(공백·문장부호 무시)은 하나만, 오늘 기준 14일 전(그날 포함)부터 오늘까지만, 최신순 5건(`limitPerProject`)까지.
+- 14일 규칙: 약관의 서버 보관 한도는 21일(`NEWS_MAX_AGE_DAYS`)이다. 한 번 실린 기사가 다음 빌드까지 배포본에 더 남는 기간을 7일(`MAP_REBUILD_DAYS`)로 잡고,
+  싣는 기사는 14일(`NEWS_PUBLISH_DAYS = 21 - 7`, `collectNews`의 `maxAgeDays` 기본값)까지로 잡아 배포본에 있는 동안 21일을 넘지 않게 한다. 그래서 사이트 안내도 "최근 2주"다.
+  7일은 주 1회 빌드 때 잡은 값이다. 지금은 하루 두 번(07:00·19:00 KST) 다시 만들어 실제로는 반나절쯤이라, 7일은 넉넉한 여유(빌드가 며칠 실패해도 한도 안)로 그대로 둔다.
+  새 소식(`feed`)의 네이버 기사도 이번 빌드의 `news`에서만 만들고 이전 배포에서 잇지 않아 같은 한도를 지킨다.
+  빌드가 7일 넘게 실패하면(서울 자료 실패 등) 이전 배포가 남아 이 계산이 깨진다. 사이트는 화면에서 21일이 지난 기사를 한 번 더 숨기지만(`newsItems`, `visibleFeed`) 파일에서는 빠지지 않으니, 빌드가 며칠 넘게 실패하면 손으로 다시 돌린다.
+- 저장하는 값: `{ title, outlet, date, url }`뿐이다. 제목은 `<b>` 태그를 지우고 엔티티(`&quot;`, `&amp;` 등)를 푼 값, 언론사는 원문 주소 호스트로 정한다(알려진 언론사는 이름, 아니면 `www.`를 뗀 호스트). 날짜는 `pubDate`(RFC 1123)의 한국 날짜, 링크는 원문(`originallink`)이 http(s)면 원문, 아니면 네이버 뉴스 링크다. 네이버 뉴스 링크로 대신할 때는 언론사를 알 수 없어 `outlet: null`이고 사이트는 날짜만 보여 준다(`네이버 뉴스`는 언론사가 아니라 쓰지 않는다). 날짜를 읽지 못한 기사는 보관 기간을 지킬 수 없어 뺀다. 요약(`description`)과 본문은 저장하지 않는다.
+- 약관(2026-09 개정 보도 기준): 출처와 원문 링크를 함께 보여 주고, 서버 보관은 21일 이내, AI 학습·답변 생성·재판매에 쓰지 않는다. 사이트에는 언론사 이름과 원문 링크를 함께 보여 줘야 한다.
+- 실패: 사업 하나의 실패는 `errors`에 kind만 남기고 다음 사업으로 간다. `401`·`403`·`429`, 키 없음, 잘못된 endpoint는 `stopped`에 kind를 두고 바로 멈춘다(호출을 더 보내지 않음).
+  시간 초과(`news_timeout`)·네트워크 오류(`news_network`)는 한 번은 넘어가고, 연달아 2번(`NEWS_NETWORK_STOP_AFTER`)이면 `stopped`에 그 kind를 두고 멈춘다(성공하거나 다른 오류가 나면 다시 센다). 늘 시간 초과인 API면 2사업 x 2번 = 4번 부르고 멈춘다.
+  시간 한도를 넘으면 `stopped: news_budget`. 사업 사이에 200ms 쉰다.
+- 결과(`collectNews`): `{ byId: { [사업 id]: [...] }, checked, matched, errors, failed, stopped }`. 기사가 남은 사업만 `byId`에 있다.
+- 연결(`build-map.js` `collectMapNews`): 공고 연결·블록별 현황·`bucketOf` 뒤, `toPublic` 전에 `newsTargets`를 부른다(구간이 필요하고, `toPublic`이 `noticeMatch`를 지운다).
+  기사가 남은 사업에만 `news: [{ title, outlet, date, url }]`(최신순 5건까지)를 붙이고, 기사가 없는 사업에는 `news` 필드가 없다. `toPublic`은 이 네 값만 남기고 주소는 `safeHttpUrl`을 거친다.
+  어떤 실패도 지도 빌드를 멈추지 않는다. 사업별 실패는 `errors`에 kind로, 단계 전체 예외는 `news_failed`(AppError면 그 kind)로 남기고 뉴스만 비운다.
+- 출력 `sources.news`: `{ checked, matched, projects, skipped, errors, stopped }`. `projects`는 검색 대상 사업 수(`newsTargets`), `checked`는 실제로 검색한 수(멈추면 더 적음), `matched`는 기사가 남은 사업 수, `errors`는 오류 종류(중복 없이), `stopped`는 멈춘 이유(kind) 또는 `null`.
+  로그는 한 줄 `map news checked=… matched=… projects=… errors=<종류 수> stopped=<kind|none>`(오류가 있으면 끝에 `kinds=…`), 키가 없으면 `map news skipped=no_key`. 제목·주소·키는 찍지 않는다.
+- 사이트: 사업의 `news`를 따로 그리지 않고 `feed`의 네이버 소식(`source.provider: "naver"`)으로 보여 준다(위 "사이트에서 두 뉴스 출처가 보이는 곳").
+  사업 화면 "이 사업 소식"에 기사 제목, 원문 링크(새 탭, `rel="noopener noreferrer"`)인 `언론사 · 날짜`, 작은 `검색: NAVER`를 보이고,
+  밑에 `네이버 뉴스 검색 결과에서 제목에 사업명이 들어간 최근 2주 기사만 보여 줍니다. 출처: 각 언론사`를 붙인다(네이버 로고는 쓰지 않는다).
+  목록 줄의 `소식 N`은 두 출처를 합친 뉴스 수다. 오늘 기준 21일이 지난 네이버 기사는 숨긴다(`visibleFeed`). `newsItems`(사업 `news`를 같은 기준으로 거르는 순수 함수)는 남겨 둔다. 모든 글자는 textContent다.
+
 ## `data/newtowns.yaml` 편집
 
 ```yaml
@@ -187,6 +250,12 @@ watchlist:
         moveIn: "2029-06"              # 선택, 입주 예정(출력하지 않음)
         rental: true                   # 임대 공고면 true
         note: "…"                      # 선택, 엇갈리는 수치 등 조사 메모(출력하지 않음)
+        competition:                   # 선택, 보도된 경쟁률(본청약 분양 이력에만). 청약홈 경쟁률 API에 자료가 없을 때만 지도에 쓴다
+          scope: 일반공급               # 출처가 말한 범위. 1순위라고 하지 않았으면 1순위라고 적지 않는다
+          households: 201
+          applicants: 52920
+          rate: 263.3                  # 출처 범위(scope)의 경쟁률. 없으면 applicants/households로 계산
+          source: { title: "… (뉴시스)", url: "https://…", date: "2025-05-09" }
         source:                        # 하나 또는 목록
           - { title: "… (LH청약플러스)", url: "https://…", date: "2025-03-31" }
           - { title: "… (뉴시스)", url: "https://…", date: "2025-03-31" }
@@ -206,6 +275,9 @@ watchlist:
 - 지역지 보도만 있는 계획은 출처 제목에 `지역지`를 적는다. 원문을 확인하지 못한 일정(검색 요약에만 보이는 값)은 넣지 않는다.
 - 날짜·`expected` 형식이 틀리면 `newtowns_date`, 블록 이름이나 필수 값이 없거나 `stage`가 본청약·사전청약이 아니거나 `rental`이 true/false가 아니면 `newtowns_field`.
   예전 키 `preSubscriptions`도 `newtowns_field`로 멈춘다(`history`에 `stage: 사전청약`으로 옮긴다). 그 밖의 모르는 키는 무시한다.
+- `competition`은 객체여야 하고 http(s) 출처가 있어야 한다(없으면 `newtowns_source`). 경쟁률이 양수가 아니거나, 경쟁률도 접수·세대도 없거나, 사전청약·임대 이력에 적으면 `newtowns_field`.
+  예전 키 `rank1Rate`도 `newtowns_field`로 멈춘다(1순위로 읽혀 `rate`로 바꿨다).
+  원문에 있는 수치만 넣는다. 지도에서는 출처 범위(`scope`)와 출처 링크를 함께 보인다.
 - `end`(접수 마감)는 출처에 접수 마지막 날(예: 2순위 접수일)이 있을 때만 적는다. 일까지 있는 날짜가 아니면 `newtowns_date`, 공고일보다 앞이면 `newtowns_field`.
   청약홈 공고가 이어지지 않은 이력도 이 값으로 "접수 중"을 보여 준다(블록 상태, 분양 이력의 접수 중 표시). 사업 구간(`live`)은 바꾸지 않는다.
 - 사전청약은 본청약 전 예약이라 계획을 채우지 않고(위 1) 사이트의 "최근 분양"에도 세지 않는다.
@@ -293,9 +365,74 @@ watchlist:
 - 480px 이하에서는 표 줄을 카드로 쌓는다(칸 이름은 `data-label`). 페이지 가로 스크롤은 없다. 모든 글자는 textContent, 주소는 `safeHttpUrl`을 거친다.
 - "분양 이력" 목록은 그대로 둔다(단지 이름·연결 공고 줄 등 표에 없는 정보가 있다).
 
+### 분양 성과(performance)
+
+블록별 분양 지구에서 이미 공고가 난 분양 줄(임대 줄 제외)마다 분양가, 경쟁률, 주변 시세 비교를 붙인다.
+코드는 `src/pipeline/block-performance.js`(대상·계산·붙이기)와 `src/pipeline/applyhome-competition.js`(경쟁률 API).
+
+대상(`performanceTargets`): 블록별 현황 줄에 이어진 청약홈 공고(줄 붙이기와 같은 `noticeRowKey` 규칙) 중 APT 본청약 공고(`kind: apt`, 민간사전청약·무순위·임대 제외)의 가장 늦은 것.
+공고 키(주택관리번호·공고번호)는 공고 연결 때 받은 청약홈 공고의 것을 그대로 쓴다(손으로 넣지 않음). 연결된 공고가 없어도 그 블록의 본청약 이력에 보도된 경쟁률(`competition`)이 있으면 대상이다.
+
+- 분양가: 청약홈 주택형(`createModelLookup`, 실행에 하나. 첫 시간 초과·네트워크 실패 뒤에는 남은 블록의 주택형을 부르지 않고 `주택형 조회 실패`로 둔다)의 최고 분양가(`LTTOT_TOP_AMOUNT`, 만원)와 만원/전용㎡. 공급면적은 읽지 않아 평당가는 없다.
+  대표 주택형은 전용 84㎡ ±3 중 84에 가장 가까운 것(같으면 비싼 것), 없으면 가장 넓은 것.
+- 경쟁률: 청약홈 경쟁률 API(data.go.kr 15098905, `getAPTLttotPblancCmpet`)로 주택형별 1순위 접수건수(`SUBSCRPT_RANK_CODE`=1인 행의 `REQ_CNT`를 모든 거주지역에 걸쳐 합)를 공급세대수(`SUPLY_HSHLDCO`, 주택형마다 한 번)로 나눈다.
+  단지 1순위 경쟁률은 주택형 합계끼리 나눈다. `CMPET_RATE` 문자열(미달, `-`, `△`, 쉼표)은 믿지 않고, 접수건수를 못 읽고 1순위 행이 하나뿐일 때만 쓴다. 접수건수 < 세대면 `미달`.
+  API에 자료가 없으면(접수 전, LH 공고 미제공 등) yaml 이력의 `competition`(보도)을 쓰고 출처를 보인다. API 값이 먼저다.
+  분모 검사: 한 주택형의 `SUPLY_HSHLDCO`가 거주지역 행마다 다르거나(지역별 배정 세대일 수 있음), 같은 `HOUSE_TY`가 주택형 정보에 없거나,
+  주택형 정보의 세대수(`households`, 일반+특별공급 합계)보다 크면 그 블록의 API 값을 쓰지 않는다(오류 `competition_households_mismatch`, 보도 값으로).
+  주택형 정보의 세대수는 특별공급을 포함해 일반공급 세대수와 같을 수 없어서 "넘지 않음"만 본다. 주택형 조회가 실패하면 거주지역 검사만 한다.
+  접수건수나 공급세대수를 못 읽어 빠진 주택형이 하나라도 있으면 일부 주택형만 더한 단지 경쟁률을 내지 않는다(오류 `competition_partial`, 보도 값으로).
+  값이 없을 때 사유(`competitionReason`)는 경우마다 다르다: 키 없음, 401·403이면 `경쟁률 API를 쓸 수 없습니다`, 그 밖의 조회 실패,
+  접수 시작 전·접수 중(`overallEnd` ≥ 오늘)이면 `접수 전이라/접수 중이라 아직 집계 전입니다`, 접수가 끝났는데 행이 없으면
+  `청약홈 경쟁률 자료에 이 공고가 없습니다(LH 청약플러스 접수 공고는 빠질 수 있음)`, 행은 있는데 1순위 값을 못 읽으면 그 사유.
+  2026-11 실호출에서 LH 공고(하남교산 A2, 구리갈매 A-1·A-4, 2025년)는 API가 오류 없이 빈 결과를 냈다(LH 청약플러스 접수분은 청약홈 경쟁률에 없는 것으로 보임).
+  401·403이면 활용신청 승인 전으로 보고 그 실행에서는 더 부르지 않는다(오류 `competition_http_403`). 그 밖의 오류는 `competition_http_<상태>`, `competition_parse`, `competition_page_limit`.
+- 주변 시세: 알림 배치와 같은 순수 함수(`cleanTrades`, `buildSubject`, `estimateBestMargin`)로 대표 주택형 하나를 두 번 추정한다.
+  공고 당시는 `today = 공고일`(공고 전 완결 6개월 실거래), 현재 기준은 `today = 빌드일`. 국토부 매매·분양권 클라이언트는 실행에 하나라 같은 시군구·달은 한 번만 부른다.
+  공고 단지는 지번·역 도보 없이 신축으로 본다(역 보정 없음, 신뢰도 최대 중). 값은 "같은 조건의 신축이면 얼마"인 신축 환산 추정이다.
+  할인율은 `1 − 최고 분양가 / 추정 시세`. 안전 마진(옵션·취득세 차감), 보수 시세, 로또 판정은 쓰지 않는다.
+  공고 당시 값은 지금 집계한 실거래(늦은 신고·취소 반영)로 계산해 공고 당시 알 수 있던 값과 조금 다를 수 있다(사이트에 `(현재 집계 기준)` 표시).
+  분양권 전매(`RTMSDataSvcSilvTrade`) 조회가 한 번이라도 실패하면(시간 초과, 오류, 예산 초과) 그 실행의 남은 블록 모두 분양권 없이 추정하고(실패가 이어짐)
+  신뢰도를 한 단계 낮춘다. 역 보정이 없어 신뢰도가 최대 중이라, 이 경우 모든 블록의 시세 숫자가 신뢰도 하로 숨겨질 수 있다.
+  원인은 `sources.performance.errors`(예: `presale_timeout`, `presale_budget`)에 남는다.
+- 숨김(값 null과 사유): 신뢰도 하, 추정 없음(비교 단지 부족), 실거래 조회 실패, 시군구 미매핑, 주택형 조회 실패.
+  제한 유형(이름·유형에 신혼희망·나눔형·토지임대·지분적립, 또는 청약홈 유형 10)은 시세 차익을 그대로 갖지 못해 시세 비교를 하지 않는다(분양가·경쟁률은 보인다).
+- 키(`DATA_GO_KR_KEY`)가 없으면 청약홈·국토부를 부르지 않고 보도된 경쟁률만 붙는다(`skipped: no_key`).
+- 블록마다 따로 처리한다. 한 블록의 오류는 그 블록의 사유와 `sources.performance.errors`(종류만, 중복 없음)에 남고, 이 단계 전체가 예외를 내도 `performance_failed`로 남기고 지도는 만든다.
+
+출력: 블록 줄의 `performance`(성과가 없는 줄에는 키가 없음).
+
+```json
+{ "noticeKey": "2025000101-2025000101", "name": "…", "noticeDate": "2025-03-31", "noticeUrl": "https://www.applyhome.co.kr/…",
+  "prices": [{ "houseType": "084.9800A", "area": 84.98, "topPrice": 64000, "unitPrice": 753.1 }],
+  "representative": { "houseType": "084.9800A", "area": 84.98, "topPrice": 64000, "unitPrice": 753.1 }, "pricesReason": null,
+  "market": {
+    "atNotice": { "asOf": "2025-03-31", "period": "2024-09~2025-02", "estimate": 90000, "unit": 1059.1, "discountRate": 0.289,
+                  "confidence": "중", "scope": "시군구", "scopeLabel": "하남시", "comparables": ["…"], "comparableCount": 3, "samples": 41 },
+    "now": { "asOf": "2026-11-10", "period": "2026-05~2026-10", "estimate": null, "reason": "추정 신뢰도가 하(…)라 숫자를 숨깁니다" } },
+  "marketReason": null,
+  "competition": { "source": "청약홈", "scope": "1순위", "rate": 263.28, "applicants": 52920, "households": 201, "shortfall": false,
+                   "byType": [{ "houseType": "…", "households": 101, "applicants": 44920, "rate": 444.75, "shortfall": false }], "ref": null },
+  "competitionReason": null }
+```
+
+`sources.performance = { blocks, priced, estimated, competition, calls, errors, skipped }`. `calls`는 이 단계의 실제 HTTP 요청 수(재시도 포함).
+호출 수 예상(2026-11, 하남교산 A2·구리갈매 A-1·A-4·B-1): 블록마다 주택형 1회와 경쟁률 1회(8회),
+국토부 매매·분양권은 하남 12달(A2 공고 당시 6 + 현재 6), 구리 13달(A-4 6, B-1 6, 현재 중 새 달 1. A-1은 신혼희망타운이라 0)로 각 25회씩 50회, 합계 약 58회(달마다 1,000건을 넘으면 페이지만큼 늘어남).
+
+사이트(지구 화면의 블록 카드): 성과가 있는 분양 블록 카드 안, 진행 단계 아래에 "분양 성과" 상자를 둔다(카드가 360px 이하로 좁으면 칸 이름을 값 위에 쌓는다). 임대 카드에는 없다.
+
+- 분양가: `대표 84.98㎡(084.9800A) 최고 6억 4,000만 원 · 전용㎡당 753만 원`(주택형이 여럿이면 `· 주택형 n개 중`).
+- 경쟁률: 청약홈은 `1순위 263.3:1 (접수 52,920건 / 201가구) · 청약홈 실시간 집계, 최종 발표와 다를 수 있음`, 보도는 출처가 말한 범위 그대로 `일반공급 263.3:1 (52,920명 / 201가구) · 뉴시스 2025-05-09`(링크).
+- 주변 시세 비교: `공고 당시 주변 신축 환산 시세 9억 원 대비 분양가 29% 낮음 (신뢰도 중, 하남시 비교 3개 단지: …, 실거래 41건, 2024-09~2025-02)`, 이어서 `현재 기준 …`.
+  공고 당시 숫자 줄 끝에는 `(현재 집계 기준)`을 붙인다(오늘 받은 실거래로 다시 계산한 값). 숨긴 값은 `공고 당시: 사유 (기간)`, 시세 비교를 하지 않은 블록은 사유만.
+  숫자를 보인 줄이 하나라도 있을 때만 아래에 `주변 단지 실거래로 추정한 값이며 이 단지의 시세가 아닙니다 (전매제한·미입주)`를 붙인다.
+- 모든 글자는 textContent, 주소는 `safeHttpUrl`을 거친다.
+
 ## `data/news.yaml` 편집
 
-지구·사업별 기사 목록. 새 소식의 `뉴스`로 보이고, 블록을 적으면 지구 화면에서 그 블록을 누를 때 그 블록 소식으로 보인다.
+손으로 고른 지구·사업별 기사 목록(`src/pipeline/curated-news.js`가 읽는다). 새 소식의 `뉴스`로 보이고, 블록을 적으면 지구 화면에서 그 블록을 누를 때 그 블록 소식으로 보인다.
+네이버 관련 소식(위 "사업별 최근 뉴스")과 달리 기간 제한 없이 남고, 제목은 기사 제목이 아니라 우리 요약이다. 같은 기사가 네이버로도 잡히면 이 목록의 항목만 보인다.
 
 ```yaml
 asOf: "2026-11-10"
@@ -315,7 +452,7 @@ items:
 - 검사(형식이 틀리면 빌드가 멈춘다): YAML 문법 `news_yaml`, 최상위 꼴 `news_shape`, 필수 값(town·title·outlet)이나 `kind`·`local`·`rental` 값 `news_field`, 날짜 `news_date`, http(s) 주소 `news_url`,
   같은 사업·블록·주소 두 번 `news_duplicate`, newtowns.yaml에 없는 지구 `news_town`, 그 지구의 블록(yaml blocks·history·plans, `A1`·`A-1`은 같은 블록)에 없거나 서울 사업에 적은 블록 `news_block`.
 - 여러 블록 기사는 한 건으로 `block: A9·A11`처럼 가운뎃점으로 잇는다. 나눈 블록이 모두 그 지구에 있어야 하고(아니면 `news_block`), 출력도 `A9·A11` 한 건이다.
-- 서울 사업 id가 서울 자료에서 빠지면(서울 자료는 우리가 고치지 않는 원자료) 그 기사만 건너뛰고 `news unmatched=<n>`로 센다.
+- 서울 사업 id가 서울 자료에서 빠지면(서울 자료는 우리가 고치지 않는 원자료) 그 기사만 건너뛰고 `curated unmatched=<n>`로 센다.
 - 블록 이름은 지구 화면의 표기로 바꿔 내보낸다(`A1` → `A-1`). 서울 사업 기사는 400일이 지나면 새 소식에서 빠지고, 지구 기사는 날짜와 관계없이 남는다.
 - 청약홈 공고나 분양 이력 소식이 이미 보여 주는 내용(공고일·세대 수)만 담은 기사는 넣지 않는다. 분양 이력의 출처와 같은 기사를 넣으면 그 이력 소식 대신 기사가 보인다.
 
@@ -332,7 +469,9 @@ npx serve site                        # 또는 아무 정적 서버로 site/ 열
 # 주소 뒤에 ?sample=1 을 붙이면 projects.json 대신 site/sample-projects.json(예시 자료, 예시 안내 표시)을 읽는다
 ```
 
-`DATA_GO_KR_KEY`가 없으면 공고 연결만 건너뛴다(공고·접수 소식과 달력도 비어 있다). 이전 배포 비교는 기본으로 배포된 주소를 받는다(`MAP_PREVIOUS_URL`로 바꿈).
+`DATA_GO_KR_KEY`가 없으면 공고 연결과 분양 성과의 청약홈·국토부 조회를 건너뛴다(공고·접수 소식과 달력도 비고, 보도된 경쟁률만 붙음). 이전 배포 비교는 기본으로 배포된 주소를 받는다(`MAP_PREVIOUS_URL`로 바꿈).
+`NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`이 없으면 관련 소식을 건너뛴다(`map news skipped=no_key`, 새 소식에는 손으로 고른 기사만). developers.naver.com 키면 `NAVER_NEWS_ENDPOINT=legacy`도 넣는다(Actions에서는 Secrets가 아니라 Variables).
+분양 성과의 경쟁률은 data.go.kr 15098905에 따로 활용신청해야 한다(같은 키). 승인 전이면 `competition_http_401/403` 하나만 남기고 보도 값으로 넘어간다.
 
 ## 배포
 

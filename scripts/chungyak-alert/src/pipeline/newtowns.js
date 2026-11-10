@@ -91,7 +91,38 @@ function receiptEnd(value, noticeDate) {
   return end;
 }
 
+// 경쟁률 비율(양수). 쉼표 문자열도 받는다. 형식이 틀리면 newtowns_field.
+function ratio(value) {
+  if (isEmpty(value)) return null;
+  const number = Number(String(value).replace(/,/g, ''));
+  if (!Number.isFinite(number) || number <= 0) throw new AppError('newtowns_field');
+  return number;
+}
+
+/**
+ * 보도로 확인한 경쟁률(선택, 본청약 분양 이력에만). 청약홈 경쟁률 API에 자료가 없을 때만 지도에 쓴다.
+ * { rate, applicants, households, scope, source: { title, url, date } }
+ * - rate가 없으면 applicants/households로 계산한다. 둘 다 없으면 newtowns_field.
+ * - rate는 출처가 말한 범위(scope)의 경쟁률이다. 예전 이름 rank1Rate는 1순위로 읽힐 수 있어 받지 않는다(newtowns_field).
+ * - scope는 출처가 말한 범위(예: 일반공급). 출처가 1순위라고 하지 않았으면 1순위라고 적지 않는다.
+ * - source(http(s) 주소)가 없으면 newtowns_source. 사전청약·임대 이력에 적으면 newtowns_field.
+ */
+export function competitionEntry(raw) {
+  if (isEmpty(raw)) return null;
+  const entry = entryObject(raw);
+  if ('rank1Rate' in entry) throw new AppError('newtowns_field');
+  const applicants = count(entry.applicants);
+  const households = count(entry.households);
+  let rate = ratio(entry.rate);
+  if (rate === null && applicants !== null && households !== null) rate = Math.round((applicants / households) * 100) / 100;
+  if (rate === null) throw new AppError('newtowns_field');
+  return {
+    rate, applicants, households, scope: text(entry.scope), source: entrySources(entry.source)[0],
+  };
+}
+
 // 분양 이력 한 건(사전청약·본청약). end는 접수 마감일(선택, 블록 상태 '접수 중'에 쓴다). 모르는 키는 무시한다.
+// competition(보도된 경쟁률)은 본청약 분양 이력에만 적는다.
 function noticeEntry(raw) {
   const entry = entryObject(raw);
   const block = text(entry.block);
@@ -100,6 +131,9 @@ function noticeEntry(raw) {
   if (!HISTORY_STAGES.includes(stage)) throw new AppError('newtowns_field');
   const moveIn = townDate(entry.moveIn);
   const noticeDate = requiredDate(entry.noticeDate);
+  const rental = flag(entry.rental);
+  const competition = competitionEntry(entry.competition);
+  if (competition && (rental || stage !== HISTORY_STAGES[0])) throw new AppError('newtowns_field');
   return {
     block,
     stage,
@@ -109,9 +143,10 @@ function noticeEntry(raw) {
     noticeDate,
     end: receiptEnd(entry.end, noticeDate),
     ...(moveIn ? { moveIn } : {}),
-    rental: flag(entry.rental),
+    rental,
     note: text(entry.note),
     sources: entrySources(entry.source),
+    ...(competition ? { competition } : {}),
   };
 }
 

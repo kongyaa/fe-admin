@@ -5,10 +5,11 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { DEFAULT_NEWS, DEFAULT_NEWTOWNS, buildMap, summaryLines } from '../src/pipeline/build-map.js';
 import {
-  CALENDAR_LABELS, FEED_MAX, STAGE_CARRY_DAYS, STAGE_MAX, buildCalendar, buildFeed, carriedStageItems, changeItems, feedId, historyItems, isRentalItem,
-  kstDateTime, noticeBlock, noticeItems, parseBlock, planItems, receptionItem, stageLabel,
+  CALENDAR_LABELS, FEED_MAX, NAVER_PROVIDER, STAGE_CARRY_DAYS, STAGE_MAX, buildCalendar, buildFeed, carriedStageItems, changeItems, dropCoveredNaver, feedId,
+  historyItems, isRentalItem, kstDateTime, naverBlock, naverItems, noticeBlock, noticeItems, parseBlock, planItems, receptionItem, stageLabel,
 } from '../src/pipeline/feed.js';
 import { noticeSummary } from '../src/pipeline/link-notices.js';
+import { NEWS_ENDPOINTS } from '../src/pipeline/news.js';
 import { normalizeDetail } from '../src/sources/applyhome.js';
 import { seoulFixture } from './map-fixtures.js';
 
@@ -351,6 +352,79 @@ test('carried 단계 items are kept for 90 days', () => {
   assert.deepEqual(carried.map((i) => i.date), ['2026-08-12', '2026-11-09']);
 });
 
+// --- 네이버 관련 소식(project.news) -> 뉴스 소식 ---
+
+test('naverBlock: a block only when the title clearly names a block of the town', () => {
+  const town = galmae();
+  assert.equal(naverBlock('구리갈매역세권 B-1블록 신안인스빌 디센트 특별공급', town), 'B-1');
+  assert.equal(naverBlock('구리갈매역세권 A4 공공분양 본청약', town), 'A-4');
+  // 지구에 없는 블록, 블록 이름이 없는 제목은 지구 전체
+  assert.equal(naverBlock('구리갈매역세권 C-9블록 소문', town), null);
+  assert.equal(naverBlock('구리갈매역세권 교통 대책 발표', town), null);
+  // 서울 사업은 블록이 없다
+  assert.equal(naverBlock('신영1구역 B-1 이주', { id: 'seoul-1', region: '서울', blocks: [{ block: 'B-1' }] }), null);
+});
+
+test('naverItems keeps only this build\'s items inside the 14-day publish window, marked as naver', () => {
+  assert.equal(NAVER_PROVIDER, 'naver');
+  const town = galmae({
+    news: [
+      { title: '구리갈매역세권 B-1블록 신안인스빌 디센트 9일 특별공급', outlet: '뉴시스', date: '2026-11-09', url: 'https://www.newsis.com/1' },
+      { title: '구리갈매역세권 교통 대책', outlet: null, date: '2026-10-27', url: 'https://n.news.naver.com/2' }, // 14일 전: 남김
+      { title: '구리갈매역세권 옛 기사', outlet: '연합뉴스', date: '2026-10-26', url: 'https://www.yna.co.kr/3' }, // 15일 전: 뺌
+      { title: '구리갈매역세권 미래 기사', outlet: '연합뉴스', date: '2026-11-11', url: 'https://www.yna.co.kr/4' },
+      { title: '주소 없음', outlet: '연합뉴스', date: '2026-11-09', url: 'javascript:alert(1)' },
+      { title: '  ', outlet: '연합뉴스', date: '2026-11-09', url: 'https://www.yna.co.kr/5' },
+      { title: '날짜 없음', outlet: '연합뉴스', date: null, url: 'https://www.yna.co.kr/6' },
+    ],
+  });
+  const items = naverItems(town, today);
+  assert.deepEqual(items.map((i) => [i.kind, i.date, i.block, i.title, i.source.title, i.source.provider, i.source.local]), [
+    ['뉴스', '2026-11-09', 'B-1', '구리갈매역세권 B-1블록 신안인스빌 디센트 9일 특별공급', '뉴시스', 'naver', false],
+    ['뉴스', '2026-10-27', null, '구리갈매역세권 교통 대책', '', 'naver', false],
+  ]);
+  assert.equal(items[0].id, feedId({
+    kind: '뉴스', projectId: town.id, block: 'B-1', date: '2026-11-09', title: items[0].title,
+  }));
+  assert.deepEqual(naverItems(galmae(), today), []);
+  assert.deepEqual(naverItems(galmae({ news: 'x' }), today), []);
+});
+
+test('buildFeed merges curated and Naver news, drops a Naver item whose URL a curated item of the same project already cites', () => {
+  const straight = 'https://www.straightnews.co.kr/news/articleView.html?idxno=314854';
+  const town = galmae({
+    notices: [],
+    news: [
+      { title: '구리갈매역세권 B-1 분양가 비교', outlet: '스트레이트뉴스', date: '2026-11-08', url: straight },
+      { title: '구리갈매역세권 교통 대책', outlet: '뉴시스', date: '2026-11-09', url: 'https://www.newsis.com/9' },
+    ],
+  });
+  const curated = [{
+    projectId: town.id, block: 'B-1', date: '2026-11-08', title: 'B-1 분양가와 주변 시세 비교 (우리 요약)', outlet: '스트레이트뉴스', url: straight, local: false, rental: false, kind: '뉴스',
+  }];
+  const news = buildFeed({ projects: [town], news: curated, today }).filter((i) => i.kind === '뉴스');
+  assert.deepEqual(news.map((i) => [i.title, i.source.provider ?? null]), [
+    ['구리갈매역세권 교통 대책', 'naver'],
+    ['B-1 분양가와 주변 시세 비교 (우리 요약)', null],
+  ]);
+  // 다른 사업의 같은 주소는 그대로 둔다(그 사업 화면에서도 보여야 한다)
+  const other = { id: 'town-other', region: '경기', kind: '공공주택지구', news: [{ title: '다른 지구 기사', outlet: 'x', date: '2026-11-08', url: straight }] };
+  assert.equal(buildFeed({ projects: [town, other], news: curated, today }).filter((i) => i.projectId === 'town-other').length, 1);
+  // dropCoveredNaver만: 네이버가 아닌 소식은 건드리지 않는다
+  const plain = { projectId: 'p', kind: '뉴스', source: { url: 'https://a.com/1' } };
+  const naver = { projectId: 'p', kind: '뉴스', source: { url: 'https://a.com/1', provider: 'naver' } };
+  assert.deepEqual(dropCoveredNaver([plain, naver]), [plain]);
+  assert.deepEqual(dropCoveredNaver([naver]), [naver]);
+});
+
+test('Naver items are never carried from the previous feed', () => {
+  const projects = [{ id: 'seoul-1', region: '서울' }];
+  const old = {
+    kind: '뉴스', projectId: 'seoul-1', date: '2026-11-01', title: '단계 변경: 아님', source: { title: '뉴시스', url: 'https://www.newsis.com/1', provider: 'naver' },
+  };
+  assert.deepEqual(carriedStageItems([old], projects, today), []);
+});
+
 // 통합: 실제 newtowns.yaml·news.yaml과 실제 꼴의 청약홈 응답(구리갈매 B-1, A-1 행복주택)으로 빌드한다.
 const dir = mkdtempSync(join(tmpdir(), 'chungyak-feed-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -427,13 +501,13 @@ test('buildMap with real data files fills notices stages, calendar, feed, news, 
   assert.equal(new Set(data.feed.map((i) => i.id)).size, data.feed.length);
 
   assert.equal(data.watchlist.length, 8);
-  assert.deepEqual(data.sources.news, {
-    asOf: '2026-11-10', count: data.sources.news.count, skipped: null, unmatched: 0,
+  assert.deepEqual(data.sources.curatedNews, {
+    asOf: '2026-11-10', count: data.sources.curatedNews.count, skipped: null, unmatched: 0,
   });
-  assert.ok(data.sources.news.count > 0);
+  assert.ok(data.sources.curatedNews.count > 0);
   assert.equal(data.sources.previous.skipped, null);
   const [line] = summaryLines(data);
-  assert.match(line, / feed=\d+ calendar=6 changes=1 news=\d+$/);
+  assert.match(line, / feed=\d+ calendar=6 changes=1 curated=\d+$/);
   assert.ok(!line.includes('http'));
 });
 
@@ -443,6 +517,54 @@ test('buildMap without a previous source or news file still builds', async () =>
   });
   assert.deepEqual(data.changes, { since: null, items: [] });
   assert.equal(data.sources.previous.skipped, 'no_previous');
-  assert.equal(data.sources.news.skipped, 'news_missing');
-  assert.match(summaryLines(data)[0], / changes=skipped:no_previous news=skipped:news_missing$/);
+  assert.equal(data.sources.curatedNews.skipped, 'news_missing');
+  assert.match(summaryLines(data)[0], / changes=skipped:no_previous curated=skipped:news_missing$/);
+});
+
+test('buildMap feed carries both curated news and this build\'s Naver news; logs both counts', async () => {
+  const straight = 'https://www.straightnews.co.kr/news/articleView.html?idxno=314854';
+  const raw = (title, pubDate, url) => ({
+    title, originallink: url, link: 'https://n.news.naver.com/article/003/1', description: '요약은 저장하지 않는다', pubDate,
+  });
+  const base = applyhomeFetch();
+  const queries = [];
+  const fetch = async (url, init) => {
+    const u = new URL(url);
+    if (`${u.origin}${u.pathname}` !== NEWS_ENDPOINTS.hub.url) return base(url, init);
+    const query = u.searchParams.get('query');
+    queries.push(query);
+    const items = query === '구리갈매역세권' ? [
+      raw('<b>구리갈매역세권</b> B-1블록 신안인스빌 디센트 9일 특별공급', 'Mon, 09 Nov 2026 10:00:00 +0900', 'https://www.newsis.com/view/1'),
+      raw('구리갈매역세권 분양가 비교', 'Sun, 08 Nov 2026 10:00:00 +0900', straight), // news.yaml과 같은 주소: 뺌
+      raw('구리갈매역세권 교통 대책', 'Mon, 26 Oct 2026 10:00:00 +0900', 'https://www.yna.co.kr/old'), // 15일 전: 수집에서 뺌
+    ] : [];
+    return Response.json({ total: items.length, start: 1, display: items.length, items });
+  };
+  const data = await buildMap({
+    fetch,
+    env: { DATA_GO_KR_KEY: 'k', NAVER_CLIENT_ID: 'test-id', NAVER_CLIENT_SECRET: 'test-secret' },
+    today,
+    seoulFile,
+    newtownsFile: DEFAULT_NEWTOWNS,
+    newsFile: DEFAULT_NEWS,
+    sleep: noSleep,
+  });
+  assert.ok(queries.includes('구리갈매역세권'));
+  const galmaeNews = data.feed.filter((i) => i.kind === '뉴스' && i.projectId === 'town-guri-galmae-station');
+  const naver = galmaeNews.filter((i) => i.source.provider === 'naver');
+  assert.deepEqual(naver.map((i) => [i.date, i.block, i.title, i.source.title, i.source.url]), [
+    ['2026-11-09', 'B-1', '구리갈매역세권 B-1블록 신안인스빌 디센트 9일 특별공급', '뉴시스', 'https://www.newsis.com/view/1'],
+  ]);
+  // 손으로 고른 기사(우리 요약)는 그대로 있고, 같은 주소의 네이버 기사는 없다
+  assert.equal(galmaeNews.filter((i) => i.source.url === straight).length, 1);
+  assert.equal(galmaeNews.find((i) => i.source.url === straight).source.provider, undefined);
+  // 사업의 news(관련 소식)는 #24 형태 그대로
+  assert.deepEqual(data.projects.find((p) => p.id === 'town-guri-galmae-station').news.map((n) => n.url), ['https://www.newsis.com/view/1', straight]);
+  assert.equal(JSON.stringify(data).includes('요약은 저장하지 않는다'), false);
+  assert.ok(data.sources.curatedNews.count > 0);
+  assert.equal(data.sources.news.matched, 1);
+  const lines = summaryLines(data);
+  assert.match(lines[0], / curated=\d+$/);
+  assert.ok(lines.some((line) => /^map news checked=\d+ matched=1 projects=\d+ errors=0 stopped=none$/.test(line)));
+  assert.ok(lines.every((line) => !line.includes('http') && !line.includes('test-id')));
 });

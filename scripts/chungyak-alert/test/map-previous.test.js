@@ -112,7 +112,7 @@ test('a failed previous snapshot is logged by kind; changes.since is null', () =
     projects: [],
   });
   const failed = summaryLines(data('previous_network'));
-  assert.ok(failed[0].endsWith('changes=skipped:previous_network news=0'));
+  assert.ok(failed[0].endsWith('changes=skipped:previous_network curated=0'));
   assert.ok(failed.includes('previous skipped=previous_network'));
   assert.equal(data('previous_network').changes.since, null);
   assert.ok(!summaryLines(data('no_previous')).some((line) => line.startsWith('previous skipped')));

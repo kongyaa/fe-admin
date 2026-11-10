@@ -1134,3 +1134,101 @@ test('footer says fonts come from Google Fonts and that reading marks stay in th
   assert.ok(html.includes('글꼴은 Google Fonts에서 불러옵니다.'));
   assert.ok(html.includes('읽은 소식 표시는 이 브라우저에만 남습니다'));
 });
+
+// --- 관련 소식 ---
+const newsPipeline = await import('../src/pipeline/news.js');
+
+test('ymdDaysBefore counts calendar days across months and years', () => {
+  assert.equal(app.ymdDaysBefore('2026-11-10', 21), '2026-10-20');
+  assert.equal(app.ymdDaysBefore('2026-01-05', 14), '2025-12-22');
+  assert.equal(app.ymdDaysBefore('2026-03-01', 1), '2026-02-28');
+  assert.equal(app.ymdDaysBefore('2026-11', 1), null);
+  assert.equal(app.ymdDaysBefore(null, 1), null);
+});
+
+test('newsItems keeps safe, dated, recent items newest first, at most 5', () => {
+  const day = '2026-11-10';
+  const n = (extra) => ({ title: '하남교산 본청약', outlet: '뉴시스', date: '2026-11-09', url: 'https://www.newsis.com/1', ...extra });
+  assert.deepEqual(app.newsItems({}, day), []);
+  assert.deepEqual(app.newsItems({ news: 'x' }, day), []);
+  assert.deepEqual(app.newsItems(null, day), []);
+  const project = {
+    news: [
+      n({ url: 'https://a.com/old', date: '2026-10-19' }), // 22일 전: 숨김
+      n({ url: 'https://a.com/edge', date: '2026-10-20' }), // 21일 전: 보임
+      n({ url: 'javascript:alert(1)' }),
+      n({ url: 'https://a.com/no-title', title: '  ' }),
+      n({ url: 'https://a.com/no-date', date: null }),
+      n({ url: 'https://a.com/future', date: '2026-11-11' }),
+      n({ url: 'https://a.com/1', date: '2026-11-01', outlet: null }),
+      n({ url: 'https://a.com/2', date: '2026-11-10' }),
+      n({ url: 'https://a.com/3', date: '2026-11-05' }),
+      n({ url: 'https://a.com/4', date: '2026-11-03' }),
+      n({ url: 'https://a.com/5', date: '2026-11-02' }),
+      null,
+      ['https://a.com/array'],
+    ],
+  };
+  const items = app.newsItems(project, day);
+  assert.deepEqual(items.map((x) => x.url), ['https://a.com/2', 'https://a.com/3', 'https://a.com/4', 'https://a.com/5', 'https://a.com/1']);
+  assert.equal(items.length, app.NEWS_LIMIT);
+  assert.deepEqual(Object.keys(items[0]).sort(), ['date', 'outlet', 'title', 'url']);
+  assert.equal(items.at(-1).outlet, null);
+  assert.deepEqual(app.newsItems({ news: project.news.slice(0, 2) }, day).map((x) => x.url), ['https://a.com/edge']);
+  assert.deepEqual(app.newsItems(project, ''), []);
+});
+
+test('news display limits match the pipeline and the note says 2 weeks', () => {
+  assert.equal(app.NEWS_SHOW_DAYS, newsPipeline.NEWS_MAX_AGE_DAYS);
+  assert.equal(newsPipeline.NEWS_PUBLISH_DAYS, 14);
+  assert.match(app.NEWS_NOTE, /최근 2주/);
+  assert.match(app.NEWS_NOTE, /출처: 각 언론사$/);
+  assert.equal(app.NEWS_CREDIT, '검색: NAVER');
+  assert.equal(app.newsMetaText({ outlet: '뉴시스', date: '2026-11-09' }), '뉴시스 · 2026-11-09');
+  assert.equal(app.newsMetaText({ outlet: null, date: '2026-11-09' }), '2026-11-09');
+  assert.equal(app.newsMetaText({}), '');
+});
+
+// --- 두 뉴스 출처(손으로 고른 기사 + 네이버 관련 소식) ------------------------------------
+
+test('Naver feed items keep their provider, hide after 21 days, and count toward 소식 N with curated news', () => {
+  const naver = (id, date, extra = {}) => ({
+    id, date, kind: '뉴스', projectId: 'seoul-1', block: null, title: `기사 ${id}`, source: { title: '뉴시스', url: `https://www.newsis.com/${id}`, date, provider: 'naver' }, ...extra,
+  });
+  const feed = app.cleanFeed([
+    naver('n-edge', '2026-10-20'), // 21일 전: 보임
+    naver('n-old', '2026-10-19'), // 22일 전: 숨김
+    naver('n-future', '2026-11-11'),
+    naver('n-new', '2026-11-09'),
+    naver('n-fake', '2026-11-09', { source: { title: 'x', url: 'https://a.com/1', provider: 'other' } }),
+    {
+      id: 'c1', date: '2025-01-01', kind: '뉴스', projectId: 'seoul-1', title: '오래된 우리 요약', source: { title: '스트레이트뉴스', url: 'https://a.com/c1' },
+    },
+    {
+      id: 'g1', date: '2026-11-01', kind: '공고', projectId: 'seoul-1', title: '청약홈 공고: x', source: { title: '청약홈', url: 'https://a.com/g1' },
+    },
+  ]);
+  assert.equal(app.NAVER_PROVIDER, 'naver');
+  assert.equal(feed.find((f) => f.id === 'n-new').source.provider, 'naver');
+  assert.equal(feed.find((f) => f.id === 'n-fake').source.provider, null);
+  assert.equal(app.isNaverItem(feed.find((f) => f.id === 'n-new')), true);
+  assert.equal(app.isNaverItem(feed.find((f) => f.id === 'c1')), false);
+  const visible = app.visibleFeed(feed, '2026-11-10');
+  // 네이버 기사만 기간으로 거른다. 손으로 고른 오래된 기사와 공고는 그대로
+  assert.deepEqual(visible.map((f) => f.id), ['n-new', 'n-fake', 'g1', 'n-edge', 'c1']);
+  assert.deepEqual(app.visibleFeed(feed, '').filter(app.isNaverItem), []);
+  assert.deepEqual(app.visibleFeed(undefined, '2026-11-10'), []);
+  assert.equal(app.projectNewsCount(visible, 'seoul-1'), 4);
+  assert.equal(app.projectNewsCount(visible, 'seoul-2'), 0);
+  assert.equal(app.projectNewsCount(null, 'seoul-1'), 0);
+});
+
+test('Naver items show outlet/date and the 검색: NAVER credit; footer says news titles come from Naver search with links to the original', () => {
+  const js = readFileSync(new URL('../site/app.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("h('small', { class: 'news-credit' }, NEWS_CREDIT)"));
+  assert.ok(js.includes('state.feed = visibleFeed(cleanFeed(data.feed), state.today);'));
+  // 블록 카드 안에 분양 성과
+  assert.ok(js.includes('r.performance ? performanceBox(r.block, r.performance) : null'));
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('"검색: NAVER" 표시 뉴스는 네이버 뉴스 검색으로 찾은 기사의 제목·언론사·날짜만 보여 주고 원문으로 연결'));
+});

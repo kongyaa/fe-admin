@@ -3,9 +3,11 @@ import { addDays, safeHttpUrl } from '../util.js';
 import {
   PRE_SUBSCRIPTION, blockKey, compactName, isRentalNotice, onOrAfter,
 } from './expected-window.js';
+import { NEWS_PUBLISH_DAYS, keepRecent } from './news.js';
 
 // 새 소식(feed)과 청약 달력(calendar)을 만든다. 모두 순수 함수이고 build-map이 공고 연결·블록별 현황 뒤에 부른다.
-// 소식 구분: 공고(연결된 청약홈 공고), 접수(접수 중이거나 14일 안에 시작하는 공고), 뉴스(data/news.yaml),
+// 소식 구분: 공고(연결된 청약홈 공고), 접수(접수 중이거나 14일 안에 시작하는 공고),
+// 뉴스(손으로 고른 data/news.yaml 기사와 네이버 뉴스 검색 관련 소식(project.news, source.provider 'naver')),
 // 일정(지구의 보도된 블록 계획과 공고로 덮이지 않은 분양 이력), 단계(이전 배포 대비 단계 변경).
 
 export const FEED_KINDS = ['공고', '접수', '뉴스', '일정', '단계'];
@@ -318,6 +320,44 @@ export function newsItems(news) {
   }));
 }
 
+// 네이버 관련 소식에 표시하는 출처 제공자
+export const NAVER_PROVIDER = 'naver';
+
+// 네이버 기사 제목이 지구의 블록을 분명히 말할 때만 그 블록: 공고명과 같은 규칙(parseBlock)으로 읽은 이름이
+// 지구 블록별 현황에 있는 블록이어야 한다('하남교산 A2블록 …' -> 'A2'). 아니면 null(지구 전체). 서울 사업은 늘 null.
+export function naverBlock(title, project) {
+  if (project?.region === '서울') return null;
+  const parsed = parseBlock(title);
+  if (!parsed) return null;
+  const key = blockKey(parsed);
+  const row = (project?.blocks ?? []).find((entry) => blockKey(entry.block) === key);
+  return row ? row.block : null;
+}
+
+/**
+ * 네이버 관련 소식(이번 빌드의 project.news: 제목·언론사·날짜·링크) -> 뉴스 소식. 출처 제목은 언론사(모르면 빈 글자),
+ * source.provider는 'naver'. 약관의 보관 한도를 늘리지 않도록 이번 빌드가 받은 기사 중 오늘 기준 maxAgeDays(14일) 안의 것만 쓰고,
+ * 이전 배포의 소식에서 잇지 않는다(carriedStageItems는 단계 소식만 잇는다).
+ */
+export function naverItems(project, today, maxAgeDays = NEWS_PUBLISH_DAYS) {
+  const entries = (Array.isArray(project?.news) ? project.news : []).filter((entry) => entry && isDay(entry.date));
+  return keepRecent(entries, today, maxAgeDays).flatMap((entry) => {
+    const url = safeHttpUrl(entry.url);
+    const title = String(entry.title ?? '').trim();
+    if (!url || !title) return [];
+    return [item({
+      kind: '뉴스',
+      date: entry.date,
+      projectId: project.id,
+      block: naverBlock(title, project),
+      title,
+      source: {
+        title: String(entry.outlet ?? '').trim(), url, date: entry.date, local: false, provider: NAVER_PROVIDER,
+      },
+    })];
+  });
+}
+
 // 단계 변경 -> 단계 소식(오늘 날짜). 출처는 sourceFor(project)가 준다(서울 사업은 서울시 정비사업 자료).
 export function changeItems(changes, projects, today, sourceFor = () => null) {
   const byId = new Map(projects.map((project) => [project.id, project]));
@@ -369,11 +409,20 @@ export function dropCoveredSchedules(items) {
   return items.filter((entry) => entry.kind !== '일정' || entry.fromNews || !entry.source?.url || !cited.has(sourceKey(entry)));
 }
 
+// 네이버 기사가 같은 사업의 다른 소식(news.yaml 기사, 지구 일정 등)과 같은 주소면 네이버 기사를 뺀다(우리 요약이 남는다).
+// 블록은 보지 않는다(네이버 기사의 블록은 제목에서 읽은 것이라 news.yaml 기사와 다를 수 있다).
+const urlKey = (entry) => `${entry.projectId}|${entry.source?.url ?? ''}`;
+
+export function dropCoveredNaver(items) {
+  const cited = new Set(items.filter((entry) => entry.source?.provider !== NAVER_PROVIDER && entry.source?.url).map(urlKey));
+  return items.filter((entry) => entry.source?.provider !== NAVER_PROVIDER || !cited.has(urlKey(entry)));
+}
+
 /**
  * 새 소식. 최신순. 오늘 뒤 날짜는 접수 소식만(곧 시작하는 접수).
  * 서울 사업 소식은 최근 400일(오늘 포함), 최대 200건(그중 단계 소식은 최신 50건까지). 공공주택지구 소식은 블록별 경과를 지구 화면에 다 보이도록 날짜·건수 제한 없이 둔다(지구는 몇 곳뿐).
- * 같은 id는 한 번만, 기사와 같은 출처를 쓰는 일정 소식은 뺀다(dropCoveredSchedules).
- * projects는 공고 연결·블록별 현황 뒤의 내부 사업(계획·이력 출처가 남아 있는 것).
+ * 같은 id는 한 번만, 기사와 같은 출처를 쓰는 일정 소식은 뺀다(dropCoveredSchedules). 다른 소식과 주소가 같은 네이버 기사도 뺀다(dropCoveredNaver).
+ * projects는 공고 연결·블록별 현황 뒤의 내부 사업(계획·이력 출처가 남아 있는 것). 네이버 관련 소식은 그 news에서 만든다(naverItems).
  */
 export function buildFeed({
   projects, news = [], changes = [], carried = [], today, sourceFor,
@@ -385,11 +434,12 @@ export function buildFeed({
     ...carried,
     ...projects.flatMap((project) => [...noticeItems(project, today), ...planItems(project), ...historyItems(project)]),
     ...newsItems(news).map((entry) => ({ ...entry, fromNews: true })),
+    ...projects.flatMap((project) => naverItems(project, today)),
   ];
   const seen = new Set();
   let seoulStages = 0;
   let seoul = 0;
-  return dropCoveredSchedules(all)
+  return dropCoveredNaver(dropCoveredSchedules(all))
     .map(({ fromNews, ...entry }) => entry)
     .filter((entry) => (entry.date <= today || entry.kind === '접수') && (towns.has(entry.projectId) || entry.date >= from))
     .filter((entry) => (seen.has(entry.id) ? false : seen.add(entry.id)))
