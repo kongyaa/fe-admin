@@ -1320,7 +1320,7 @@ test('isTownView: 블록별 분양 지구와 출처 있는 블록이 있는 공�
 
 test('index.html: 블록별로 분양 중인 신도시 section stays', () => {
   const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('<h2 id="towns-title">블록별로 분양 중인 신도시</h2>'));
+  assert.ok(html.includes('<h2 id="towns-title" tabindex="-1">블록별로 분양 중인 신도시</h2>'));
   assert.ok(readFileSync(new URL('../site/app.js', import.meta.url), 'utf8').includes('지금 블록별로 분양 중인 신도시가 없습니다.'));
 });
 
@@ -1369,4 +1369,118 @@ test('sellingTowns ignores rental notices (행복주택 등) for selling and for
   const a = { id: 'a', name: '가', kind: '공공주택지구', stage: '블록별 분양', notices: [rentOpen], window: { from: '2027-03', to: '2027-03' } };
   const b = { id: 'b', name: '나', kind: '공공주택지구', stage: '블록별 분양', notices: [], window: { from: '2026-12', to: '2026-12' } };
   assert.deepEqual(app.sellingTowns([early, a, b], day).map((p) => p.id), ['b', 'a']);
+});
+
+// --- 머리말(시안 C) ---
+test('nextCollection / stampLine: next of 07:00 and 19:00 KST', () => {
+  const at = (iso) => new Date(iso);
+  assert.deepEqual(app.nextCollection(at('2026-11-10T21:59:00Z')), { date: '2026-11-11', time: '07:00' }); // KST 11-11 06:59
+  assert.deepEqual(app.nextCollection(at('2026-11-10T22:00:00Z')), { date: '2026-11-11', time: '19:00' }); // KST 07:00 정각이면 다음
+  assert.deepEqual(app.nextCollection(at('2026-11-11T09:59:00Z')), { date: '2026-11-11', time: '19:00' }); // KST 18:59
+  assert.deepEqual(app.nextCollection(at('2026-11-11T10:00:00Z')), { date: '2026-11-12', time: '07:00' }); // KST 19:00
+  assert.deepEqual(app.nextCollection(at('2026-12-31T14:30:00Z')), { date: '2027-01-01', time: '07:00' }); // KST 23:30, 해 넘김
+  assert.equal(app.stampLine('2026-11-11T07:02:10+09:00', at('2026-11-11T01:00:00Z')), '11-11 07:02 수집, 다음 19:00');
+  assert.equal(app.stampLine('2026-11-10', at('2026-11-11T01:00:00Z')), '2026-11-10 수집, 다음 19:00');
+  assert.equal(app.stampLine(null), '수집 시각 정보 없음');
+});
+
+test('unseenCount counts NEW items against the visit baseline', () => {
+  const feed = [{ id: 'a', date: '2026-11-10' }, { id: 'b', date: '2026-11-09' }, { id: 'c', date: '2026-11-01' }];
+  assert.equal(app.unseenCount(feed, { ids: new Set(['a']), since: null }), 2);
+  assert.equal(app.unseenCount(feed, { ids: null, since: '2026-11-09' }), 2);
+  assert.equal(app.unseenCount(feed, { ids: new Set(['a', 'b', 'c']) }), 0);
+  assert.equal(app.unseenCount(undefined, { ids: new Set() }), 0);
+});
+
+const searchFixture = () => {
+  const gyosan = {
+    id: 'town-hanam-gyosan', name: '하남교산', kind: '공공주택지구', region: '경기', district: '하남시', stage: '블록별 분양',
+    windowLabel: '다음 블록 예상', ...win('2026-11', '2026-12'),
+    history: [{ block: 'A2', stage: '본청약', title: '교산 푸르지오 더 퍼스트', rental: false, noticeDate: '2025-03-31' }],
+    blocks: [
+      { block: 'A2', type: '공공분양', status: '본청약 공고', statusDate: '2025-03-31', sources: [] },
+      { block: 'A20', type: '통합공공임대', rental: true, status: '다음 예정(보도)', sources: [] },
+      { block: 'A9', type: '공공분양', status: '다음 예정(보도)', sources: [] },
+    ],
+  };
+  const gyeyang = {
+    id: 'town-incheon-gyeyang', name: '인천계양', kind: '공공주택지구', region: '인천', district: '계양구', stage: '블록별 분양', ...win('2027-01', '2027-06'),
+    history: [], blocks: [{ block: 'A-2', type: '공공분양', status: '본청약 공고', statusDate: '2024-09-30', sources: [] }],
+  };
+  const topyeong = { id: 'town-topyeong', name: '구리토평한강', kind: '공공주택지구', region: '경기', district: '구리시', stage: '지구지정', ...win('2028-12', '2030-12'), blocks: [] };
+  const seoul = [
+    { id: 'seoul-1', name: '대치우성1차', kind: '재건축', region: '서울', district: '강남구', address: '대치동 63', stage: '사업시행인가', ...win('2026-09') },
+    { id: 'seoul-2', name: '중화3', kind: '재개발', region: '서울', district: '중랑구', address: '중화동 4-30', stage: '착공', ...win('2026-01') },
+    { id: 'seoul-3', name: '일원개포한신', kind: '재건축', region: '서울', district: '강남구', address: '일원동 615-1', stage: '이주', ...win('2026-04') },
+  ];
+  const feed = [
+    { id: 'f1', kind: '뉴스', projectId: 'town-hanam-gyosan', block: 'A5', date: '2026-07-24', title: 'A5 사전청약 당첨자 대출 조건 갈등', source: { title: '서울신문', url: 'https://a.example/1', provider: null } },
+    { id: 'f2', kind: '뉴스', projectId: 'town-hanam-gyosan', block: null, date: '2026-11-09', title: '하남교산 기사 헤드라인', source: { title: '뉴시스', url: 'https://a.example/2', provider: 'naver' } },
+    { id: 'f3', kind: '공고', projectId: 'seoul-2', block: null, date: '2026-11-06', title: '청약홈 공고: 중화역 라온프라이빗 센트로', source: { title: '청약홈', url: 'https://a.example/3', provider: null } },
+    { id: 'f4', kind: '단계', projectId: 'seoul-1', block: null, date: '2026-11-10', title: '단계 변경: 조합설립 → 사업시행인가', source: { title: '서울시', url: null, provider: null } },
+  ];
+  return { projects: [gyosan, gyeyang, topyeong, ...seoul], feed };
+};
+
+test('search: towns, blocks, Seoul projects and non-Naver news, grouped and capped', () => {
+  const { projects, feed } = searchFixture();
+  const index = app.buildSearchIndex(projects, feed, { today: '2026-11-11', todayYm: '2026-11' });
+  const find = (q) => app.searchAll(index, q).map((e) => `${e.group}:${e.label}`);
+
+  // '교산': 신도시 → 블록 → 소식 순. 네이버 기사는 넣지 않는다
+  assert.deepEqual(find('교산'), [
+    '신도시:하남교산', '블록:하남교산 A2 교산 푸르지오 더 퍼스트', '블록:하남교산 A9 공공분양', '블록:하남교산 A20 임대 통합공공임대',
+    '소식:A5 사전청약 당첨자 대출 조건 갈등',
+  ]);
+  assert.deepEqual(find('헤드라인'), []);
+  // 공백·대소문자 무시, 구 이름으로 서울 사업
+  assert.deepEqual(find('강남'), ['사업:강남 대치우성1차', '사업:강남 일원개포한신']);
+  // 이름에 '강남'이 든 다른 구 사업보다 강남구 사업이 먼저
+  const withOther = app.buildSearchIndex([{ id: 'x', name: '강남원효성빌라', kind: '재건축', region: '서울', district: '서초구', stage: '조합설립', ...win('2030-01') }, ...projects], feed, { today: '2026-11-11', todayYm: '2026-11' });
+  assert.deepEqual(app.searchAll(withOther, '강남').map((e) => e.label), ['강남 대치우성1차', '강남 일원개포한신', '서초 강남원효성빌라']);
+  assert.deepEqual(find('강 남 구'), find('강남'));
+  assert.deepEqual(find('일원동'), ['사업:강남 일원개포한신']);
+  // 블록 이름: 'A2'와 'A-2'는 같고, 딱 맞는 블록이 'A20'보다 먼저
+  assert.deepEqual(find('a2').slice(0, 3), ['블록:하남교산 A2 교산 푸르지오 더 퍼스트', '블록:인천계양 A-2 공공분양', '블록:하남교산 A20 임대 통합공공임대']);
+  assert.deepEqual(find('A-2'), find('A2'));
+  // 공고 소식도(사업 이름으로)
+  assert.deepEqual(find('중화'), ['사업:중랑 중화3', '소식:청약홈 공고: 중화역 라온프라이빗 센트로']);
+  // 단계 소식은 넣지 않는다
+  assert.ok(!find('사업시행인가').some((x) => x.startsWith('소식:')));
+  assert.deepEqual(find('   '), []);
+  // 주소: 블록은 '&b=', 지구 화면이 아닌 지구는 '#p='
+  const hits = app.searchAll(index, '교산');
+  assert.equal(hits[0].href, '#t=town-hanam-gyosan');
+  assert.equal(hits[1].href, '#t=town-hanam-gyosan&b=A2');
+  assert.equal(hits.at(-1).href, '#t=town-hanam-gyosan&b=A5');
+  assert.equal(app.searchAll(index, '토평')[0].href, '#p=town-topyeong');
+  assert.equal(app.searchAll(index, '중화')[1].href, '#p=seoul-2');
+  assert.match(hits[0].meta, /^다음 블록 예상 /);
+});
+
+test('search: at most 8 results, filling free slots group by group', () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ id: `s${i}`, name: `강남테스트${i}`, kind: '재건축', region: '서울', district: '강남구', stage: '이주', ...win('2027-01') }));
+  const index = app.buildSearchIndex(many, [], { today: '2026-11-11', todayYm: '2026-11' });
+  const hits = app.searchAll(index, '강남');
+  assert.equal(hits.length, app.SEARCH_MAX);
+  assert.ok(hits.every((e) => e.group === '사업'));
+  assert.equal(app.searchAll(index, '강남', 3).length, 3);
+  assert.equal(app.searchKey(' A-2 블록 '), 'a2블록');
+  assert.equal(app.searchKey('세운3-8'), '세운3-8');
+});
+
+test('index.html header C: logo mark, combobox search, bell, refresh, theme menu, nav, phone menu sheet', () => {
+  const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('id="q" role="combobox" aria-expanded="false" aria-controls="search-results"'));
+  assert.ok(html.includes('id="search-results" role="listbox"'));
+  assert.ok(html.includes('id="bell" href="#feed-title" data-jump="feed-title"'));
+  assert.ok(html.includes('id="theme-btn" aria-label="화면 테마" aria-haspopup="true" aria-expanded="false" aria-controls="theme"'));
+  assert.ok(html.includes('id="menu-sheet" role="dialog" aria-modal="true"'));
+  for (const label of ['한눈에', '새 소식', '지역 현황', '신도시 블록', '서울 정비사업', '청약 일정']) {
+    assert.equal((html.match(new RegExp(`data-jump="[a-z-]+">${label}</a>`, 'g')) ?? []).length, 2, label); // 머리말 메뉴와 휴대폰 메뉴
+  }
+  for (const id of ['dashboard', 'feed-title', 'region-box', 'towns-title', 'seoul-title', 'cal-box']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('id="nav-live"') && html.includes('class="brand-mark"'));
+  // 예전 제목 줄은 없다
+  assert.ok(!html.includes('class="top-main"') && !html.includes('class="sub"'));
 });

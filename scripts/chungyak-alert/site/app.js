@@ -1510,6 +1510,144 @@ export function routeOf(parsed, isTown = () => false) {
   return { kind: 'main' };
 }
 
+// --- 머리말: 수집 시각·새 소식 수·검색 --------------------------------------------
+
+// 지도는 하루 두 번(07:00·19:00 KST) 다시 만든다(.github/workflows/chungyak-map.yml)
+export const COLLECT_HOURS = Object.freeze([7, 19]);
+
+/** now 뒤의 가장 가까운 수집 시각(KST) { date: 'YYYY-MM-DD', time: 'HH:mm' }. 정각이면 그다음 */
+export function nextCollection(now = new Date()) {
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const date = kst.toISOString().slice(0, 10);
+  const minutes = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const hour = COLLECT_HOURS.find((hh) => minutes < hh * 60);
+  if (hour !== undefined) return { date, time: `${String(hour).padStart(2, '0')}:00` };
+  return { date: addDays(date, 1), time: `${String(COLLECT_HOURS[0]).padStart(2, '0')}:00` };
+}
+
+/** 머리말 수집 줄: '11-11 07:00 수집, 다음 19:00'. 수집 시각을 모르면 '수집 시각 정보 없음' */
+export function stampLine(generatedAt, now = new Date()) {
+  const when = stampLabel(generatedAt);
+  return when ? `${when} 수집, 다음 ${nextCollection(now).time}` : '수집 시각 정보 없음';
+}
+
+/** 아직 보지 않은(NEW) 소식 수 */
+export function unseenCount(feed, baseline) {
+  return entriesOf(feed).filter((f) => isNewItem(f, baseline)).length;
+}
+
+// 검색 결과 묶음과 묶음마다 먼저 보일 수. 이 수만큼 채운 뒤 남은 자리는 같은 순서로 더 채운다(모두 SEARCH_MAX 안)
+export const SEARCH_GROUPS = Object.freeze([['신도시', 3], ['블록', 4], ['사업', 5], ['소식', 3]]);
+export const SEARCH_MAX = 8;
+// 검색에 넣는 소식: 네이버가 아닌 손으로 고른 기사·공고·일정
+const SEARCH_FEED_KINDS = ['뉴스', '공고', '일정'];
+
+/** 검색 비교값: 공백을 빼고 소문자로, 영문과 숫자 사이 '-'는 뺀다('A-2' = 'a2'). 숫자 사이 '-'('세운3-8')는 둔다 */
+export function searchKey(value) {
+  return normalizeText(value).replace(/(?<=[a-z])-(?=\d)/g, '');
+}
+
+// 블록 줄의 단지 이름: 같은 블록(분양/임대 같은 쪽) 이력 중 제목이 있는 가장 늦은 것
+function blockTitle(project, row) {
+  const key = blockKey(row.block);
+  return entriesOf(project.history).filter((e) => blockKey(e.block) === key && (e.rental === true) === row.rental && textOrNull(e.title))
+    .map((e) => e.title.trim()).at(-1) ?? null;
+}
+
+/**
+ * 검색 대상 목록(자료가 바뀔 때 한 번 만든다). 항목은 { group, label, meta, key(검색 비교값), exact(딱 맞는 이름들), href }.
+ * - 신도시: 공공주택지구 이름 → 지구(사업) 화면
+ * - 블록: 지구 화면으로 보는 지구의 블록 줄(블록·단지 이름·유형) → 지구 화면의 그 블록('&b=')
+ * - 사업: 서울 정비사업(이름·구·동·주소) → 사업 화면
+ * - 소식: 네이버가 아닌 소식(손으로 고른 기사·공고·일정) → 그 사업(지구는 첫 블록)
+ */
+export function buildSearchIndex(projects, feed, { today, todayYm } = {}) {
+  const list = (Array.isArray(projects) ? projects : []).filter((p) => p && p.id !== undefined && p.id !== null);
+  const byId = new Map(list.map((p) => [String(p.id), p]));
+  const out = [];
+  for (const p of list.filter((x) => x.kind === '공공주택지구')) {
+    out.push({
+      group: '신도시',
+      label: p.name ?? '',
+      meta: `${windowFactLabel(p)} ${windowLabel(p, todayYm)}`,
+      key: searchKey([p.name, p.region, p.district, shortDistrict(p.district)].filter(Boolean).join(' ')),
+      exact: [searchKey(p.name)],
+      href: linkFor(p),
+    });
+    if (!isTownView(p)) continue;
+    const rows = blockRows(p, today);
+    const split = splitBlocks(rows);
+    for (const r of rows) {
+      const what = blockTitle(p, r) ?? r.type;
+      out.push({
+        group: '블록',
+        label: [p.name, `${r.block}${r.rental ? ' 임대' : ''}`, what].filter(Boolean).join(' '),
+        meta: [r.status, r.date].filter(Boolean).join(' '),
+        key: searchKey([p.name, r.block, what, r.type].filter(Boolean).join(' ')),
+        exact: [searchKey(r.block), searchKey(blockKey(r.block))],
+        href: linkFor(p, { block: blockSel(r, split) }),
+      });
+    }
+  }
+  for (const p of list.filter((x) => x.kind !== '공공주택지구')) {
+    out.push({
+      group: '사업',
+      label: p.region === '서울' && p.district ? `${shortDistrict(p.district)} ${p.name ?? ''}` : (p.name ?? ''),
+      meta: [p.kind, p.stage].filter(Boolean).join(', '),
+      key: searchKey(searchText(p)),
+      // 구 이름('강남', '강남구')도 딱 맞는 이름으로 본다: '강남'이면 강남구 사업이 이름에 '강남'이 든 다른 구 사업보다 먼저
+      exact: [searchKey(p.name), searchKey(p.district), searchKey(shortDistrict(p.district))].filter(Boolean),
+      href: linkFor(p),
+    });
+  }
+  for (const f of entriesOf(feed)) {
+    if (isNaverItem(f) || !SEARCH_FEED_KINDS.includes(f.kind) || !textOrNull(f.title)) continue;
+    const p = byId.get(String(f.projectId));
+    if (!p) continue;
+    const first = textOrNull(f.block) ? f.block.split(/[·,/]/)[0].trim() : null;
+    let block = null;
+    if (first && isTownView(p)) block = f.rental && splitBlocks(blockRows(p, today)).has(blockKey(first)) ? `${first}${RENTAL_SUFFIX}` : first;
+    out.push({
+      group: '소식',
+      label: f.title.trim(),
+      meta: [p.name, isYmd(f.date) ? f.date.slice(5) : null].filter(Boolean).join(' '),
+      key: searchKey([f.title, p.name, f.block].filter(Boolean).join(' ')),
+      exact: [],
+      href: linkFor(p, { block }),
+    });
+  }
+  return out;
+}
+
+/**
+ * 검색: 검색 비교값에 질의가 들어 있는 항목을 묶음 순서(신도시·블록·사업·소식)로 최대 max개.
+ * 묶음 안에서는 이름이 딱 맞는 것, 이름이 질의로 시작하는 것, 나머지 순(같으면 목록 순서).
+ */
+export function searchAll(index, query, max = SEARCH_MAX) {
+  const q = searchKey(query);
+  if (!q) return [];
+  const groups = SEARCH_GROUPS.map(([group, first]) => {
+    const hits = entriesOf(index).map((e, i) => ({ e, i })).filter(({ e }) => e.group === group && String(e.key).includes(q))
+      .map(({ e, i }) => {
+        const exact = Array.isArray(e.exact) ? e.exact : [];
+        let rank = 2;
+        if (exact.includes(q)) rank = 0;
+        else if (exact.some((x) => String(x).startsWith(q))) rank = 1;
+        return { e, i, rank };
+      })
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .map((x) => x.e);
+    return { group, first, hits };
+  });
+  const picked = new Set();
+  for (const g of groups) for (const e of g.hits.slice(0, g.first)) picked.add(e);
+  for (const g of groups) for (const e of g.hits) if (picked.size < max) picked.add(e);
+  const order = SEARCH_GROUPS.map(([group]) => group);
+  return [...picked].map((e, i) => ({ e, i }))
+    .sort((a, b) => order.indexOf(a.e.group) - order.indexOf(b.e.group) || a.i - b.i)
+    .slice(0, max).map((x) => x.e);
+}
+
 // ---------------------------------------------------------------------------
 // 화면
 // ---------------------------------------------------------------------------
@@ -1548,6 +1686,9 @@ const state = {
   feedShown: FEED_PAGE,
   soonGu: null,
   regionTown: null, // 지역 현황에서 고른 관심 지구 이름(구를 고르면 풀린다)
+  searchIndex: [], // 머리말 검색 대상(buildSearchIndex)
+  searchHits: [], // 지금 보이는 검색 결과
+  searchActive: -1, // 키보드로 고른 결과 번호
   route: null,
   townBlock: null,
   quietPop: false, // toggleDistrict 가 부른 history.back() 의 popstate 인지
@@ -1746,7 +1887,12 @@ async function refresh() {
     btn.classList.remove('spinning');
   }
   $('refresh-text').textContent = message;
+  // 알림 줄은 잠시 보이고 사라진다(화면 읽기 프로그램은 aria-live 로 바로 읽는다)
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => { $('refresh-text').textContent = ''; }, 10000);
 }
+
+let refreshTimer = 0;
 
 /** 이번 방문의 NEW 기준: 같은 탭에서 이미 정했으면 그대로, 아니면 지난 기록으로 정하고 탭에 둔다 */
 function loadBaseline() {
@@ -1776,6 +1922,7 @@ function start(data, { refreshed = false } = {}) {
   state.feed = visibleFeed(cleanFeed(data.feed), state.today);
   state.calendar = cleanCalendar(data.calendar);
   state.watch = cleanWatchlist(data.watchlist);
+  state.searchIndex = buildSearchIndex(state.projects, state.feed, { today: state.today, todayYm: state.todayYm });
   if (!refreshed) state.baseline = loadBaseline();
   // 이번에 보여 준 소식은 다음 방문 때 NEW 가 아니다
   writeSeen(storageOf('localStorage'), { ids: state.feed.map((f) => f.id), lastVisit: new Date().toISOString() });
@@ -1796,13 +1943,24 @@ function start(data, { refreshed = false } = {}) {
   route(refreshed ? { rerender: true } : { fresh: true });
 }
 
+/** 머리말의 수집 시각 줄(로고 아래, 휴대폰은 메뉴 줄) */
 function renderMeta() {
-  const when = stampLabel(state.data.generatedAt);
-  const last = parseStamp(state.baseline.lastVisit);
-  $('refresh-text').textContent = [
-    when ? `마지막 수집 ${when}` : '수집 시각 정보 없음',
-    last ? `지난 방문 ${last.date.slice(5)}` : null,
-  ].filter(Boolean).join(', ');
+  const line = stampLine(state.data.generatedAt);
+  $('stamp').textContent = line;
+  $('nav-stamp').textContent = line;
+}
+
+/** 머리말의 새 소식 수(종)와 '지금 접수 중 N곳' */
+function renderHeader() {
+  const n = unseenCount(state.feed, state.baseline);
+  const badge = $('bell-badge');
+  badge.hidden = n === 0;
+  badge.textContent = n > 99 ? '99+' : String(n);
+  $('bell').setAttribute('aria-label', n ? `새 소식 ${n}건` : '새 소식');
+  const live = new Set(receivingNow(state.projects, state.today).map((r) => r.project.id)).size;
+  const link = $('nav-live');
+  link.hidden = live === 0;
+  link.replaceChildren(h('span', { class: 'live-dot', 'aria-hidden': 'true' }), `지금 접수 중 ${live}곳`);
 }
 
 function renderSources() {
@@ -1866,6 +2024,7 @@ function buildStageSelect() {
 // --- 첫 화면 ----------------------------------------------------------------
 
 function renderMain() {
+  renderHeader();
   keepFocus($('dash-tiles'), renderTiles);
   keepFocus($('region-box'), renderRegion);
   renderCalendar();
@@ -2917,8 +3076,8 @@ let storageWarned = false;
 function initTheme() {
   // theme-init.js 가 먼저 붙인 값과 같지만, 버튼 상태까지 맞추려고 한 번 더 적용한다(처음에는 전환 효과를 끄지 않음)
   applyTheme(readTheme(storageOf('localStorage')), themeDom());
-  // 자료를 못 불러와도 테마는 바꿀 수 있어야 하므로 아래 공통 click 처리와 따로 둔다
-  $('theme').addEventListener('click', (e) => {
+  // 자료를 못 불러와도 테마는 바꿀 수 있어야 하므로 아래 공통 click 처리와 따로 둔다(머리말 테마 메뉴와 휴대폰 메뉴의 버튼 모두)
+  document.addEventListener('click', (e) => {
     const btn = e.target instanceof Element ? e.target.closest('[data-theme-choice]') : null;
     if (!btn) return;
     const saved = writeTheme(storageOf('localStorage'), switchTheme(btn.getAttribute('data-theme-choice')));
@@ -2930,6 +3089,214 @@ function initTheme() {
   // 다른 탭에서 바꾸면 따라간다
   window.addEventListener('storage', (e) => {
     if (isThemeStorageKey(e.key)) switchTheme(readTheme(storageOf('localStorage')));
+  });
+}
+
+// --- 머리말: 검색·메뉴·테마 메뉴 ---------------------------------------------------
+
+const phoneQuery = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(max-width: 520px)') : { matches: false };
+
+/** 검색 결과 상자를 닫는다(휴대폰 전체 화면 검색이면 그 화면도). keepFocus 가 아니면 검색창에서 포커스를 뺀다 */
+function closeSearch({ blur = false, clear = false } = {}) {
+  const input = $('q');
+  state.searchActive = -1;
+  $('search-pop').hidden = true;
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-activedescendant');
+  if (clear) input.value = '';
+  document.body.classList.remove('search-open');
+  if (blur) input.blur();
+}
+
+/** 검색창 글자로 결과를 다시 그린다 */
+function renderSearch() {
+  const input = $('q');
+  const q = input.value;
+  const hits = state.data ? searchAll(state.searchIndex, q) : [];
+  state.searchHits = hits;
+  state.searchActive = -1;
+  input.removeAttribute('aria-activedescendant');
+  const pop = $('search-pop');
+  const empty = $('search-empty');
+  if (!searchKey(q)) {
+    $('search-results').replaceChildren();
+    empty.hidden = true;
+    pop.hidden = !document.body.classList.contains('search-open');
+    input.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  $('search-results').replaceChildren(...hits.map((e, i) => h('li', {
+    role: 'option', id: `sr-${i}`, class: 'sr-item', 'aria-selected': 'false', 'data-hit': String(i),
+  },
+  h('span', { class: `sr-group g-${SEARCH_GROUPS.findIndex(([g]) => g === e.group)}` }, e.group),
+  h('span', { class: 'sr-label' }, e.label),
+  e.meta ? h('span', { class: 'sr-meta' }, e.meta) : null)));
+  empty.hidden = hits.length > 0;
+  empty.textContent = hits.length ? '' : `‘${q.trim()}’에 맞는 결과가 없습니다. 구역명, 구 이름, 신도시, 블록(A2)으로 찾아 보세요.`;
+  pop.hidden = false;
+  input.setAttribute('aria-expanded', String(hits.length > 0));
+  announce(hits.length ? `검색 결과 ${hits.length}건` : '검색 결과 없음');
+}
+
+function markActive(i) {
+  const items = [...$('search-results').querySelectorAll('[role="option"]')];
+  if (!items.length) return;
+  state.searchActive = (i + items.length) % items.length;
+  items.forEach((el, k) => el.setAttribute('aria-selected', String(k === state.searchActive)));
+  const el = items[state.searchActive];
+  $('q').setAttribute('aria-activedescendant', el.id);
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+/** 검색 결과 하나를 연다(지구·사업 화면으로) */
+function openHit(i) {
+  const e = state.searchHits[i];
+  if (!e) return;
+  closeSearch({ blur: true, clear: true });
+  openLink(e.href, { back: '첫 화면으로' });
+}
+
+function initSearch() {
+  const input = $('q');
+  input.addEventListener('input', renderSearch);
+  input.addEventListener('focus', () => {
+    // 휴대폰에서는 검색창을 누르면 전체 화면 검색으로
+    if (phoneQuery.matches) document.body.classList.add('search-open');
+    renderSearch();
+  });
+  input.addEventListener('keydown', (e) => {
+    const open = !$('search-pop').hidden;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!state.searchHits.length) return;
+      e.preventDefault();
+      if (!open) renderSearch();
+      markActive(state.searchActive < 0 && e.key === 'ArrowUp' ? -1 : state.searchActive + (e.key === 'ArrowDown' ? 1 : -1));
+    } else if (e.key === 'Enter') {
+      if (!state.searchHits.length) return;
+      e.preventDefault();
+      openHit(Math.max(0, state.searchActive));
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      // 결과가 열려 있으면 닫기만, 이미 닫혀 있으면 글자를 지우고 검색창을 나간다
+      if (open && !document.body.classList.contains('search-open')) closeSearch();
+      else closeSearch({ blur: true, clear: !open });
+    }
+  });
+  // 결과를 누를 때 검색창이 먼저 포커스를 잃어 상자가 닫히지 않게
+  $('search-results').addEventListener('mousedown', (e) => e.preventDefault());
+  $('search-results').addEventListener('click', (e) => {
+    const li = e.target instanceof Element ? e.target.closest('[data-hit]') : null;
+    if (li) openHit(Number(li.dataset.hit));
+  });
+  $('search-back').addEventListener('click', () => closeSearch({ blur: true }));
+  // 넓은 화면: 검색 밖을 누르면 결과 상자를 닫는다
+  document.addEventListener('mousedown', (e) => {
+    if (document.body.classList.contains('search-open')) return;
+    if (e.target instanceof Element && !e.target.closest('#search')) closeSearch();
+  });
+  input.addEventListener('blur', () => {
+    if (!document.body.classList.contains('search-open')) setTimeout(() => { if (document.activeElement !== input) closeSearch(); }, 0);
+  });
+  // '/' 로 검색창에 바로 간다(글자를 쓰는 중이 아닐 때)
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t instanceof Element && (t.closest('input, textarea, select, [contenteditable="true"]'))) return;
+    e.preventDefault();
+    input.focus();
+  });
+  phoneQuery.addEventListener?.('change', () => { if (!phoneQuery.matches) document.body.classList.remove('search-open'); });
+}
+
+/** 넓은 화면의 테마 메뉴(시스템·라이트·다크) */
+function setThemeMenu(open, { focus = false } = {}) {
+  const btn = $('theme-btn');
+  const menu = $('theme');
+  menu.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  if (open && focus) (menu.querySelector('[aria-pressed="true"]') ?? menu.querySelector('button'))?.focus();
+}
+
+/** 휴대폰 메뉴(메뉴 링크·새로고침·테마). 열면 첫 링크로, 닫으면 메뉴 버튼으로 포커스 */
+function setSheet(open) {
+  $('menu-sheet').hidden = !open;
+  $('sheet-backdrop').hidden = !open;
+  $('menu-btn').setAttribute('aria-expanded', String(open));
+  document.body.classList.toggle('sheet-open', open);
+  if (open) $('menu-sheet').querySelector('.sheet-nav a')?.focus();
+}
+
+function closeSheet({ restore = true } = {}) {
+  if ($('menu-sheet').hidden) return;
+  setSheet(false);
+  if (restore) $('menu-btn').focus();
+}
+
+/** 머리말·메뉴의 구역 링크: 다른 화면이면 첫 화면으로 돌아간 뒤 그 구역으로 */
+function jumpSection(id) {
+  closeSheet({ restore: false });
+  closeSearch();
+  if (state.route && state.route.kind !== 'main') {
+    history.pushState(null, '', hashFor({ district: state.filters.district }) || `${location.pathname}${location.search}`);
+    route();
+  }
+  // route() 는 화면을 바로 바꾸므로 곧바로 옮겨도 된다
+  jumpTo(id);
+}
+
+function initHeader() {
+  initSearch();
+  $('theme-btn').addEventListener('click', () => setThemeMenu($('theme').hidden, { focus: true }));
+  $('theme').addEventListener('click', (e) => {
+    if (e.target instanceof Element && e.target.closest('[data-theme-choice]')) setThemeMenu(false);
+  });
+  $('menu-btn').addEventListener('click', () => setSheet(true));
+  $('menu-close').addEventListener('click', () => closeSheet());
+  $('sheet-backdrop').addEventListener('click', () => closeSheet());
+  $('sheet-refresh').addEventListener('click', () => {
+    closeSheet();
+    refresh();
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (!$('theme').hidden && e.target instanceof Element && !e.target.closest('.theme-wrap')) setThemeMenu(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('theme').hidden) {
+      setThemeMenu(false);
+      $('theme-btn').focus();
+    } else if (e.key === 'Escape' && !$('menu-sheet').hidden) {
+      closeSheet();
+    } else if (e.key === 'Tab' && !$('menu-sheet').hidden) {
+      // 메뉴가 열려 있으면 Tab 이 메뉴 안에서만 돈다
+      const items = [...$('menu-sheet').querySelectorAll('a, button')];
+      const first = items[0];
+      const last = items.at(-1);
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
+  // 구역 링크(머리말 메뉴·휴대폰 메뉴·새 소식 종·지금 접수 중), 로고(첫 화면 맨 위로)
+  document.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const jump = target.closest('a[data-jump]');
+    const home = target.closest('a[data-home]');
+    if (!jump && !home) return;
+    e.preventDefault();
+    if (!state.data) return;
+    if (jump) jumpSection(jump.dataset.jump);
+    else {
+      if (state.route && state.route.kind !== 'main') leaveView();
+      window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    }
+  });
+  phoneQuery.addEventListener?.('change', () => {
+    if (!phoneQuery.matches) closeSheet({ restore: false });
   });
 }
 
@@ -3006,6 +3373,7 @@ function onClick(e) {
 function init() {
   initTheme();
   initFolds();
+  initHeader();
   $('refresh').addEventListener('click', refresh);
   document.addEventListener('click', onClick);
   $('f-stage').addEventListener('change', (e) => setFilter('stage', e.target.value));
