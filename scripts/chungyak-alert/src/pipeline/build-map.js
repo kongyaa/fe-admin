@@ -3,7 +3,10 @@ import { basename, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectApplyhome } from '../sources/applyhome.js';
 import { AppError, decodeServiceKey, kstToday, maskServiceKey, safeError, safeHttpUrl } from '../util.js';
-import { BUCKETS, applyWindow, bucketOf } from './expected-window.js';
+import { blockSummary, publicBlockTotal, townBlocks } from './blocks.js';
+import {
+  BUCKETS, LIKELY_SOLD_STAGES, applyWindow, bucketOf, isBlockTown, onOrAfter,
+} from './expected-window.js';
 import { linkNotices } from './link-notices.js';
 import { TOWN_STAGES, loadNewtowns } from './newtowns.js';
 import { DATASET_URL, SEOUL_STAGES, collectSeoul, parseSeoulWorkbook } from './seoul-redevelop.js';
@@ -12,17 +15,59 @@ import { DATASET_URL, SEOUL_STAGES, collectSeoul, parseSeoulWorkbook } from './s
 // 공고 연결은 실패해도 건너뛴다.
 
 export const DEFAULT_NEWTOWNS = fileURLToPath(new URL('../../data/newtowns.yaml', import.meta.url));
-const LOOKBACK_DAYS = 365;
+// 공고 연결은 최근 3년. 공공주택지구는 블록 공고 간격이 1년을 넘기도 해서(하남교산 A2 2025-03) 1년으로는 빠진다.
+// 서울 사업에 이어진 오래된 공고는 현재 단계 날짜 뒤의 공고일 때만 announced로 본다(markAnnounced).
+// 사업시행인가 전 서울 사업에는 공고를 잇지 않는다(canLinkNotices).
+export const NOTICE_LOOKBACK_DAYS = 1095;
 
-// 공고 연결과 예상 시기 계산에만 쓰는 내부 값은 출력에서 뺀다.
+function publicSources(sources) {
+  return (sources ?? []).flatMap((source) => {
+    const url = safeHttpUrl(source.url);
+    return url ? [{ ...source, url }] : [];
+  });
+}
+
+// 분양 이력 한 건의 출력 형태. 입주 예정·조사 메모 같은 나머지 값은 newtowns.yaml에만 둔다.
+function publicHistory(entry) {
+  return {
+    block: entry.block,
+    stage: entry.stage,
+    type: entry.type,
+    title: entry.title,
+    households: entry.households,
+    noticeDate: entry.noticeDate,
+    end: entry.end ?? null,
+    rental: entry.rental === true,
+    sources: publicSources(entry.sources),
+  };
+}
+
+// 공공주택지구의 블록별 현황. 공고 연결 뒤에 부른다(접수 중·끝난 공고가 블록 상태에 들어감). 서울 사업은 그대로.
+export function withBlocks(project, today) {
+  if (!Array.isArray(project.blockEntries)) return project;
+  const blocks = townBlocks({
+    entries: project.blockEntries,
+    history: project.history,
+    plans: project.plans,
+    notices: project.notices,
+    stageDate: project.stageDates?.[project.stage] ?? null,
+    today,
+  });
+  return {
+    ...project, blocks, blockSummary: blockSummary(blocks), blockTotal: publicBlockTotal(project.blockTotal),
+  };
+}
+
+// 공고 연결과 예상 시기 계산에만 쓰는 내부 값(noticeMatch, expected, plans, blockEntries)은 출력에서 뺀다.
+// 공공주택지구는 history(분양 이력)와 blocks(블록별 현황)를 늘 배열로 내보낸다.
 function toPublic(project) {
-  const { noticeMatch, expected, ...rest } = project;
+  const {
+    noticeMatch, expected, plans, history, blockEntries, ...rest
+  } = project;
   return {
     ...rest,
-    sources: (rest.sources ?? []).flatMap((source) => {
-      const url = safeHttpUrl(source.url);
-      return url ? [{ ...source, url }] : [];
-    }),
+    ...(Array.isArray(history) ? { history: history.map(publicHistory) } : {}),
+    sources: publicSources(rest.sources),
     notices: (rest.notices ?? []).map((notice) => ({ ...notice, url: safeHttpUrl(notice.url) })),
   };
 }
@@ -32,7 +77,7 @@ async function collectNotices({ fetch, env, today, sleep }) {
   if (!key) return { notices: [], skipped: 'no_key', errors: [] };
   maskServiceKey(key, env);
   try {
-    const result = await collectApplyhome({ fetch, key, today, lookbackDays: LOOKBACK_DAYS, sleep });
+    const result = await collectApplyhome({ fetch, key, today, lookbackDays: NOTICE_LOOKBACK_DAYS, sleep });
     if (result.failedAll) return { notices: [], skipped: result.errors[0] ?? 'applyhome_failed', errors: result.errors };
     return { notices: result.notices, skipped: null, errors: result.errors };
   } catch (error) {
@@ -53,15 +98,34 @@ export function checkSeoulValues({ projects, skipped = {} }) {
 // 공고는 연결됐지만 모두 접수가 끝났으면 announced. 기간은 그대로 두고 근거만 바꾼다.
 // 서울 정비사업만 바꾼다. 공공주택지구는 블록별로 여러 번 공고하므로 지난 블록 공고가 있어도
 // 규칙·보도 기간을 그대로 둔다. 준공(done)도 그대로 둔다.
+// 3년 조회라 같은 지번의 예전 사업 공고가 이어질 수 있다. 단계가 이주·착공·일반분양이거나, 가장 늦은 공고일이
+// 현재 단계 날짜와 같거나 뒤일 때만 announced로 본다. 아니면 공고는 목록에 두고 기간·상태는 그대로다.
+// 사업시행인가 전 서울 사업은 공고 연결 단계에서 공고가 붙지 않아(canLinkNotices) 여기 오지 않는다.
 export function markAnnounced(project) {
   const notices = project.notices ?? [];
   if (project.region !== '서울' || project.live || notices.length === 0 || project.windowStatus === 'done') return project;
   const latest = notices.map((notice) => notice.announceDate).filter(Boolean).sort().at(-1);
+  const current = LIKELY_SOLD_STAGES.includes(project.stage)
+    || onOrAfter(latest, project.stageDates?.[project.stage]) === true;
+  if (!current) return project;
   return {
     ...project,
     windowStatus: 'announced',
     windowBasis: latest ? `청약홈 공고가 이미 있었습니다(${latest})` : '청약홈 공고가 이미 있었습니다',
   };
+}
+
+// 공고 연결 뒤 블록별 분양 지구의 다음 블록 예상을 다시 잡는다.
+// - 이어진 공고의 공고명에 계획 블록 이름이 있으면 그 블록은 공고가 난 것으로 보고 계획 근거에서 뺀다(blockAnnounced).
+// - 접수 중인 공고가 있으면 구간은 live로 두고(bucketOf), 규칙으로 잡는 다음 블록 기간은 그 공고 마감 달 다음 달부터 잡는다.
+// 지구 계획(expected)으로 잡은 기간은 그대로다.
+export function nextBlockAfterLink(project, today) {
+  const notices = project.notices ?? [];
+  if (notices.length === 0 || !isBlockTown(project.kind, project.stage)) return project;
+  const liveEnd = project.live
+    ? notices.map((notice) => notice.end).filter((end) => end && end >= today).sort().at(-1) ?? null
+    : null;
+  return applyWindow(project, today, { liveEnd });
 }
 
 function tally(values) {
@@ -91,8 +155,8 @@ export async function buildMap({
   const linkedResult = notices.skipped
     ? { projects: base, linked: 0, checked: 0 }
     : linkNotices(base, notices.notices, today);
-  const projects = linkedResult.projects.map(markAnnounced)
-    .map((project) => toPublic({ ...project, bucket: bucketOf(project, today) }));
+  const projects = linkedResult.projects.map((project) => markAnnounced(nextBlockAfterLink(project, today)))
+    .map((project) => toPublic({ ...withBlocks(project, today), bucket: bucketOf(project, today) }));
 
   return {
     generatedAt: today,

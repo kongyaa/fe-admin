@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { containsToken, linkNotices, lotKey, matchesProject, zoneKey } from '../src/pipeline/link-notices.js';
+import {
+  canLinkNotices, containsToken, linkNotices, lotKey, matchesProject, zoneKey,
+} from '../src/pipeline/link-notices.js';
 
 const today = '2026-11-10';
 
@@ -118,5 +120,26 @@ test('linkNotices attaches sorted, deduped notices and marks live', () => {
 test('notice urls go through safeHttpUrl and ended notices are not live', () => {
   const result = linkNotices([seoul()], [notice({ address: '서울특별시 종로구 신영동 158', url: 'javascript:alert(1)' })], today);
   assert.equal(result.projects[0].notices[0].url, null);
+  assert.equal(result.projects[0].live, false);
+});
+
+test('canLinkNotices: Seoul projects before 사업시행인가 take no notices', () => {
+  for (const stage of ['구역지정', '추진위', '조합설립', '건축심의']) assert.equal(canLinkNotices(seoul({ stage })), false, stage);
+  for (const stage of ['사업시행인가', '관리처분인가', '이주', '착공', '일반분양']) assert.equal(canLinkNotices(seoul({ stage })), true, stage);
+  // 단계를 모르는 서울 사업과 공공주택지구는 그대로 잇는다
+  assert.equal(canLinkNotices(seoul()), true);
+  assert.equal(canLinkNotices(town({ stage: '지구지정' })), true);
+});
+
+test('an early-stage Seoul project gets nothing linked even when a notice matches', () => {
+  // 성수1(건축심의)과 같은 지번의 이웃 단지 공고
+  const project = seoul({
+    id: 'seoul-seongsu1', district: '성동구', name: '성수1', address: '성수동1가72-10', stage: '건축심의',
+  });
+  const match = notice({ key: 'otier', name: '오티에르 포레', address: '서울특별시 성동구 성수동1가 72-10', overallEnd: '2026-11-20' });
+  assert.equal(matchesProject(project, match), true);
+  const result = linkNotices([project], [match], today);
+  assert.equal(result.linked, 0);
+  assert.deepEqual(result.projects[0].notices, []);
   assert.equal(result.projects[0].live, false);
 });

@@ -187,6 +187,53 @@ button, input, select { font: inherit; color: inherit; }
 .notices ul, .detail-sources ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .notices .chip { margin-left: 6px; }
 
+/* 분양 이력: 줄마다 공고일·블록·유형, 단지 이름, 출처. 좁은 화면에서는 줄바꿈으로 맞춘다(가로 스크롤 없음) */
+.sales { display: grid; gap: 4px; font-size: .86rem; min-width: 0; }
+.sales ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.sales li { display: grid; gap: 1px; padding: 6px 8px; border-left: 3px solid var(--plan); background: var(--wash); border-radius: 0 6px 6px 0; min-width: 0; overflow-wrap: anywhere; }
+.sales li.pre { border-left-color: var(--rule); }
+.sale-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.sale-date { font-family: var(--font-mono); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.sale-title { font-weight: 600; }
+.sale-src { font-size: .78rem; color: var(--muted); }
+.sale-src a { white-space: nowrap; } /* '낸 곳 날짜'가 중간에서 끊기지 않게(짧은 글자라 넘치지 않음) */
+
+/* 블록별 현황: 위에 상태별 개수, 아래 블록 표. 480px 이하에서는 줄마다 카드로 쌓는다(가로 스크롤 없음) */
+.blocks { display: grid; gap: 6px; font-size: .86rem; min-width: 0; }
+.block-counts { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.block-counts li { display: inline-flex; align-items: center; gap: 4px; }
+.block-counts b { font-variant-numeric: tabular-nums; }
+.block-total { font-size: .82rem; }
+.block-table-wrap { overflow-x: auto; min-width: 0; }
+.block-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.block-table th, .block-table td { text-align: left; vertical-align: top; padding: 6px 6px; border-bottom: 1px solid var(--rule); word-break: keep-all; overflow-wrap: break-word; }
+.block-table td:nth-child(2) { min-width: 6.5em; }
+.block-table td:nth-child(5) { min-width: 11em; }
+.block-table thead th { font-size: .76rem; font-weight: 600; color: var(--muted); background: var(--wash); white-space: nowrap; }
+.block-table tbody th { font-weight: 700; white-space: nowrap; }
+.block-table td:nth-child(3) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.block-table td .chip { display: inline-block; margin: 0 4px 2px 0; }
+.block-date { display: block; font-family: var(--font-mono); font-size: .74rem; color: var(--muted); white-space: nowrap; }
+.block-flow { margin: 0; padding: 0; list-style: none; display: grid; gap: 1px; font-variant-numeric: tabular-nums; }
+.block-flow .pre { color: var(--muted); }
+.block-flow .plan { color: var(--ink); }
+.block-note { display: block; color: var(--muted); font-size: .74rem; margin-top: 2px; }
+.block-src { font-size: .76rem; color: var(--muted); }
+.block-src a { white-space: nowrap; }
+.c-appr { background: transparent; color: var(--plan); border: 1px solid var(--plan); padding: 0 7px; font-weight: 600; }
+@media (max-width: 480px) {
+  .block-table-wrap { overflow-x: visible; }
+  .block-table, .block-table tbody, .block-table tr, .block-table th, .block-table td { display: block; width: auto; }
+  .block-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .block-table tr { border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; background: var(--sheet); }
+  .block-table tbody th { border-bottom: 0; padding: 0 0 2px; font-size: .9rem; }
+  .block-table td { border-bottom: 0; padding: 2px 0; display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 6px; }
+  .block-table td::before { content: attr(data-label); color: var(--muted); font-size: .74rem; }
+  .block-table td > div { min-width: 0; }
+}
+.c-rent { background: var(--plan-soft); color: var(--plan); }
+.c-pre { background: transparent; color: var(--muted); border: 1px solid var(--rule); padding: 0 7px; font-weight: 600; }
+
 /* 타임라인 */
 .gantt { overflow-x: auto; border-radius: 4px; }
 .gantt-inner { min-width: 680px; display: grid; grid-template-columns: 170px minmax(0, 1fr); font-size: .8rem; }

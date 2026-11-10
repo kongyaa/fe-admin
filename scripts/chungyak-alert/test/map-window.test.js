@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addMonths, applyWindow, bucketOf, expectedWindow, monthsBetween, toMonth } from '../src/pipeline/expected-window.js';
+import {
+  addMonths, applyWindow, blockAnnounced, blockKey, bucketOf, expectedWindow, monthsBetween, onOrAfter, pendingPlans, planRange, sourceOutlet, toMonth,
+  townPlanWindow,
+} from '../src/pipeline/expected-window.js';
 
 const today = '2026-11-10';
 const win = (kind, stage, stageDates = {}, expected = null) => expectedWindow({ kind, stage, stageDates, today, expected });
@@ -76,7 +79,7 @@ test('공공주택지구 window rules', () => {
   assert.equal(site.basis, '부지조성 착공(2026-01) 뒤 1~2년, 블록별 순차 공고');
   const blocks = win('공공주택지구', '블록별 분양', { '블록별 분양': '2020-03' });
   assert.deepEqual([blocks.from, blocks.to, blocks.status], ['2026-11', '2028-11', 'estimated']);
-  assert.match(blocks.basis, /남은 블록 순차 공고\(확장 규칙\)/);
+  assert.equal(blocks.basis, '다음 블록 예상(규칙): 오늘부터 0~2년');
   assert.equal(win('공공주택지구', '후보지').status, 'far');
   assert.deepEqual(win('공공주택지구', '준공', { 준공: '2030-01' }), {
     from: null, to: null, basis: '준공되어 남은 분양 없음으로 봄', rule: '공공주택지구:준공', status: 'done',
@@ -135,4 +138,238 @@ test('live wins over every other bucket', () => {
   assert.equal(bucketOf({ live: true, window: { from: '2020-01', to: '2021-01' }, windowStatus: 'overdue' }, today), 'live');
   assert.equal(bucketOf({ live: true, window: null, windowStatus: 'far' }, today), 'live');
   assert.equal(bucketOf({ live: true, window: null, windowStatus: 'done' }, today), 'live');
+});
+
+test('planRange: half years and single months', () => {
+  assert.deepEqual(planRange('2026-상반기'), { from: '2026-01', to: '2026-06' });
+  assert.deepEqual(planRange('2026-하반기'), { from: '2026-07', to: '2026-12' });
+  assert.deepEqual(planRange('2027-09'), { from: '2027-09', to: '2027-09' });
+  for (const bad of ['2027-13', '2027-00', '2027', '2027-3분기', '2027-09-01', '', null]) assert.equal(planRange(bad), null, String(bad));
+});
+
+test('blockKey and sourceOutlet', () => {
+  assert.equal(blockKey('A-1'), 'A1');
+  assert.equal(blockKey('a1BL'), 'A1');
+  assert.equal(blockKey('A-2 블록'), 'A2');
+  assert.equal(blockKey('A-5BL'), 'A5');
+  // 숫자 뒤 '-'는 다른 블록을 가른다: A2-1 ≠ A21
+  assert.equal(blockKey('A2-1'), 'A2-1');
+  assert.equal(blockKey('A-2-1BL'), 'A2-1');
+  assert.notEqual(blockKey('A2-1'), blockKey('A21'));
+  assert.equal(sourceOutlet({ outlet: '청약홈', title: '분양정보 (번호 1)' }), '청약홈');
+  assert.equal(sourceOutlet({ title: '기사 제목 (하남Times)' }), '하남Times');
+  assert.equal(sourceOutlet({ title: '괄호 없음', url: 'https://www.huic.co.kr/a' }), 'huic.co.kr');
+  assert.equal(sourceOutlet({}), '출처');
+});
+
+const src = (date, title = '기사 (하남Times)') => [{ title, url: 'https://example.com', date }];
+const plan = (blocks, expected, extra = {}) => ({ blocks, expected, sources: src('2025-12-13'), ...extra });
+const UNDATED = [{ title: '일정표', outlet: '하남도시공사', url: 'https://example.com', date: null }];
+const PLANS = [
+  plan(['D2', 'D5'], '2026-상반기'),
+  plan(['A9', 'A11'], '2026-하반기', { note: '지역지 보도만 있음' }),
+  plan(['A20'], '2026-하반기', { rental: true }),
+  plan(['A5'], '2027-09', { sources: UNDATED }),
+  plan(['A8'], '2028-상반기'),
+];
+
+test('블록별 분양: the earliest unfinished non-rental plan is the next block, starting no earlier than this month', () => {
+  const result = win('공공주택지구', '블록별 분양', {}, null);
+  assert.equal(result.rule, '공공주택지구:블록별 분양'); // 계획이 없으면 확장 규칙
+  const planned = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, plans: PLANS });
+  // 2026-하반기(07~12)지만 이미 11월이라 2026-11부터. 보도뿐인 계획이라 note를 붙인다
+  assert.deepEqual(planned, {
+    from: '2026-11', to: '2026-12', basis: '보도된 다음 블록 계획: A9·A11 2026-하반기 (하남Times 2025-12-13). 지역지 보도만 있음', rule: 'town-plan', status: 'estimated',
+  });
+  // 같은 기간의 분양 계획은 블록을 합친다(임대 A20은 빠짐)
+  const merged = townPlanWindow({ plans: [...PLANS, plan(['B3'], '2026-하반기')], today });
+  assert.match(merged.basis, /A9·A11·B3 2026-하반기 \(하남Times 2025-12-13\)\. 지역지 보도만 있음$/);
+  // note가 없으면 '공고 미확인'. 계획 시작 전이면 시작 달 그대로
+  const before = townPlanWindow({ plans: PLANS, today: '2025-12-20' });
+  assert.deepEqual([before.from, before.to, before.basis], ['2026-01', '2026-06', '보도된 다음 블록 계획: D2·D5 2026-상반기 (하남Times 2025-12-13). 공고 미확인']);
+  const inside = townPlanWindow({ plans: PLANS, today: '2026-06-15' });
+  assert.deepEqual([inside.from, inside.to], ['2026-06', '2026-06']);
+  // 2027년이 되면 날짜 없는 A5(2027-09)는 건너뛰고 A8
+  const next = townPlanWindow({ plans: PLANS, today: '2027-01-05' });
+  assert.deepEqual([next.from, next.to, next.basis], ['2028-01', '2028-06', '보도된 다음 블록 계획: A8 2028-상반기 (하남Times 2025-12-13). 공고 미확인']);
+  // 공식 자료(LH 등)가 있는 계획은 확인 정도를 붙이지 않는다
+  const official = townPlanWindow({ plans: [plan(['C1'], '2027-03', { sources: [{ title: 'LH 공급계획', url: 'https://www.lh.or.kr/a', date: '2026-10-01' }] })], today });
+  assert.equal(official.basis, '보도된 다음 블록 계획: C1 2027-03 (lh.or.kr 2026-10-01)');
+});
+
+test('블록별 분양: the plan window never shows a range entirely in the past', () => {
+  for (let month = 0; month < 36; month += 1) {
+    const day = `${addMonths('2025-11', month)}-15`;
+    const result = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today: day, plans: PLANS });
+    assert.ok(monthsBetween(day, result.from) >= 0, `${day} from ${result.from}`);
+    assert.ok(monthsBetween(day, result.to) >= 0, `${day} to ${result.to}`);
+    assert.equal(result.status, 'estimated');
+  }
+});
+
+test('블록별 분양: a plan whose sources are all undated is kept out of the window', () => {
+  const only = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today: '2027-01-05', plans: [plan(['A5'], '2027-09', { sources: UNDATED })] });
+  assert.equal(only.rule, '공공주택지구:블록별 분양');
+  assert.equal(only.basis, '다음 블록 예상(규칙): 오늘부터 0~2년');
+  // 날짜 있는 출처가 하나라도 있으면 쓰고, 근거에는 날짜 있는 첫 출처를 적는다
+  const mixed = plan(['A7'], '2027-03', { sources: [...UNDATED, { title: '기사 (하남일보)', url: 'https://example.com/b', date: '2026-02-01' }] });
+  assert.equal(townPlanWindow({ plans: [mixed], today }).basis, '보도된 다음 블록 계획: A7 2027-03 (하남일보 2026-02-01). 공고 미확인');
+});
+
+test('블록별 분양: plans that all passed without a notice give today ~ +12 months', () => {
+  const late = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today: '2028-07-01', plans: PLANS });
+  assert.deepEqual(late, {
+    from: '2028-07', to: '2029-07',
+    basis: '보도된 일정(D2·D5 2026-상반기, A9·A11 2026-하반기, A8 2028-상반기)이 지났지만 공고는 아직 없습니다. 남은 블록 순차 공고',
+    rule: 'town-plan-late',
+    status: 'estimated',
+  });
+  // 공고가 난 블록은 근거에서 빠진다
+  const cleared = townPlanWindow({ plans: PLANS, history: [{ block: 'A-9', noticeDate: '2026-09-30' }, { block: 'D2', noticeDate: '2026-01-05' }], today: '2028-07-01' });
+  assert.equal(cleared.basis, '보도된 일정(D5 2026-상반기, A11 2026-하반기, A8 2028-상반기)이 지났지만 공고는 아직 없습니다. 남은 블록 순차 공고');
+});
+
+test('블록별 분양: blocks with a 본청약 on or after the report date are not pending', () => {
+  const history = [
+    { block: 'A-9', noticeDate: '2026-09-30', rental: false },
+    { block: 'A11', noticeDate: '2026-10', rental: false },
+    { block: 'D2', noticeDate: '2026-02-01', rental: true }, // 임대 공고는 분양 계획을 채우지 않음
+  ];
+  const result = townPlanWindow({ plans: PLANS, history, today });
+  assert.equal(result.basis, '보도된 다음 블록 계획: A8 2028-상반기 (하남Times 2025-12-13). 공고 미확인');
+  // 남은 블록만 근거에 적는다
+  const partial = townPlanWindow({ plans: PLANS, history: history.slice(0, 1), today });
+  assert.match(partial.basis, /계획: A11 2026-하반기/);
+  // 보도일(2025-12-13)보다 이른 공고는 계획을 채우지 않는다
+  const early = townPlanWindow({ plans: PLANS, history: [{ block: 'A9', noticeDate: '2025-12-01' }], today });
+  assert.match(early.basis, /계획: A9·A11 2026-하반기/);
+  // 모든 분양 계획이 공고로 채워졌으면 확장 규칙
+  const done = expectedWindow({
+    kind: '공공주택지구', stage: '블록별 분양', today, plans: [plan(['A9'], '2026-하반기')], history: history.slice(0, 1),
+  });
+  assert.equal(done.rule, '공공주택지구:블록별 분양');
+  assert.equal(done.basis, '다음 블록 예상(규칙): 오늘부터 0~2년');
+});
+
+test('블록별 분양: an early 본청약 clears an undated plan from the 블록별 분양 stage date on', () => {
+  const a5 = [plan(['A5'], '2027-09', { sources: UNDATED })];
+  const early = [{ block: 'A-5BL', stage: '본청약', noticeDate: '2027-05-02', rental: false }];
+  // 계획 시기(2027-09)보다 이른 공고도 채운다
+  assert.deepEqual(pendingPlans(a5, early, { stageDate: '2025-03-31', today: '2027-06-01' }), []);
+  // 아직 오지 않은 날짜의 이력은 보지 않는다
+  assert.deepEqual(pendingPlans(a5, early, { stageDate: '2025-03-31', today: '2027-04-15' }).map((p) => [p.blocks, p.reportedAt]), [[['A5'], null]]);
+  // 하한은 블록별 분양 단계 날짜: 그 전 본청약은 채우지 않고, 단계 날짜도 없으면 하한 없음
+  const before = [{ block: 'A5', stage: '본청약', noticeDate: '2024-12-01' }];
+  assert.equal(pendingPlans(a5, before, { stageDate: '2025-03-31', today }).length, 1);
+  assert.deepEqual(pendingPlans(a5, before, { today }), []);
+  // 사전청약과 임대는 채우지 않는다
+  const pre = [{ block: 'A5', stage: '사전청약', noticeDate: '2027-05-02' }, { block: 'A5', noticeDate: '2027-05-02', rental: true }];
+  assert.equal(pendingPlans(a5, pre, { stageDate: '2025-03-31', today: '2027-06-01' }).length, 1);
+  // 날짜 있는 계획은 보도일이 하한(일까지 비교)
+  const dated = [plan(['A9'], '2026-하반기')];
+  assert.equal(pendingPlans(dated, [{ block: 'A9', noticeDate: '2025-12-12' }], { stageDate: '2020-01-01', today }).length, 1);
+  assert.deepEqual(pendingPlans(dated, [{ block: 'A9', noticeDate: '2025-12-13' }], { today }), []);
+});
+
+test('블록별 분양: expectedWindow passes the town stage date and today into the plan check', () => {
+  const plans = [plan(['A5'], '2027-09', { sources: src('2027-06-01') }), plan(['A8'], '2028-상반기')];
+  const stageDates = { '블록별 분양': '2025-03-31' };
+  // 보도일(2027-06-01)보다 이른 2027-05 공고는 A5를 채우지 않는다
+  const kept = expectedWindow({
+    kind: '공공주택지구', stage: '블록별 분양', stageDates, today: '2027-07-01', plans, history: [{ block: 'A5', stage: '본청약', noticeDate: '2027-05-02' }],
+  });
+  assert.match(kept.basis, /계획: A5 2027-09/);
+  // 보도일 뒤 공고는 채운다
+  const cleared = expectedWindow({
+    kind: '공공주택지구', stage: '블록별 분양', stageDates, today: '2027-07-01', plans, history: [{ block: 'A-5', noticeDate: '2027-06-20' }],
+  });
+  assert.match(cleared.basis, /계획: A8 2028-상반기/);
+});
+
+test('블록별 분양: rental-only plans fall back to the rule, other stages ignore plans', () => {
+  const rental = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, plans: [plan(['B2'], '2029-하반기', { rental: true })] });
+  assert.deepEqual([rental.from, rental.to, rental.rule], ['2026-11', '2028-11', '공공주택지구:블록별 분양']);
+  const site = expectedWindow({ kind: '공공주택지구', stage: '부지조성 착공', stageDates: { '부지조성 착공': '2026-01' }, today, plans: PLANS });
+  assert.equal(site.rule, '공공주택지구:부지조성 착공');
+  // 보도된 지구 계획(expected)은 블록 계획보다 먼저
+  const reported = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, plans: PLANS, expected: { from: '2027-01', to: '2027-06' } });
+  assert.equal(reported.rule, 'reported');
+});
+
+test('블록별 분양: a live notice moves the rule window past its end month', () => {
+  const live = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, liveEnd: '2026-11-20' });
+  assert.deepEqual(live, {
+    from: '2026-12', to: '2028-12', basis: '다음 블록 예상(규칙): 접수 중인 공고(마감 2026-11-20) 뒤 0~2년', rule: '공공주택지구:블록별 분양', status: 'estimated',
+  });
+  // 이미 끝난 마감일은 보지 않는다
+  assert.equal(expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, liveEnd: '2026-10-31' }).from, '2026-11');
+  // 보도된 블록 계획이 있으면 그 기간이 먼저
+  assert.equal(expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, plans: PLANS, liveEnd: '2026-11-20' }).rule, 'town-plan');
+  const project = applyWindow({ kind: '공공주택지구', stage: '블록별 분양', stageDates: {} }, today, { liveEnd: '2027-01-05' });
+  assert.deepEqual(project.window, { from: '2027-02', to: '2029-02' });
+});
+
+test('applyWindow labels 블록별 분양 towns as the next block', () => {
+  const town = applyWindow({ kind: '공공주택지구', stage: '블록별 분양', stageDates: {}, plans: PLANS, history: [] }, today);
+  assert.equal(town.windowLabel, '다음 블록 예상');
+  assert.deepEqual(town.window, { from: '2026-11', to: '2026-12' });
+  assert.equal(town.windowRule, 'town-plan');
+  assert.equal(bucketOf(town, today), 'soon');
+  const other = applyWindow({ kind: '공공주택지구', stage: '지구지정', stageDates: { 지구지정: '2025-12' } }, today);
+  assert.equal(other.windowLabel, null);
+  const seoul = applyWindow({ kind: '재개발', stage: '착공', stageDates: { 착공: '2026-04-09' } }, today);
+  assert.equal(seoul.windowLabel, null);
+});
+
+test('블록별 분양: a 사전청약 entry never announces a planned block', () => {
+  const plans = [plan(['A5'], '2027-09')];
+  const pre = [{ block: 'A5', stage: '사전청약', noticeDate: '2026-01-10', rental: false }];
+  assert.equal(townPlanWindow({ plans, history: pre, today }).rule, 'town-plan');
+  const main = [{ block: 'A-5', stage: '본청약', noticeDate: '2026-01-10', rental: false }];
+  assert.equal(townPlanWindow({ plans, history: main, today }), null);
+});
+
+test('블록별 분양: the plan report date is the earliest source date', () => {
+  const sources = [{ title: '새 기사 (하남일보)', url: 'https://example.com/n', date: '2026-03-08' }, { title: '첫 기사', url: 'https://example.com/o', date: '2025-11-23' }];
+  const plans = [{ blocks: ['A9'], expected: '2026-하반기', sources }];
+  // 2025-12 공고는 첫 보도(2025-11-23) 뒤라 계획을 채운다
+  assert.equal(townPlanWindow({ plans, history: [{ block: 'A9', noticeDate: '2025-12-01' }], today }), null);
+  // 근거는 날짜 있는 첫 번째 출처를 적는다
+  assert.equal(townPlanWindow({ plans, today }).basis, '보도된 다음 블록 계획: A9 2026-하반기 (하남일보 2026-03-08). 공고 미확인');
+});
+
+test('onOrAfter compares days when both have them, months otherwise', () => {
+  assert.equal(onOrAfter('2027-05-02', '2027-05-02'), true);
+  assert.equal(onOrAfter('2027-05-01', '2027-05-02'), false);
+  assert.equal(onOrAfter('2027-05', '2027-05-20'), true);
+  assert.equal(onOrAfter('2027-04-30', '2027-05'), false);
+  assert.equal(onOrAfter(null, '2027-05'), null);
+  assert.equal(onOrAfter('2027-05', undefined), null);
+});
+
+test('블록별 분양: a linked notice naming a planned block clears it from the window, like a history entry', () => {
+  const live = [{ name: '하남교산 A9블록 공공분양', announceDate: '2026-11-03', end: '2026-11-20', typeLabel: 'APT' }];
+  // 지금: A9는 공고가 나서 근거에서 빠지고 A11만 남는다
+  const now = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, plans: PLANS, notices: live });
+  assert.equal(now.basis, '보도된 다음 블록 계획: A11 2026-하반기 (하남Times 2025-12-13). 지역지 보도만 있음');
+  // 계획이 모두 지난 뒤에도 A9를 '공고는 아직 없습니다'에 넣지 않는다
+  const late = townPlanWindow({ plans: PLANS, notices: live, today: '2028-07-01' });
+  assert.equal(late.rule, 'town-plan-late');
+  assert.equal(late.basis, '보도된 일정(D2·D5 2026-상반기, A11 2026-하반기, A8 2028-상반기)이 지났지만 공고는 아직 없습니다. 남은 블록 순차 공고');
+  // applyWindow는 사업의 notices를 넘긴다
+  const project = applyWindow({ kind: '공공주택지구', stage: '블록별 분양', stageDates: {}, plans: PLANS, history: [], notices: live }, today);
+  assert.match(project.windowBasis, /계획: A11 2026-하반기/);
+  // 임대·민간사전청약 공고, 블록 이름이 없는 공고, 보도일보다 이른 공고는 채우지 않는다
+  for (const notice of [
+    { ...live[0], typeLabel: '공공지원민간임대' },
+    { ...live[0], typeLabel: '민간사전청약' },
+    { ...live[0], name: '하남교산 A90블록' },
+    { ...live[0], announceDate: '2025-12-01' },
+  ]) {
+    assert.match(townPlanWindow({ plans: PLANS, notices: [notice], today }).basis, /계획: A9·A11 2026-하반기/, JSON.stringify(notice));
+  }
+  // 블록별 현황과 같은 함수
+  assert.equal(blockAnnounced('A-9', { notices: live, since: '2025-12-13' }), true);
+  assert.equal(blockAnnounced('A11', { notices: live, since: '2025-12-13' }), false);
+  assert.equal(blockAnnounced('A9', { history: [{ block: 'A9', stage: '본청약', noticeDate: '2026-12-01' }], since: '2025-12-13', today }), false);
 });
