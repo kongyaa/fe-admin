@@ -37,8 +37,12 @@ export const NEWS_NETWORK_STOP_AFTER = 2;
 export const NEWS_TIMEOUT_MS = 10000;
 
 // 뉴스 단계 전체의 시간 한도(ms). 넘으면 stopped='news_budget'으로 멈추고 그때까지 모은 기사는 싣는다.
-// 진행 중인 호출 하나(최대 약 20초)는 끝까지 기다리므로 실제 상한은 3분 20초 남짓이다.
-export const NEWS_BUDGET_MS = 180000;
+// 진행 중인 호출 하나(최대 약 20초)는 끝까지 기다리므로 실제 상한은 8분 20초 남짓이다.
+// 처음엔 3분이었는데, 뉴스를 넣은 뒤 첫 예약 실행에서 113곳 중 92곳만 보고 news_budget으로 멈췄다
+// (지도 빌드 단계 3분 23초). 같은 시간대 PR 실행은 113곳을 약 2분 20초에 다 봤고, 뉴스 없이는 단계가 약 30초다.
+// 실행마다 응답 속도 차이가 커서 8분으로 넉넉히 잡는다. 8분 + 나머지 약 1분이라 작업 시간 한도(15분,
+// .github/workflows/chungyak-map.yml의 timeout-minutes) 안에 충분히 들어온다.
+export const NEWS_BUDGET_MS = 480000;
 
 // 뉴스를 찾을 서울 사업의 구간(우선순위 순)
 const SEOUL_NEWS_BUCKETS = ['live', 'soon', 'mid'];

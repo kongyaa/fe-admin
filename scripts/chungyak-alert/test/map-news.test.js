@@ -430,18 +430,18 @@ test('collectNews network streak resets on success; network errors count too', a
 });
 
 test('collectNews stops at the time budget and keeps what it collected', async () => {
-  assert.equal(NEWS_BUDGET_MS, 180000);
+  assert.equal(NEWS_BUDGET_MS, 480000);
   let clock = 0;
-  // 호출마다 70초가 걸리는 것처럼 시계를 민다.
+  // 호출마다 170초가 걸리는 것처럼 시계를 민다.
   const { fetch, calls } = fakeFetch(() => {
-    clock += 70000;
+    clock += 170000;
     return Response.json(okBody([raw({ title: '하남교산 본청약' }), raw({ title: '신영1구역 착공', originallink: 'https://www.yna.co.kr/s1' })]));
   });
   const projects = [town(), seoul(), seoul({ id: 'seoul-2', name: '신당1', district: '중구' }), seoul({ id: 'seoul-3', name: '한남3', district: '용산구' })];
   const result = await collectNews({
     projects, client: createNewsClient({ fetch, env, sleep: noSleep }), today, sleep: noSleep, now: () => clock,
   });
-  // 0초, 70초, 140초에 검색하고 210초에 멈춘다.
+  // 0초, 170초, 340초에 검색하고 510초(8분 넘음)에 멈춘다.
   assert.equal(result.stopped, 'news_budget');
   assert.equal(result.checked, 3);
   assert.equal(calls.length, 3);
