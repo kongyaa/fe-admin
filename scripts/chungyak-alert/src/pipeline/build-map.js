@@ -2,13 +2,18 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectApplyhome } from '../sources/applyhome.js';
-import { AppError, decodeServiceKey, kstToday, maskServiceKey, safeError, safeHttpUrl } from '../util.js';
+import {
+  AppError, decodeServiceKey, kstToday, maskServiceKey, maskValue, safeError, safeHttpUrl,
+} from '../util.js';
 import { attachPerformance, buildPerformance, performanceTargets } from './block-performance.js';
 import { blockSummary, publicBlockTotal, townBlocks } from './blocks.js';
 import {
   BUCKETS, LIKELY_SOLD_STAGES, applyWindow, bucketOf, isBlockTown, onOrAfter,
 } from './expected-window.js';
 import { linkNotices } from './link-notices.js';
+import {
+  NEWS_PUBLISH_DAYS, collectNews, createNewsClient, newsTargets,
+} from './news.js';
 import { TOWN_STAGES, loadNewtowns } from './newtowns.js';
 import { DATASET_URL, SEOUL_STAGES, collectSeoul, parseSeoulWorkbook } from './seoul-redevelop.js';
 
@@ -61,13 +66,19 @@ export function withBlocks(project, today) {
 
 // 공고 연결과 예상 시기 계산에만 쓰는 내부 값(noticeMatch, expected, plans, blockEntries)은 출력에서 뺀다.
 // 공공주택지구는 history(분양 이력)와 blocks(블록별 현황)를 늘 배열로 내보낸다.
+// news(관련 소식)는 기사가 있는 사업에만 있고, 약관상 저장해도 되는 네 값(제목·언론사·날짜·링크)만 남긴다.
 function toPublic(project) {
   const {
-    noticeMatch, expected, plans, history, blockEntries, ...rest
+    noticeMatch, expected, plans, history, blockEntries, news, ...rest
   } = project;
+  const publicNews = (news ?? []).flatMap(({ title, outlet, date, url }) => {
+    const safe = safeHttpUrl(url);
+    return title && safe ? [{ title, outlet: outlet ?? null, date: date ?? null, url: safe }] : [];
+  });
   return {
     ...rest,
     ...(Array.isArray(history) ? { history: history.map(publicHistory) } : {}),
+    ...(publicNews.length ? { news: publicNews } : {}),
     sources: publicSources(rest.sources),
     notices: (rest.notices ?? []).map((notice) => ({ ...notice, url: safeHttpUrl(notice.url) })),
   };
@@ -94,6 +105,50 @@ async function collectPerformance(projects, {
     });
   } catch {
     return empty(['performance_failed']);
+  }
+}
+
+// 관련 소식(네이버 뉴스 검색). 구간(bucket)과 noticeMatch가 필요해 bucketOf 뒤, toPublic 전에 부른다.
+// 기사는 오늘 기준 14일(NEWS_PUBLISH_DAYS)까지만 싣는다. 지도는 주 1회 다시 만들어 한 번 실린 기사가 다음 빌드까지
+// 최대 7일 더 배포본에 남으므로, 14 + 7 = 21일로 약관의 서버 보관 한도(21일) 안에 든다.
+// 키가 없으면 skipped=no_key. 어떤 실패도 지도 빌드를 멈추지 않는다(사업별 실패는 collectNews가, 남은 예외는 여기서 kind로 센다).
+// stats.projects는 검색 대상 사업 수(newsTargets), checked는 실제로 검색한 수(멈추면 더 적다), matched는 기사가 남은 수.
+async function collectMapNews(projects, {
+  fetch, env, today, sleep, news,
+}) {
+  const empty = (extra) => ({
+    byId: {},
+    stats: {
+      checked: 0, matched: 0, projects: 0, skipped: null, errors: [], stopped: null, ...extra,
+    },
+  });
+  try {
+    const id = String(env.NAVER_CLIENT_ID ?? '').trim();
+    const secret = String(env.NAVER_CLIENT_SECRET ?? '').trim();
+    if (!id || !secret) return empty({ skipped: 'no_key' });
+    maskValue(id, env);
+    maskValue(secret, env);
+    const targets = newsTargets(projects);
+    const result = await news({
+      projects: targets,
+      client: createNewsClient({ fetch, env, sleep }),
+      today,
+      maxAgeDays: NEWS_PUBLISH_DAYS,
+      sleep,
+    });
+    return {
+      byId: result.byId ?? {},
+      stats: {
+        checked: result.checked ?? 0,
+        matched: result.matched ?? 0,
+        projects: targets.length,
+        skipped: null,
+        errors: [...new Set(result.errors ?? [])],
+        stopped: result.stopped ?? null,
+      },
+    };
+  } catch (error) {
+    return empty({ errors: [error instanceof AppError ? error.kind : 'news_failed'] });
   }
 }
 
@@ -169,6 +224,7 @@ export async function buildMap({
   loadTowns = loadNewtowns,
   sleep,
   performance = buildPerformance,
+  news = collectNews,
   config = null,
 } = {}) {
   const seoul = seoulFile
@@ -187,7 +243,14 @@ export async function buildMap({
   const perf = await collectPerformance(staged, {
     fetch, env, today, sleep, fullNotices: notices.notices, performance, config,
   });
-  const projects = staged.map((project) => toPublic(attachPerformance(project, perf.results)));
+  const newsResult = await collectMapNews(staged, {
+    fetch, env, today, sleep, news,
+  });
+  const projects = staged.map((project) => {
+    const withPerf = attachPerformance(project, perf.results);
+    const items = newsResult.byId[project.id];
+    return toPublic(Array.isArray(items) && items.length ? { ...withPerf, news: items } : withPerf);
+  });
 
   return {
     generatedAt: today,
@@ -205,6 +268,7 @@ export async function buildMap({
         errors: [...new Set(notices.errors)],
       },
       performance: { ...perf.stats },
+      news: { ...newsResult.stats },
     },
     stages: { seoul: [...SEOUL_STAGES], town: [...TOWN_STAGES] },
     projects,
@@ -216,6 +280,14 @@ export function performanceLine(stats) {
   const errors = Array.isArray(stats.errors) ? stats.errors.length : 0;
   return `map performance blocks=${stats.blocks} priced=${stats.priced} estimated=${stats.estimated} `
     + `competition=${stats.competition} calls=${stats.calls} errors=${errors}${stats.skipped ? ` skipped=${stats.skipped}` : ''}`;
+}
+
+// 관련 소식 한 줄(건수와 오류 종류만). 키가 없으면 skipped=no_key. 오류가 있으면 끝에 종류(kinds=…)를 붙인다.
+export function newsLine(stats) {
+  if (stats.skipped) return `map news skipped=${stats.skipped}`;
+  const errors = Array.isArray(stats.errors) ? stats.errors : [];
+  return `map news checked=${stats.checked} matched=${stats.matched} projects=${stats.projects} `
+    + `errors=${errors.length} stopped=${stats.stopped ?? 'none'}${errors.length ? ` kinds=${errors.join(',')}` : ''}`;
 }
 
 export function summaryLines(data) {
@@ -231,6 +303,7 @@ export function summaryLines(data) {
   lines.push(`map buckets ${BUCKETS.map((bucket) => `${bucket}=${buckets[bucket] ?? 0}`).join(' ')}`);
   const stages = tally(data.projects.map((project) => project.stage));
   lines.push(`map stages ${Object.entries(stages).map(([stage, count]) => `${stage}=${count}`).join(' ')}`);
+  if (data.sources.news) lines.push(newsLine(data.sources.news));
   if (data.sources.performance) lines.push(performanceLine(data.sources.performance));
   return lines;
 }

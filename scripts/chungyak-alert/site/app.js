@@ -312,6 +312,44 @@ export function sourceOutlet(source) {
   return url ? new URL(url).hostname.replace(/^(www|m)\./, '') : '출처';
 }
 
+// --- 관련 소식(네이버 뉴스 검색) ---
+export const NEWS_LIMIT = 5;
+// 파이프라인은 빌드 날 기준 14일 안의 기사만 싣는다(src/pipeline/news.js NEWS_PUBLISH_DAYS).
+// 빌드가 멈춰 예전 배포가 오래 남더라도 약관의 보관 한도(21일)가 지난 기사는 화면에 보이지 않게 한 번 더 거른다.
+export const NEWS_SHOW_DAYS = 21;
+export const NEWS_NOTE = '네이버 뉴스 검색 결과에서 제목에 사업명이 들어간 최근 2주 기사만 보여 줍니다. 출처: 각 언론사';
+export const NEWS_CREDIT = '검색: NAVER';
+
+/** 'YYYY-MM-DD' 에서 days 일 전 날짜. 형식이 아니면 null */
+export function ymdDaysBefore(ymd, days) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim());
+  if (!m) return null;
+  const time = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - days * 24 * 60 * 60 * 1000;
+  return Number.isNaN(time) ? null : new Date(time).toISOString().slice(0, 10);
+}
+
+/**
+ * 사업의 관련 소식: [{ title, outlet, date, url }] 최신순 NEWS_LIMIT 건.
+ * 제목이 있고 주소가 http(s)인 것만, 날짜가 today 기준 NEWS_SHOW_DAYS 일 안(그날 포함, 미래 제외)인 것만 남긴다.
+ * news 가 없거나 배열이 아니면 빈 배열
+ */
+export function newsItems(project, today) {
+  const cutoff = ymdDaysBefore(today, NEWS_SHOW_DAYS);
+  if (!cutoff) return [];
+  return entriesOf(project?.news).flatMap((n) => {
+    const title = textOrNull(n.title);
+    const url = safeHttpUrl(n.url);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(n.date ?? '')) ? n.date : null;
+    if (!title || !url || !date || date < cutoff || date > today) return [];
+    return [{ title, outlet: textOrNull(n.outlet), date, url }];
+  }).sort((a, b) => b.date.localeCompare(a.date)).slice(0, NEWS_LIMIT);
+}
+
+/** 관련 소식 한 줄의 덧말: '언론사 · 날짜'(없는 값은 뺀다) */
+export function newsMetaText(item) {
+  return [item?.outlet, item?.date].filter(Boolean).join(' · ');
+}
+
 // 비교용 이름: 공백·가운뎃점과 글자-숫자 사이 '-'를 뺀다(blockKey 와 같은 '-' 규칙)
 const compactName = (value) => String(value ?? '').toUpperCase().replace(/[\s·]/g, '').replace(/(?<=[A-Z])-(?=\d)/g, '');
 
@@ -1276,6 +1314,7 @@ function renderTowns() {
 function listItem(p) {
   const range = windowRangeLabel(p, state.todayYm);
   const sold = stageGroup(p) === 'town' ? latestSale(p) : null;
+  const news = newsItems(p, state.today).length;
   return h('button', {
     type: 'button', class: 'item', 'data-key': p.id, 'data-select': p.id, 'aria-current': String(state.selected === p.id),
   },
@@ -1286,7 +1325,8 @@ function listItem(p) {
     h('span', {}, p.region === '서울' ? shortDistrict(p.district) : placeLabel(p)),
     h('span', {}, p.stage ?? ''),
     range ? h('span', {}, `${windowPrefix(p)} ${range}`) : null,
-    sold ? h('span', {}, `최근 분양 ${sold}`) : null));
+    sold ? h('span', {}, `최근 분양 ${sold}`) : null,
+    news ? h('span', {}, `소식 ${news}`) : null));
 }
 
 /** 결과가 없을 때의 안내 하나: 걸린 조건과 되돌릴 버튼 */
@@ -1362,6 +1402,18 @@ function saleSection(p) {
           : null);
     })),
     rows.some((r) => r.stage === PRE_SUBSCRIPTION) ? h('p', { class: 'note' }, '사전청약은 본청약 전 예약이라 최근 분양에 세지 않습니다.') : null);
+}
+
+/** 관련 소식(최근 2주 기사, 최신순 5건까지). 없으면 null. 제목은 원문 링크(새 탭), 아래에 '언론사 · 날짜' */
+function newsSection(p) {
+  const items = newsItems(p, state.today);
+  if (!items.length) return null;
+  return h('div', { class: 'news' },
+    h('h3', {}, '관련 소식'),
+    h('ul', {}, items.map((n) => h('li', {},
+      h('a', { href: n.url, target: '_blank', rel: 'noopener noreferrer' }, n.title),
+      newsMetaText(n) ? h('span', { class: 'news-meta' }, newsMetaText(n)) : null))),
+    h('p', { class: 'note news-note' }, NEWS_NOTE, ' ', h('small', { class: 'news-credit' }, NEWS_CREDIT)));
 }
 
 const joinLinks = (sources) => sources.flatMap((src, i) => (i ? [' · ', sourceLink(src)] : [sourceLink(src)]));
@@ -1546,6 +1598,7 @@ function renderDetail(p, missingId) {
     typeof p.notes === 'string' && p.notes.trim() ? h('details', { class: 'memo' }, h('summary', {}, '조사 메모'), h('p', {}, p.notes)) : null,
     town ? blockSection(p) : null,
     town ? saleSection(p) : noticeBlock,
+    newsSection(p),
     sourceBlock,
   ].filter(Boolean));
   syncStale();

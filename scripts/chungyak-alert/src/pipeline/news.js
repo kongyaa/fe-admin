@@ -18,7 +18,12 @@ export const NEWS_ENDPOINTS = {
   },
 };
 
+// 약관의 서버 보관 한도(일). keepRecent의 기본값이다.
 export const NEWS_MAX_AGE_DAYS = 21;
+// 지도는 주 1회(화요일) 다시 만든다. 한 번 실린 기사는 다음 빌드까지 최대 7일 더 배포본(projects.json)에 남는다.
+export const MAP_REBUILD_DAYS = 7;
+// 지도에 싣는 기사의 최대 나이: 21 - 7 = 14일. 빌드 날 14일 전 기사도 다음 빌드 직전에 21일이 되어 보관 한도 안에 든다.
+export const NEWS_PUBLISH_DAYS = NEWS_MAX_AGE_DAYS - MAP_REBUILD_DAYS;
 
 // 인증·한도 오류. 다음 사업도 같은 결과일 것이므로 바로 멈춘다(호출을 더 보내지 않는다).
 export const NEWS_STOP_KINDS = ['news_http_401', 'news_http_403', 'news_http_429', 'news_no_key', 'news_endpoint'];
@@ -254,6 +259,7 @@ export function createNewsClient({ fetch = globalThis.fetch, env = process.env, 
 const newestFirst = (a, b) => b.date.localeCompare(a.date);
 
 // 사업마다 한 번씩 차례로 검색한다. projects는 newsTargets()의 결과를 넘긴다.
+// maxAgeDays: 남길 기사의 최대 나이(keepRecent). 기본은 지도에 싣는 14일(NEWS_PUBLISH_DAYS).
 // byId: { [사업 id]: [{ title, outlet, date, url }] } (기사가 있는 사업만). checked: 검색한 사업 수, matched: 기사가 남은 사업 수.
 // 사업 하나의 실패는 errors에 kind만 남기고 넘어간다. 인증·한도 오류(NEWS_STOP_KINDS)면 stopped에 kind를 두고 멈춘다.
 export async function collectNews({
@@ -261,6 +267,7 @@ export async function collectNews({
   client,
   today,
   limitPerProject = 5,
+  maxAgeDays = NEWS_PUBLISH_DAYS,
   display = 20,
   delayMs = 200,
   sleep = defaultSleep,
@@ -290,6 +297,7 @@ export async function collectNews({
     const kept = dedupe(keepRecent(
       items.map(normalizeItem).filter((item) => item && relevant(item, project)),
       today,
+      maxAgeDays,
     )).sort(newestFirst).slice(0, limitPerProject);
     if (kept.length === 0) continue;
     byId[project.id] = kept;

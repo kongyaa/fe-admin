@@ -71,6 +71,9 @@
 | 이름 | 내용 | 필수 |
 |---|---|---|
 | `DATA_GO_KR_KEY` | 공공데이터포털 인증키 | 예 |
+| `NAVER_CLIENT_ID` | 네이버 뉴스 검색 API 키 ID. 분양 예정 지도의 "관련 소식"에만 씁니다(`docs/MAP.md`) | 사용 시 |
+| `NAVER_CLIENT_SECRET` | 네이버 뉴스 검색 API 시크릿 | 사용 시 |
+| `NAVER_NEWS_ENDPOINT` | `hub`(기본, 네이버 API 허브 키) 또는 `legacy`(developers.naver.com 키) | 선택 |
 | `CHUNGYAK_NOTION_KEY` | 이 배치용 Notion 통합 토큰. 기존 `NOTION_KEY`와 별개 | 예 |
 | `CHUNGYAK_NOTION_PAGE_ID` | 대상 페이지 ID | 예 |
 | `KAKAO_REST_KEY` | 카카오 REST API 키. 토큰 갱신 단계에서만 씁니다 | 예 |

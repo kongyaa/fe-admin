@@ -236,6 +236,13 @@ button, input, select { font: inherit; color: inherit; }
 .notices ul, .detail-sources ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .notices .chip { margin-left: 6px; }
 
+/* 관련 소식: 기사 제목(원문 링크) 아래에 '언론사 · 날짜'. 긴 제목은 좁은 화면에서 줄바꿈(가로 스크롤 없음) */
+.news { display: grid; gap: 4px; font-size: .86rem; min-width: 0; }
+.news ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+.news li { overflow-wrap: anywhere; }
+.news-meta { display: block; font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.news-credit { font-size: .74rem; white-space: nowrap; }
+
 /* 분양 이력: 줄마다 공고일·블록·유형, 단지 이름, 출처. 좁은 화면에서는 줄바꿈으로 맞춘다(가로 스크롤 없음) */
 .sales { display: grid; gap: 4px; font-size: .86rem; min-width: 0; }
 .sales ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }

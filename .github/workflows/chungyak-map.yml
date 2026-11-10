@@ -45,11 +45,15 @@ jobs:
 
       - run: npm ci
 
-      # 서울 자료가 실패하면 여기서 멈추고 이전 배포가 유지된다. 공고 연결은 실패해도 계속한다.
+      # 서울 자료가 실패하면 여기서 멈추고 이전 배포가 유지된다. 공고 연결·관련 소식은 실패해도 계속한다.
+      # 네이버 키가 없으면 관련 소식만 건너뛴다(skipped=no_key). NAVER_NEWS_ENDPOINT는 선택(hub 기본, legacy).
       - name: Build projects.json
         run: node src/pipeline/build-map.js --out site/projects.json
         env:
           DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          NAVER_NEWS_ENDPOINT: ${{ secrets.NAVER_NEWS_ENDPOINT }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
