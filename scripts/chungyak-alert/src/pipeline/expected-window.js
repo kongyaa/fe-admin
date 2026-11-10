@@ -25,7 +25,7 @@ export const WINDOW_RULES = {
     '부지조성 착공': { from: 12, to: 24, note: '블록별 순차 공고' },
     // 설계 표에 없는 확장 규칙이다. 단계 날짜가 아니라 오늘부터 잡는다.
     // 보도된 블록 계획(newtowns.yaml plans)이 있으면 그쪽을 먼저 쓴다(townPlanWindow).
-    '블록별 분양': { from: 0, to: 24, fromToday: true, basis: '다음 블록 예상(규칙): 오늘부터 0~2년' },
+    '블록별 분양': { from: 0, to: 24, fromToday: true, basis: '규칙: 오늘부터 0~2년' },
     준공: { done: '준공되어 남은 분양 없음으로 봄' },
   },
 };
@@ -293,7 +293,7 @@ export function expectedWindow({
       return withOverdue({
         from: start,
         to: addMonths(start, rule.to),
-        basis: `${NEXT_BLOCK_LABEL}(규칙): 접수 중인 공고(마감 ${liveEnd}) 뒤 ${span}`,
+        basis: `규칙: 접수 중인 공고(마감 ${liveEnd}) 뒤 ${span}`,
         rule: `${kind}:${stage}`,
       }, today, stage);
     }

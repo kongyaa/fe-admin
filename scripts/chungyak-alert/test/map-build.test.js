@@ -468,7 +468,7 @@ towns:
   assert.equal(galmae.blockTotal, null);
   assert.equal('blocks' in byId['seoul-1441'], false);
   assert.deepEqual(galmae.window, { from: '2026-11', to: '2028-11' });
-  assert.equal(galmae.windowBasis, '다음 블록 예상(규칙): 오늘부터 0~2년');
+  assert.equal(galmae.windowBasis, '규칙: 오늘부터 0~2년');
   assert.equal(galmae.windowLabel, '다음 블록 예상');
   assert.deepEqual(galmae.history, []);
   assert.equal(byId['town-other'].windowLabel, null);
@@ -528,7 +528,7 @@ towns:
   assert.equal(galmae.bucket, 'live');
   // 규칙 기간은 접수 중인 공고 마감(2026-12-02) 다음 달부터
   assert.deepEqual(galmae.window, { from: '2027-01', to: '2029-01' });
-  assert.equal(galmae.windowBasis, '다음 블록 예상(규칙): 접수 중인 공고(마감 2026-12-02) 뒤 0~2년');
+  assert.equal(galmae.windowBasis, '규칙: 접수 중인 공고(마감 2026-12-02) 뒤 0~2년');
   assert.equal(galmae.windowStatus, 'estimated');
   assert.equal(galmae.windowLabel, '다음 블록 예상');
   // 보도된 블록 계획으로 잡은 기간은 그대로, 구간은 live

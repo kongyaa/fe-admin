@@ -20,6 +20,9 @@ export const FEED_DAYS = 400;
 // 다른 소식을 밀어내지 않게 FEED_MAX보다 먼저 자른다.
 export const STAGE_CARRY_DAYS = 90;
 export const STAGE_MAX = 50;
+// 네이버 관련 소식은 전체(서울·지구 합)에서 최신 40건까지. 서울 200건 제한보다 먼저 자르고, 서울 200건에는 세지 않는다
+// (최근 2주 기사가 한꺼번에 많아도 공고·일정 소식을 밀어내지 않게).
+export const NAVER_MAX = 40;
 export const RECEPTION_SOON_DAYS = 14;
 export const CALENDAR_DAYS = 45;
 // 달력 라벨. 1순위 해당·경기·기타는 1순위로, 무순위·임의·재공급·일반공급 접수는 접수로 묶는다.
@@ -411,7 +414,24 @@ export function dropCoveredSchedules(items) {
 
 // 네이버 기사가 같은 사업의 다른 소식(news.yaml 기사, 지구 일정 등)과 같은 주소면 네이버 기사를 뺀다(우리 요약이 남는다).
 // 블록은 보지 않는다(네이버 기사의 블록은 제목에서 읽은 것이라 news.yaml 기사와 다를 수 있다).
-const urlKey = (entry) => `${entry.projectId}|${entry.source?.url ?? ''}`;
+// 주소 비교값: 호스트는 소문자로 앞의 www.·m.·mobile.을 떼고, 경로 끝 '/'와 #조각, 추적용 질의(utm_*, fbclid 등)는 뺀다.
+// 나머지 질의는 남긴다(기사 번호가 질의에 있는 곳이 많다: articleView.html?idxno=314854). 주소가 아니면 글자 그대로.
+const TRACKING_PARAM = /^(utm_[a-z]+|fbclid|gclid|igshid|mc_cid|mc_eid|ref|from|cmpid)$/i;
+export function normalizeUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value ?? ''));
+  } catch {
+    return String(value ?? '');
+  }
+  const host = url.hostname.toLowerCase().replace(/^(www|m|mobile)\./, '');
+  const path = url.pathname.replace(/\/+$/, '');
+  const params = [...url.searchParams].filter(([key]) => !TRACKING_PARAM.test(key)).sort(([a], [b]) => a.localeCompare(b));
+  const query = params.length ? `?${new URLSearchParams(params)}` : '';
+  return `${host}${path}${query}`;
+}
+
+const urlKey = (entry) => `${entry.projectId}|${normalizeUrl(entry.source?.url ?? '')}`;
 
 export function dropCoveredNaver(items) {
   const cited = new Set(items.filter((entry) => entry.source?.provider !== NAVER_PROVIDER && entry.source?.url).map(urlKey));
@@ -420,7 +440,8 @@ export function dropCoveredNaver(items) {
 
 /**
  * 새 소식. 최신순. 오늘 뒤 날짜는 접수 소식만(곧 시작하는 접수).
- * 서울 사업 소식은 최근 400일(오늘 포함), 최대 200건(그중 단계 소식은 최신 50건까지). 공공주택지구 소식은 블록별 경과를 지구 화면에 다 보이도록 날짜·건수 제한 없이 둔다(지구는 몇 곳뿐).
+ * 네이버 관련 소식은 전체에서 최신 40건(NAVER_MAX)까지.
+ * 서울 사업 소식은 최근 400일(오늘 포함), 최대 200건(그중 단계 소식은 최신 50건까지, 네이버 소식은 세지 않음). 공공주택지구 소식은 블록별 경과를 지구 화면에 다 보이도록 날짜·건수 제한 없이 둔다(지구는 몇 곳뿐).
  * 같은 id는 한 번만, 기사와 같은 출처를 쓰는 일정 소식은 뺀다(dropCoveredSchedules). 다른 소식과 주소가 같은 네이버 기사도 뺀다(dropCoveredNaver).
  * projects는 공고 연결·블록별 현황 뒤의 내부 사업(계획·이력 출처가 남아 있는 것). 네이버 관련 소식은 그 news에서 만든다(naverItems).
  */
@@ -437,14 +458,17 @@ export function buildFeed({
     ...projects.flatMap((project) => naverItems(project, today)),
   ];
   const seen = new Set();
+  let naver = 0;
   let seoulStages = 0;
   let seoul = 0;
+  const isNaver = (entry) => entry.source?.provider === NAVER_PROVIDER;
   return dropCoveredNaver(dropCoveredSchedules(all))
     .map(({ fromNews, ...entry }) => entry)
     .filter((entry) => (entry.date <= today || entry.kind === '접수') && (towns.has(entry.projectId) || entry.date >= from))
     .filter((entry) => (seen.has(entry.id) ? false : seen.add(entry.id)))
     .sort(byFeed)
-    // 서울 단계 소식은 최신 50건까지 먼저 자르고, 남은 서울 소식 전체를 200건으로 자른다
+    // 네이버 소식은 전체 최신 40건, 서울 단계 소식은 최신 50건까지 먼저 자르고, 남은 서울 소식(네이버 제외)을 200건으로 자른다
+    .filter((entry) => !isNaver(entry) || (naver += 1) <= NAVER_MAX)
     .filter((entry) => towns.has(entry.projectId) || entry.kind !== '단계' || (seoulStages += 1) <= STAGE_MAX)
-    .filter((entry) => towns.has(entry.projectId) || (seoul += 1) <= FEED_MAX);
+    .filter((entry) => towns.has(entry.projectId) || isNaver(entry) || (seoul += 1) <= FEED_MAX);
 }

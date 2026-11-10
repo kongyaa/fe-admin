@@ -79,7 +79,7 @@ test('공공주택지구 window rules', () => {
   assert.equal(site.basis, '부지조성 착공(2026-01) 뒤 1~2년, 블록별 순차 공고');
   const blocks = win('공공주택지구', '블록별 분양', { '블록별 분양': '2020-03' });
   assert.deepEqual([blocks.from, blocks.to, blocks.status], ['2026-11', '2028-11', 'estimated']);
-  assert.equal(blocks.basis, '다음 블록 예상(규칙): 오늘부터 0~2년');
+  assert.equal(blocks.basis, '규칙: 오늘부터 0~2년');
   assert.equal(win('공공주택지구', '후보지').status, 'far');
   assert.deepEqual(win('공공주택지구', '준공', { 준공: '2030-01' }), {
     from: null, to: null, basis: '준공되어 남은 분양 없음으로 봄', rule: '공공주택지구:준공', status: 'done',
@@ -210,7 +210,7 @@ test('블록별 분양: the plan window never shows a range entirely in the past
 test('블록별 분양: a plan whose sources are all undated is kept out of the window', () => {
   const only = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today: '2027-01-05', plans: [plan(['A5'], '2027-09', { sources: UNDATED })] });
   assert.equal(only.rule, '공공주택지구:블록별 분양');
-  assert.equal(only.basis, '다음 블록 예상(규칙): 오늘부터 0~2년');
+  assert.equal(only.basis, '규칙: 오늘부터 0~2년');
   // 날짜 있는 출처가 하나라도 있으면 쓰고, 근거에는 날짜 있는 첫 출처를 적는다
   const mixed = plan(['A7'], '2027-03', { sources: [...UNDATED, { title: '기사 (하남일보)', url: 'https://example.com/b', date: '2026-02-01' }] });
   assert.equal(townPlanWindow({ plans: [mixed], today }).basis, '보도된 다음 블록 계획: A7 2027-03 (하남일보 2026-02-01). 공고 미확인');
@@ -248,7 +248,7 @@ test('블록별 분양: blocks with a 본청약 on or after the report date are 
     kind: '공공주택지구', stage: '블록별 분양', today, plans: [plan(['A9'], '2026-하반기')], history: history.slice(0, 1),
   });
   assert.equal(done.rule, '공공주택지구:블록별 분양');
-  assert.equal(done.basis, '다음 블록 예상(규칙): 오늘부터 0~2년');
+  assert.equal(done.basis, '규칙: 오늘부터 0~2년');
 });
 
 test('블록별 분양: an early 본청약 clears an undated plan from the 블록별 분양 stage date on', () => {
@@ -299,7 +299,7 @@ test('블록별 분양: rental-only plans fall back to the rule, other stages ig
 test('블록별 분양: a live notice moves the rule window past its end month', () => {
   const live = expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, liveEnd: '2026-11-20' });
   assert.deepEqual(live, {
-    from: '2026-12', to: '2028-12', basis: '다음 블록 예상(규칙): 접수 중인 공고(마감 2026-11-20) 뒤 0~2년', rule: '공공주택지구:블록별 분양', status: 'estimated',
+    from: '2026-12', to: '2028-12', basis: '규칙: 접수 중인 공고(마감 2026-11-20) 뒤 0~2년', rule: '공공주택지구:블록별 분양', status: 'estimated',
   });
   // 이미 끝난 마감일은 보지 않는다
   assert.equal(expectedWindow({ kind: '공공주택지구', stage: '블록별 분양', today, liveEnd: '2026-10-31' }).from, '2026-11');

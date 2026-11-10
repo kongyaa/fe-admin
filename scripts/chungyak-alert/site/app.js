@@ -1078,6 +1078,26 @@ export function visibleFeed(feed, today) {
   return (Array.isArray(feed) ? feed : []).filter((f) => !isNaverItem(f) || (cutoff !== null && f.date >= cutoff && f.date <= today));
 }
 
+/**
+ * 블록 카드 아래 '최근 …' 줄. items 는 그 블록 소식(최신순). 네이버 기사 제목은 출처 표시 없이 보이지 않도록
+ * 네이버가 아닌 가장 최근 소식의 제목을 쓰고, 네이버 기사뿐이면 제목 없이 '최근 11.10 뉴시스 기사 (검색: NAVER)'.
+ */
+export function blockLatestText(items, today) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return '아직 모은 소식 없음';
+  const own = list.find((f) => !isNaverItem(f));
+  if (own) return `최근 ${shortDate(own.date, today)} ${own.title}`;
+  const first = list[0];
+  const outlet = textOrNull(first.source?.title);
+  return `최근 ${shortDate(first.date, today)} ${outlet ? `${outlet} ` : ''}기사 (${NEWS_CREDIT})`;
+}
+
+/** 지구 화면 머리의 예상 근거 한 줄: '다음 블록 예상 근거 · 규칙: 오늘부터 0~2년'. 근거가 없으면 null */
+export function windowBasisNote(project) {
+  const basis = textOrNull(project?.windowBasis);
+  return basis ? `${windowFactLabel(project)} 근거 · ${basis}` : null;
+}
+
 /** 사업 목록의 '소식 N': 그 사업의 뉴스 소식 수(손으로 고른 기사와 네이버 관련 소식, visibleFeed 뒤의 feed) */
 export function projectNewsCount(feed, projectId) {
   return (Array.isArray(feed) ? feed : []).filter((f) => f.kind === '뉴스' && f.projectId === projectId).length;
@@ -2457,7 +2477,7 @@ function renderTownView(id, block) {
       h('div', { class: `vstatus tone-${head.tone}` },
         h('span', { class: 'vstatus-label' }, head.label),
         h('span', { class: 'vstatus-main' }, head.text),
-        p.windowBasis ? h('span', { class: 'vstatus-note' }, `${windowFactLabel(p)} 근거: ${p.windowBasis}`) : null)),
+        windowBasisNote(p) ? h('span', { class: 'vstatus-note' }, windowBasisNote(p)) : null)),
     groups.length ? h('ul', { class: 'gcounts', 'aria-label': '묶음별 블록 수' }, groups.map((g) => h('li', { class: `gc g-${g.key}` },
       h('b', {}, String(g.n)), h('span', {}, g.label)))) : null,
     h('div', { class: 'town-cols' },
@@ -2526,7 +2546,7 @@ function renderTownBlocks() {
       r.note ? h('p', { class: 'bcard-note' }, r.note) : null,
       r.sources.length ? h('p', { class: 'bcard-src' }, '출처 ', joinLinks(r.sources)) : null,
       h('p', { class: 'bcard-foot' },
-        h('span', { class: 'bcard-latest' }, mine.length ? `최근 ${shortDate(mine[0].date, state.today)} ${mine[0].title}` : '아직 모은 소식 없음'),
+        h('span', { class: 'bcard-latest' }, blockLatestText(mine, state.today)),
         freshN ? h('span', { class: 'new-pill' }, `새 소식 ${freshN}`) : mine.length ? h('span', { class: 'muted' }, `소식 ${mine.length}`) : null));
   }));
 }

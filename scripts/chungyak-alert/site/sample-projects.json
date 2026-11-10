@@ -627,7 +627,7 @@
     "from": "2026-12",
     "to": "2028-12"
    },
-   "windowBasis": "다음 블록 예상(규칙): 접수 중인 공고(마감 2026-11-11) 뒤 0~2년",
+   "windowBasis": "규칙: 접수 중인 공고(마감 2026-11-11) 뒤 0~2년",
    "windowStatus": "estimated",
    "windowRule": "공공주택지구:블록별 분양",
    "windowLabel": "다음 블록 예상",

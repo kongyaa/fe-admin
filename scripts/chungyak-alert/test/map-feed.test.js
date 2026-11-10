@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { DEFAULT_NEWS, DEFAULT_NEWTOWNS, buildMap, summaryLines } from '../src/pipeline/build-map.js';
 import {
-  CALENDAR_LABELS, FEED_MAX, NAVER_PROVIDER, STAGE_CARRY_DAYS, STAGE_MAX, buildCalendar, buildFeed, carriedStageItems, changeItems, dropCoveredNaver, feedId,
+  CALENDAR_LABELS, FEED_MAX, NAVER_MAX, NAVER_PROVIDER, normalizeUrl, STAGE_CARRY_DAYS, STAGE_MAX, buildCalendar, buildFeed, carriedStageItems, changeItems, dropCoveredNaver, feedId,
   historyItems, isRentalItem, kstDateTime, naverBlock, naverItems, noticeBlock, noticeItems, parseBlock, planItems, receptionItem, stageLabel,
 } from '../src/pipeline/feed.js';
 import { noticeSummary } from '../src/pipeline/link-notices.js';
@@ -567,4 +567,53 @@ test('buildMap feed carries both curated news and this build\'s Naver news; logs
   assert.match(lines[0], / curated=\d+$/);
   assert.ok(lines.some((line) => /^map news checked=\d+ matched=1 projects=\d+ errors=0 stopped=none$/.test(line)));
   assert.ok(lines.every((line) => !line.includes('http') && !line.includes('test-id')));
+});
+
+test('Naver items are capped at 40 (newest first) before the Seoul cap and do not count toward it', () => {
+  assert.equal(NAVER_MAX, 40);
+  const naverProjects = Array.from({ length: 120 }, (_, i) => ({
+    id: `seoul-${5000 + i}`,
+    region: '서울',
+    kind: '재개발',
+    news: [{ title: `기사 ${i}`, outlet: '뉴시스', date: i < 60 ? '2026-11-09' : '2026-11-01', url: `https://www.newsis.com/${i}` }],
+  }));
+  const noticeProjects = Array.from({ length: 50 }, (_, i) => ({
+    id: `seoul-${1000 + i}`,
+    region: '서울',
+    kind: '재개발',
+    notices: [{
+      key: `n${i}`, name: `단지 ${i}`, announceDate: '2026-09-01', end: '2026-09-15', url: 'https://www.applyhome.co.kr/x', typeLabel: 'APT', stages: [],
+    }],
+  }));
+  const feed = buildFeed({ projects: [...naverProjects, ...noticeProjects], today });
+  const naver = feed.filter((i) => i.source.provider === 'naver');
+  assert.equal(naver.length, NAVER_MAX);
+  // 최신순: 11-09 기사 60건 중 40건만
+  assert.ok(naver.every((i) => i.date === '2026-11-09'));
+  assert.equal(feed.filter((i) => i.kind === '공고').length, 50);
+  // 서울 200건에 네이버는 세지 않는다: 공고 200건 + 네이버 40건
+  const many = Array.from({ length: 250 }, (_, i) => ({
+    id: `seoul-${7000 + i}`, region: '서울', kind: '재개발', notices: [{ key: `m${i}`, name: `단지 ${i}`, announceDate: '2026-09-01', end: '2026-09-15', url: 'https://www.applyhome.co.kr/x', typeLabel: 'APT', stages: [] }],
+  }));
+  const capped = buildFeed({ projects: [...naverProjects, ...many], today });
+  assert.equal(capped.filter((i) => i.kind === '공고').length, FEED_MAX);
+  assert.equal(capped.filter((i) => i.source.provider === 'naver').length, NAVER_MAX);
+});
+
+test('normalizeUrl matches m./www./tracking variants but keeps article ids in the query', () => {
+  const base = 'straightnews.co.kr/news/articleView.html?idxno=314854';
+  for (const url of [
+    'https://www.straightnews.co.kr/news/articleView.html?idxno=314854',
+    'http://m.straightnews.co.kr/news/articleView.html?idxno=314854&utm_source=naver&utm_medium=news',
+    'https://WWW.StraightNews.co.kr/news/articleView.html?idxno=314854#comments',
+    'https://mobile.straightnews.co.kr/news/articleView.html?fbclid=abc&idxno=314854',
+  ]) assert.equal(normalizeUrl(url), base, url);
+  assert.notEqual(normalizeUrl('https://www.straightnews.co.kr/news/articleView.html?idxno=314855'), base);
+  assert.equal(normalizeUrl('https://www.newsis.com/view/1/'), 'newsis.com/view/1');
+  assert.equal(normalizeUrl('not a url'), 'not a url');
+  // dropCoveredNaver가 이 비교값을 쓴다
+  const curated = { projectId: 'p', kind: '뉴스', source: { url: 'https://www.straightnews.co.kr/news/articleView.html?idxno=314854' } };
+  const naver = { projectId: 'p', kind: '뉴스', source: { url: 'https://m.straightnews.co.kr/news/articleView.html?idxno=314854&utm_source=naver', provider: 'naver' } };
+  const other = { projectId: 'p', kind: '뉴스', source: { url: 'https://m.straightnews.co.kr/news/articleView.html?idxno=314855', provider: 'naver' } };
+  assert.deepEqual(dropCoveredNaver([curated, naver, other]), [curated, other]);
 });

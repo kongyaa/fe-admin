@@ -1232,3 +1232,29 @@ test('Naver items show outlet/date and the 검색: NAVER credit; footer says new
   const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
   assert.ok(html.includes('"검색: NAVER" 표시 뉴스는 네이버 뉴스 검색으로 찾은 기사의 제목·언론사·날짜만 보여 주고 원문으로 연결'));
 });
+
+test('block card latest line never shows a Naver headline without attribution', () => {
+  const naver = (date, title, outlet = '뉴시스') => ({ date, kind: '뉴스', title, source: { title: outlet, url: 'https://a.com/n', provider: 'naver' } });
+  const own = (date, title) => ({ date, kind: '공고', title, source: { title: '청약홈', url: 'https://a.com/o', provider: null } });
+  const today = '2026-11-10';
+  assert.equal(app.blockLatestText([], today), '아직 모은 소식 없음');
+  assert.equal(app.blockLatestText(undefined, today), '아직 모은 소식 없음');
+  // 네이버가 더 최신이어도 네이버가 아닌 가장 최근 소식의 제목
+  assert.equal(app.blockLatestText([naver('2026-11-09', '헤드라인'), own('2026-10-30', '청약홈 공고: B-1')], today),
+    `최근 ${app.shortDate('2026-10-30', today)} 청약홈 공고: B-1`);
+  // 네이버 기사뿐이면 제목 없이 언론사와 표시
+  const onlyNaver = app.blockLatestText([naver('2026-11-09', '헤드라인')], today);
+  assert.equal(onlyNaver, `최근 ${app.shortDate('2026-11-09', today)} 뉴시스 기사 (검색: NAVER)`);
+  assert.ok(!onlyNaver.includes('헤드라인'));
+  assert.equal(app.blockLatestText([naver('2026-11-09', '헤드라인', null)], today), `최근 ${app.shortDate('2026-11-09', today)} 기사 (검색: NAVER)`);
+});
+
+test('town header basis reads "다음 블록 예상 근거 · 규칙: …" without doubling the label', () => {
+  const town = { windowLabel: '다음 블록 예상', windowBasis: '규칙: 접수 중인 공고(마감 2026-11-11) 뒤 0~2년' };
+  assert.equal(app.windowBasisNote(town), '다음 블록 예상 근거 · 규칙: 접수 중인 공고(마감 2026-11-11) 뒤 0~2년');
+  assert.equal(app.windowBasisNote({ windowBasis: '사업시행인가 뒤 2~4년' }), '예상 청약 근거 · 사업시행인가 뒤 2~4년');
+  assert.equal(app.windowBasisNote({ windowBasis: ' ' }), null);
+  assert.equal(app.windowBasisNote(null), null);
+  const sample = JSON.parse(readFileSync(new URL('../site/sample-projects.json', import.meta.url), 'utf8'));
+  for (const p of sample.projects) assert.ok(!String(p.windowBasis ?? '').startsWith(String(p.windowLabel ?? '-')), p.id);
+});
