@@ -13,6 +13,7 @@ import {
   sharedGainOf,
 } from './market-estimate.js';
 import { hasLhModels } from './lh-detail-map.js';
+import { lhTypeClass } from './lh-scope.js';
 import { lhRecommendPending, recommendForProfile, unapplicableReason } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
@@ -186,7 +187,8 @@ export async function evaluateLotto(notice, options) {
   const priced = await evaluatePrice(notice, { ...options, getModels });
   if (!options.profile) return priced;
   const unapplicable = unapplicableReason({ notice, models: modelsFailed ? null : models, profile: options.profile, config: options.config, today: options.today });
-  const evaluation = { ...priced, unapplicable };
+  // 추천 문구(v2 이름표 포함)는 판별 근거에만 붙인다. 카카오톡·긴급 알림의 짧은 근거는 붙이기 전 값으로 고정한다.
+  const evaluation = { ...priced, unapplicable, shortReason: priced.shortReason ?? priced.reason };
   // APT 주택형 조회가 실패하면 특별공급 세대를 몰라 저장된 추천을 그대로 둔다. 실행마다 추천이 바뀌지 않게 한다.
   if (notice.kind === 'apt' && modelsFailed) {
     const kept = '(추천: 조회 실패로 이전 값 유지)';
@@ -362,6 +364,8 @@ async function evaluateSharedGain(notice, shared, { config, today, getModels, ge
     ...(clear ? { clearMarket: true } : {}),
   });
   if (notice.kind === 'lh') {
+    // LH는 분양 유형(공공분양)만 시세를 본다. 보통 LH 판별과 같다(flags.priceCap은 분양 유형에만 켠다).
+    if (!notice.flags?.priceCap && lhTypeClass(notice, config.lh ?? {}) !== 'sale') return none('판별 대상 유형이 아님');
     const pending = LH_PENDING_REASONS[notice.lhDetailState];
     if (pending) return none(pending, { clear: false });
     if (!hasLhModels(notice.models)) {
@@ -385,13 +389,16 @@ async function evaluateSharedGain(notice, shared, { config, today, getModels, ge
     return none(why, { clear: !failed, averagePrice });
   }
   const margin = best.margin > 0 ? Math.round(best.margin * shared.factor) : best.margin;
-  const adjusted = margin !== best.margin ? ` ${eok(margin)}` : '';
+  const marginRate = marginRateOf(margin, best.price);
+  // 마진을 바꿨으면 머리말에 바꾼 마진과 마진율을 적고, 뒤의 보통 근거는 바꾸기 전 값이라 (조정 전)을 붙인다.
+  const adjusted = margin !== best.margin;
+  const head = adjusted ? `${sharedGainHead(shared)} ${eok(margin)}, 마진율 ${Number.isFinite(marginRate) ? `${Math.round(marginRate * 100)}%` : '없음'}` : sharedGainHead(shared);
   return {
     status: STATUS.OUT_OF_SCOPE,
-    reason: `${sharedGainHead(shared)}${adjusted}; ${priceText(best)}`,
+    reason: `${head}; ${adjusted ? '(조정 전) ' : ''}${priceText(best)}`,
     ...priceFields(best),
     margin,
-    marginRate: marginRateOf(margin, best.price),
+    marginRate,
     averagePrice,
     referenceMargin: true,
   };

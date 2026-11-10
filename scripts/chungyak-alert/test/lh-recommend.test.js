@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { mapLhSchedule } from '../src/lh-detail-map.js';
-import { evaluateLotto } from '../src/lotto.js';
+import { evaluateLotto, keepPreviousLotto } from '../src/lotto.js';
+import { selectInterest } from '../src/main.js';
+import { buildKakaoText } from '../src/notify-kakao.js';
 import { buildProperties } from '../src/notion-store.js';
 import { lhRecommendable, lhStageTracks, parseProfile, recommendForProfile, unapplicableReason } from '../src/recommend.js';
 
@@ -55,7 +57,7 @@ test('a v1 profile gets the matching LH special stage with the income note and n
   const result = recommend(lh(), v1(['신혼부부']));
   assert.equal(result.recommendation.track, '특별(신혼부부)');
   assert.equal(result.recommendation.date, '2026-11-09');
-  assert.equal(result.text, '추천: 신혼부부 특별공급 11/9 (1순위 일반공급 1순위 11/11도 가능); 소득·자산 기준 확인');
+  assert.equal(result.text, '추천: 신혼부부 특별공급 11/9 (1순위 일반공급 11/11도 가능); 소득·자산 기준 확인');
   assert.equal(result.recommendation.text, result.text);
   assert.equal(recommend(lh(), v1(['생애최초'])).recommendation.track, '특별(생애최초)');
 });
@@ -78,11 +80,11 @@ test('v2 applicants get labelled segments and the 신생아 applicant wins the s
   const result = recommend(lh(), profile);
   assert.equal(result.recommendation.track, '신청자B 특별(신생아)');
   assert.equal(result.recommendation.date, '2026-11-09');
-  assert.equal(result.text, '추천: 신청자A 생애최초 특별공급 11/9 (1순위 일반공급 1순위 11/11도 가능) / 신청자B 신생아 특별공급 11/9 (1순위 일반공급 1순위 11/11도 가능); 소득·자산 기준 확인');
+  assert.equal(result.text, '추천: 신청자A 생애최초 특별공급 11/9 (1순위 일반공급 11/11도 가능) / 신청자B 신생아 특별공급 11/9 (1순위 일반공급 11/11도 가능); 소득·자산 기준 확인');
   // 신혼부부 시점 요건의 확인 항목은 v2와 같다(공공분양은 미혼이어도 남기고 예비신혼부부 여부 확인).
   const engaged = recommend(lh(), v2([applicant('신청자A', { specialTracks: ['신혼부부'] })]));
   assert.equal(engaged.recommendation.track, '신청자A 특별(신혼부부)');
-  assert.equal(engaged.text, '추천: 신청자A 신혼부부 특별공급 11/9 (1순위 일반공급 1순위 11/11도 가능); 확인: 신청자A 예비신혼부부 여부; 소득·자산 기준 확인');
+  assert.equal(engaged.text, '추천: 신청자A 신혼부부 특별공급 11/9 (1순위 일반공급 11/11도 가능); 확인: 신청자A 예비신혼부부 여부; 소득·자산 기준 확인');
 });
 
 test('a 신혼희망타운 with 신혼부부 stages recommends 특별(신혼부부) for 신생아 or 신혼부부 tracks', () => {
@@ -110,7 +112,7 @@ test('a 신혼희망타운 with 신혼부부 stages recommends 특별(신혼부�
 test('without a matching special track an open 1순위 stage is recommended with the saving-amount note', () => {
   const none = recommend(lh(), v1([]));
   assert.deepEqual([none.recommendation.track, none.recommendation.date], ['1순위', '2026-11-11']);
-  assert.equal(none.text, '추천: 1순위 일반공급 1순위 11/11; 소득·자산 기준 확인; 공공분양 일반공급은 납입 인정 금액 순');
+  assert.equal(none.text, '추천: 1순위 일반공급 11/11; 소득·자산 기준 확인; 공공분양 일반공급은 납입 인정 금액 순');
   // 특별공급 접수가 끝났으면 1순위로 간다.
   assert.equal(recommend(lh(), v1(['신혼부부']), '2026-11-10').recommendation.track, '1순위');
   // 이름에 거주 구분이 있으면 신청자와 어긋나는 1순위 단계는 고르지 않는다(인천 거주자의 서울 공고는 기타지역).
@@ -123,17 +125,79 @@ test('without a matching special track an open 1순위 stage is recommended with
   assert.ok(mixed.text.endsWith('; 소득·자산 기준 확인; 공공분양 일반공급은 납입 인정 금액 순'), mixed.text);
 });
 
-test('무순위, 잔여 and 추가 stages are recommended as 무순위 when open', () => {
-  for (const label of ['무순위', '잔여세대', '추가모집']) {
+test('무순위 stages are recommended as 무순위, 잔여 and 추가 stages under their own label', () => {
+  for (const [label, track] of [['무순위', '무순위'], ['무순위 추가접수', '무순위'], ['잔여세대', '잔여세대'], ['추가모집', '추가모집'], ['일반공급 추가접수', '일반공급 추가접수']]) {
     const result = recommend(lh({ stages: schedule([[label, '2026.11.12']]) }), v1(['신혼부부']));
-    assert.equal(result.recommendation.track, '무순위', label);
-    assert.equal(result.text, '추천: 무순위 11/12; 소득·자산 기준 확인', label);
+    assert.equal(result.recommendation.track, track, label);
+    assert.equal(result.text, `추천: ${track} 11/12; 소득·자산 기준 확인`, label);
   }
   const v2Result = recommend(lh({ stages: schedule([['잔여세대', '2026.11.12']]) }), v2([applicant('신청자A'), applicant('신청자B')]));
-  assert.equal(v2Result.recommendation.track, '신청자A 무순위');
-  assert.equal(v2Result.text, '추천: 신청자A·신청자B 무순위 11/12; 소득·자산 기준 확인');
+  assert.equal(v2Result.recommendation.track, '신청자A 잔여세대');
+  assert.equal(v2Result.text, '추천: 신청자A·신청자B 잔여세대 11/12; 소득·자산 기준 확인');
   // 끝났으면 추천하지 않는다.
   assert.equal(recommend(lh({ stages: schedule([['잔여세대', '2026.11.03']]) }), v1([])).recommendation, null);
+});
+
+test('a 1순위 stage restricted to a special type is never the general fallback', () => {
+  // 신혼희망타운의 1순위·2순위 신혼부부 단계는 생애최초만 있는 신청자의 1순위가 아니다.
+  const town = lh({
+    typeLabel: '공공분양신혼희망 공공분양신혼희망',
+    stages: schedule([['신혼부부 1순위', '2026.11.09'], ['신혼부부 2순위', '2026.11.10']]),
+  });
+  assert.deepEqual(town.stages.map((stage) => stage.name), ['1순위 신혼부부', '2순위 신혼부부']);
+  assert.deepEqual(recommend(town, v1(['생애최초'])), { recommendation: null, text: null });
+  // 신혼부부 전형이면 그 1순위 단계가 신혼부부 단계이고, 같은 단계를 `…도 가능`으로 다시 적지 않는다.
+  const newlywed = recommend(town, v1(['신혼부부']));
+  assert.equal(newlywed.recommendation.track, '특별(신혼부부)');
+  assert.equal(newlywed.text, '추천: 신혼부부 특별공급 11/9; 소득·자산 기준 확인');
+
+  // 공공분양의 신혼부부 우선·일반공급은 특별공급이고, 전형이 없는 신청자는 진짜 일반공급 1순위 날짜다.
+  const sale = lh({ stages: schedule([['신혼부부 우선공급', '2026.11.09'], ['신혼부부 일반공급', '2026.11.10'], ['일반공급 1순위', '2026.11.12']]) });
+  assert.deepEqual(sale.stages.map((stage) => stage.name), ['특별공급 신혼부부 우선공급', '특별공급 신혼부부 일반공급', '1순위 일반공급']);
+  const general = recommend(sale, v1([]));
+  assert.deepEqual([general.recommendation.track, general.recommendation.date], ['1순위', '2026-11-12']);
+  const special = recommend(sale, v1(['신혼부부']));
+  assert.equal(special.text, '추천: 신혼부부 특별공급 11/9 (1순위 일반공급 11/12도 가능); 소득·자산 기준 확인');
+});
+
+test('a combined 해당지역·기타지역 1순위 stage is open to every residence', () => {
+  const combined = lh({ stages: schedule([['일반공급 1순위 해당지역·기타지역', '2026.11.11']]) });
+  assert.equal(recommend(combined, v1([])).recommendation.date, '2026-11-11');
+  assert.equal(recommend(combined, v1([], '서울')).recommendation.date, '2026-11-11');
+});
+
+test('a 신생아 track is not mapped to 신혼부부 stages when the 신혼부부 track fails its timing check', () => {
+  const town = lh({
+    typeLabel: '공공분양신혼희망 공공분양신혼희망',
+    stages: schedule([['신혼부부', '2026.11.09'], ['예비신혼부부', '2026.11.10']]),
+  });
+  // 혼인 7년이 지나 신혼부부 전형은 빠지고, 임신 중이라 신생아 전형은 남는다.
+  const old = v2([applicant('신청자A', { specialTracks: ['신혼부부', '신생아'], pregnant: true })], { married: true, marriageRegistered: '2018-01-01' });
+  assert.deepEqual(recommend(town, old), { recommendation: null, text: null });
+  // 신혼부부 전형이 없으면 신생아 전형으로 고른다.
+  const newborn = v2([applicant('신청자A', { specialTracks: ['신생아'], pregnant: true })], { married: true, marriageRegistered: '2018-01-01' });
+  assert.equal(recommend(town, newborn).recommendation.track, '신청자A 특별(신혼부부)');
+});
+
+test('the interest alert shows the LH v2 recommendation and the short reason never carries it', async () => {
+  const profile = v2([applicant('신청자A'), applicant('신청자B', { specialTracks: ['생애최초'] })]);
+  const evaluation = await evaluateLotto(lh({ stages: schedule([['잔여세대', today]]) }), { config, today, profile, getModels: async () => null, getTrades: async () => [] });
+  assert.equal(evaluation.recommendation.track, '신청자A 잔여세대');
+  const row = { id: 'p', key: 'LH-t1', name: '시험지구', interest: true, start: '2026-11-01', end: '2026-11-20', urgentDate: null, link: null, recommendTrack: evaluation.recommendation.track, recommendDate: evaluation.recommendation.date, recommendEnd: null };
+  const [item] = selectInterest([row], today);
+  assert.equal(item.stage.name, '신청자A 잔여세대');
+  assert.ok(buildKakaoText({ notice: item.notice, stage: item.stage, prefix: '[관심 청약]', verb: '오늘 접수' }).includes('신청자A 잔여세대'));
+
+  // 판별 불가로 이전 로또를 유지해도 카카오톡 짧은 근거에는 추천 문구와 이름표가 없다.
+  const sale = lh({ address: '서울특별시 강서구 마곡동', models: [{ houseType: '084A', area: 84, price: 100000, households: 10 }], stages: schedule([['생애최초', today]]) });
+  const undetermined = await evaluateLotto(sale, { config, today, profile, getModels: async () => null, getTrades: async () => [] });
+  assert.equal(undetermined.status, '판별 불가');
+  assert.ok(undetermined.reason.includes('신청자B'), undetermined.reason);
+  const kept = keepPreviousLotto(undetermined, '로또');
+  assert.equal(kept.status, '로또');
+  assert.ok(!kept.shortReason.includes('신청자') && !kept.shortReason.includes('추천'), kept.shortReason);
+  const text = buildKakaoText({ notice: { name: '시험지구', url: null }, stage: sale.stages[0], reason: kept.shortReason });
+  assert.ok(!text.includes('신청자'), text);
 });
 
 test('out-of-region applicants, failed detail lookups and non-sale LH notices get no recommendation', () => {
@@ -164,7 +228,7 @@ test('evaluateLotto attaches the LH recommendation and keeps the stored one when
   const ok = await evaluateLotto(lh({ address: '서울특별시 강서구' }), options);
   assert.equal(ok.recommendation.track, '특별(신혼부부)');
   assert.equal(ok.unapplicable, null);
-  assert.ok(ok.reason.endsWith('\n추천: 신혼부부 특별공급 11/9 (1순위 일반공급 1순위 11/11도 가능); 소득·자산 기준 확인'), ok.reason);
+  assert.ok(ok.reason.endsWith('\n추천: 신혼부부 특별공급 11/9 (1순위 일반공급 11/11도 가능); 소득·자산 기준 확인'), ok.reason);
   const props = buildProperties(lh(), ok, today);
   assert.equal(props['추천 전형'].select.name, '특별(신혼부부)');
   assert.deepEqual(props['추천 접수일'].date, { start: '2026-11-09' });

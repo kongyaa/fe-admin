@@ -118,19 +118,30 @@ export const cleanLhLabel = (value) => String(value ?? '').replace(/[^가-힣0-9
 // 청약 접수 대상(HS_SBSC_ACP_TRG_CD_NM)을 청약홈과 같은 앞부분을 가진 단계 이름으로 바꾼다. Notion의 특별공급 접수일, 1순위 접수일,
 // 2순위 접수일 열이 이 앞부분으로 채워지고, 같은 앞부분이 여럿이면 가장 이른 시작일이 쓰인다(notion-store의 buildProperties).
 // 1순위·2순위가 있으면 그 순위, 무순위·잔여·추가는 이름 그대로, 순위 없는 일반공급은 1순위, 그 밖의 이름(신혼부부, 다자녀, 생애최초 등 특별공급 유형)은 특별공급이다.
-// 이름은 버리지 않고 앞부분 뒤에 붙인다(`특별공급 신혼부부`). 이미 그 앞부분으로 시작하면 그대로 둔다. 이름이 없으면 `접수`다.
+// 특별공급 유형 단어(LH_SPECIAL_WORDS)가 있는 일반공급(`신혼부부 일반공급`)은 그 유형만의 접수라 1순위가 아니라 특별공급이다.
+// 이름은 버리지 않고 앞부분 뒤에 붙인다(`특별공급 신혼부부`). 이미 그 앞부분으로 시작하면 그대로 두고, 앞부분 단어가 이름 중간에 있으면
+// 그 단어(괄호 포함)를 빼고 앞에 둔다(`일반공급 1순위` → `1순위 일반공급`). 이름이 없으면 `접수`다.
 export function lhStageName(label) {
   const name = cleanLhLabel(label);
   if (!name) return '접수';
   const text = squash(name);
-  const prefixed = (prefix) => (text.startsWith(prefix) ? name : `${prefix} ${name}`);
+  const prefixed = (prefix) => {
+    if (text.startsWith(prefix)) return name;
+    const word = new RegExp(`\\(?${[...prefix].join('\\s*')}\\)?`, 'g');
+    const rest = name.replace(word, ' ').replace(/\s+/g, ' ').trim();
+    return rest ? `${prefix} ${rest}` : prefix;
+  };
   if (text.includes('1순위')) return prefixed('1순위');
   if (text.includes('2순위')) return prefixed('2순위');
   // 무순위·잔여·추가 접수는 특별공급이 아니라 이름 그대로 단계로 둔다(Notion 순위 열에 넣지 않는다).
   if (['무순위', '잔여', '추가'].some((word) => text.includes(word))) return name;
-  if (text.includes('일반')) return prefixed('1순위');
+  if (text.includes('일반') && !hasLhSpecialWord(text)) return prefixed('1순위');
   return prefixed('특별공급');
 }
+
+// 특별공급 유형을 가리키는 단어. 이 단어가 있는 단계는 일반공급 1순위가 아니다(src/recommend.js의 LH 1순위 추천도 쓴다).
+export const LH_SPECIAL_WORDS = ['신생아', '신혼', '생애최초', '다자녀', '노부모', '한부모', '기관추천', '청년'];
+export const hasLhSpecialWord = (value) => LH_SPECIAL_WORDS.some((word) => squash(value).includes(word));
 
 // 공급 일정(dsSplScdl) → 단계와 당첨자 발표일. 단계는 접수 기간(ACP_DTTM)이 있는 행마다 하나이고 시작일 순이다.
 // 당첨자 발표일은 행마다의 PZWR_ANC_DT 중 가장 늦은 날이다.

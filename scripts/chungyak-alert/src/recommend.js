@@ -1,6 +1,7 @@
 // 공고마다 지원할 전형과 그 접수일을 추천한다. 외부 호출과 입출력이 없는 순수 함수만 둔다.
 // 소득, 자산, 세대주 요건은 보지 않는다. 청약통장(민영 예치금)과 특별공급 시점 요건은 v2 신청자 정보가 있을 때만 대략 본다.
 // 사용자가 공고문으로 확인해야 한다.
+import { hasLhSpecialWord } from './lh-detail-map.js';
 import { lhTypeClass } from './lh-scope.js';
 import { restrictedKeywords, restrictedType } from './market-estimate.js';
 
@@ -496,33 +497,44 @@ function lhSpecialStage({ notice, track, household, today, newlywedTown }) {
   return stages.find((stage) => squash(stage.name).includes('예비신혼부부') === engaged) ?? stages[0] ?? null;
 }
 
-// 열린 1순위 단계. 이름에 해당지역·기타지역이 적혀 있으면 신청자의 거주 구분과 어긋나는 단계는 고르지 않는다.
+// 열린 일반공급 1순위 단계. 특별공급 유형 단어가 있는 1순위(신혼희망타운의 `1순위 신혼부부` 등)는 그 유형만의 접수라 고르지 않는다.
+// 이름에 해당·기타 중 하나만 적혀 있으면 신청자의 거주 구분과 어긋나는 단계는 고르지 않는다. 둘 다 있으면(`해당지역·기타지역`) 함께 받는 단계다.
 function lhRank1Stage({ notice, applicant, config, today }) {
   const local = residenceCategory(notice, applicant, config.recommendation) === '해당지역';
   const avoid = local ? '기타' : '해당';
-  return openStages(notice, today, (stage) => stage.name.startsWith('1순위') && !squash(stage.name).includes(avoid))[0] ?? null;
+  const mismatched = (text) => text.includes(avoid) && !(text.includes('해당') && text.includes('기타'));
+  const general = (stage) => stage.name.startsWith('1순위') && !hasLhSpecialWord(stage.name) && !mismatched(squash(stage.name));
+  return openStages(notice, today, general)[0] ?? null;
 }
+
+// 무순위·잔여·추가 단계의 짧은 이름. 무순위는 청약홈처럼 `무순위`, 잔여·추가는 단계 이름 그대로다(`잔여세대`, `추가모집`).
+const lhRemainderLabel = (stage) => (squash(stage.name).includes('무순위') ? REMAINDER_LABELS.무순위 : stage.name);
 
 // 신청자 한 명의 LH 후보(특별공급, 1순위, 무순위 순). 없으면 null이다. 모양은 applicantCandidate와 같고 units는 null이다.
 // 특별공급은 신청자 전형 중 열린 단계가 있는 것을 신생아, 신혼부부, 생애최초 순으로 고른다(같은 날 특별공급 순서와 같다).
 // 신혼희망타운은 신생아나 신혼부부 전형이 있으면 신혼부부 단계로 추천한다. checkTrack은 시점 요건 확인을 가져올 전형이다.
-function lhApplicantCandidate({ notice, applicant, household, tracks, config, today }) {
+// 신혼부부 전형이 시점 요건으로 빠졌으면(dropped) 신생아 전형으로 신혼부부 단계를 고르지 않는다.
+function lhApplicantCandidate({ notice, applicant, household, tracks, dropped, config, today }) {
   if (!eligibleRegion(notice, applicant)) return null;
   const newlywedTown = restrictedKeywords(notice, config.market).includes('신혼희망');
   const sources = new Map(tracks.map((track) => [track, track]));
-  if (newlywedTown && !sources.has('신혼부부') && sources.has('신생아')) sources.set('신혼부부', '신생아');
+  if (newlywedTown && !sources.has('신혼부부') && sources.has('신생아') && !dropped.includes('신혼부부')) sources.set('신혼부부', '신생아');
   const rank1 = lhRank1Stage({ notice, applicant, config, today });
-  const general = rank1 ? { track: rank1.name, stage: rank1 } : null;
   for (const track of SPECIAL_TRACKS) {
     if (!sources.has(track)) continue;
     const stage = lhSpecialStage({ notice, track, household, today, newlywedTown });
     if (stage) {
+      // 같은 단계를 `…도 가능`으로 다시 적지 않는다.
+      const general = rank1 && rank1 !== stage ? { track: rank1.name, stage: rank1 } : null;
       return { kind: 'special', specialTrack: track, checkTrack: sources.get(track), track: specialLabel(track), name: `${track} 특별공급`, date: stage.start, end: stage.end ?? null, units: null, general };
     }
   }
   if (rank1) return { kind: 'general', track: GENERAL_LABEL, name: rank1.name, date: rank1.start, end: rank1.end ?? null, category: null };
   const remainder = openStages(notice, today, isLhRemainderStage)[0];
-  if (remainder) return { kind: 'remainder', track: REMAINDER_LABELS.무순위, name: '무순위', date: remainder.start, end: remainder.end ?? null };
+  if (remainder) {
+    const label = lhRemainderLabel(remainder);
+    return { kind: 'remainder', track: label, name: label, date: remainder.start, end: remainder.end ?? null };
+  }
   return null;
 }
 
@@ -530,7 +542,8 @@ function lhApplicantCandidate({ notice, applicant, household, tracks, config, to
 function lhApplicantResult({ notice, applicant, household, config, today, index }) {
   const trackChecks = new Map(applicant.specialTracks.map((track) => [track, specialTrackCheck(track, { applicant, household, notice, today })]));
   const tracks = applicant.specialTracks.filter((track) => trackChecks.get(track).valid);
-  const candidate = lhApplicantCandidate({ notice, applicant, household, tracks, config, today });
+  const dropped = applicant.specialTracks.filter((track) => !trackChecks.get(track).valid);
+  const candidate = lhApplicantCandidate({ notice, applicant, household, tracks, dropped, config, today });
   if (!candidate) return null;
   const checks = candidate.kind === 'special' ? trackChecks.get(candidate.checkTrack).notes : [];
   return { applicant, index, candidate, remarks: [], checks: [...new Set(checks)] };

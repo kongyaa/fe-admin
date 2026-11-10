@@ -109,6 +109,18 @@ test('a negative margin is stored unchanged and 신혼희망타운 uses ×1.0 wi
   }
 });
 
+test('a shared-gain 청약홈 무순위 notice gets a reference margin instead of the remainder trigger', async () => {
+  const notice = apt({ kind: 'remainder', houseSecd: '04', name: '하남교산 신혼희망타운 무순위' });
+  const normal = await evaluate(apt({ kind: 'remainder', houseSecd: '04' }), { trades: saleRows(2200) });
+  assert.equal(normal.status, STATUS.LOTTO);
+  const result = await evaluate(notice, { trades: saleRows(2200) });
+  assert.equal(result.status, STATUS.OUT_OF_SCOPE);
+  assert.equal(result.margin, normal.margin);
+  assert.ok(result.reason.startsWith('참고 마진(신혼희망타운: 수익공유형 대출 조건 확인); 안전 마진'), result.reason);
+  assert.ok(!result.reason.includes('무순위·잔여세대'), result.reason);
+  assert.deepEqual(selectUrgent([{ notice, status: result.status, urgentDate: null }], today, config.alertRegions), []);
+});
+
 test('토지임대부 and 지분적립형 keep empty margins, and missing data clears a reference margin', async () => {
   for (const name of ['고덕강일 토지임대부', '광교 지분적립형']) {
     const result = await evaluate(apt({ name }), { trades: saleRows(2200) });

@@ -91,16 +91,22 @@ test('schedule rows map to applyhome stage names, unknown labels are kept and th
   assert.equal(lhStageName('특별공급(신혼부부)'), '특별공급(신혼부부)');
   assert.equal(lhStageName('신혼부부'), '특별공급 신혼부부');
   assert.equal(lhStageName('다자녀가구'), '특별공급 다자녀가구');
-  assert.equal(lhStageName('일반공급 1순위'), '1순위 일반공급 1순위');
+  assert.equal(lhStageName('일반공급 1순위'), '1순위 일반공급');
   assert.equal(lhStageName('1순위 해당지역'), '1순위 해당지역');
-  assert.equal(lhStageName('일반공급(1 순위)'), '1순위 일반공급(1 순위)');
+  assert.equal(lhStageName('일반공급(1 순위)'), '1순위 일반공급');
   assert.equal(lhStageName('2순위'), '2순위');
   assert.equal(lhStageName('무순위'), '무순위');
   assert.equal(lhStageName('잔여세대'), '잔여세대');
   assert.equal(lhStageName('추가 모집'), '추가 모집');
   assert.equal(lhStageName('일반공급 추가접수'), '일반공급 추가접수');
-  assert.equal(lhStageName('무순위 1순위'), '1순위 무순위 1순위');
+  assert.equal(lhStageName('무순위 1순위'), '1순위 무순위');
   assert.equal(lhStageName('일반공급'), '1순위 일반공급');
+  // 특별공급 유형 단어가 있는 일반공급은 그 유형의 특별공급이다. 앞부분 단어는 두 번 적지 않는다.
+  assert.equal(lhStageName('신혼부부 일반공급'), '특별공급 신혼부부 일반공급');
+  assert.equal(lhStageName('다자녀가구 특별공급'), '특별공급 다자녀가구');
+  assert.equal(lhStageName('일반공급(1순위) 해당지역'), '1순위 일반공급 해당지역');
+  assert.equal(lhStageName('신혼부부 1순위'), '1순위 신혼부부');
+  assert.equal(lhStageName('(1순위)'), '1순위');
   assert.equal(lhStageName('Extra<b>'), '접수');
   assert.equal(lhStageName(null), '접수');
 
@@ -115,8 +121,8 @@ test('schedule rows map to applyhome stage names, unknown labels are kept and th
   ], (field) => failed.push(field));
   assert.deepEqual(stages, [
     { name: '특별공급', start: '2026-12-01', end: '2026-12-03' },
-    { name: '1순위 일반공급 1순위', start: '2026-12-08', end: '2026-12-09' },
-    { name: '2순위 일반공급 2순위', start: '2026-12-10', end: '2026-12-10' },
+    { name: '1순위 일반공급', start: '2026-12-08', end: '2026-12-09' },
+    { name: '2순위 일반공급', start: '2026-12-10', end: '2026-12-10' },
     { name: '무순위 추가접수', start: '2026-12-15', end: '2026-12-15' },
   ]);
   assert.equal(winnerDate, '2026-12-27');
@@ -229,7 +235,7 @@ test('applying the detail replaces stages, overall dates, winner date and addres
   const { notice, scheduleParsed, modelsParsed } = applyLhDetail(listNotice(), { detail: detailBody(), supply: supplyBody() }, { lh: config.lh, onFail: (field) => failed.push(field) });
   assert.equal(scheduleParsed, true);
   assert.equal(modelsParsed, true);
-  assert.deepEqual(notice.stages.map((stage) => stage.name), ['특별공급', '1순위 일반공급 1순위', '2순위 일반공급 2순위']);
+  assert.deepEqual(notice.stages.map((stage) => stage.name), ['특별공급', '1순위 일반공급', '2순위 일반공급']);
   assert.equal(notice.overallStart, '2026-11-05');
   assert.equal(notice.overallEnd, '2026-11-10');
   assert.equal(notice.winnerDate, '2026-11-27');
@@ -350,8 +356,8 @@ test('LH notices without detail data, without a mapped address or of restricted 
 
 test('LH 나눔형 and 신혼희망타운 notices get a reference margin and stay 대상 외', async () => {
   for (const [extra, head, margin] of [
-    [{ name: '뉴:홈 마곡 나눔형 입주자모집공고' }, '참고 마진(차익 공유 유형, 내 몫 ×0.7) 5.6억; 안전 마진 8.0억', 56000],
-    [{ typeLabel: '분양주택 나눔형' }, '참고 마진(차익 공유 유형, 내 몫 ×0.7) 5.6억; 안전 마진 8.0억', 56000],
+    [{ name: '뉴:홈 마곡 나눔형 입주자모집공고' }, '참고 마진(차익 공유 유형, 내 몫 ×0.7) 5.6억, 마진율 56%; (조정 전) 안전 마진 8.0억', 56000],
+    [{ typeLabel: '분양주택 나눔형' }, '참고 마진(차익 공유 유형, 내 몫 ×0.7) 5.6억, 마진율 56%; (조정 전) 안전 마진 8.0억', 56000],
     [{ typeLabel: '공공분양신혼희망 공공분양신혼희망' }, '참고 마진(신혼희망타운: 수익공유형 대출 조건 확인); 안전 마진 8.0억', 80000],
   ]) {
     const { notice } = applyLhDetail(listNotice(extra), { detail: detailBody(), supply: supplyBody() }, { lh: config.lh });
@@ -373,6 +379,13 @@ test('LH 나눔형 and 신혼희망타운 notices get a reference margin and sta
   assert.equal(failed.status, STATUS.OUT_OF_SCOPE);
   assert.equal(failed.reason, '제한 유형(나눔형)은 로또 판별 대상이 아님; 참고 마진 없음(LH 상세 조회 실패)');
   assert.equal(failed.clearMarket, undefined);
+  // 이번에 모르는 것이어도 대상 외라 저장된 로또를 되살리지 않는다.
+  assert.equal(keepPreviousLotto(failed, STATUS.LOTTO).status, STATUS.OUT_OF_SCOPE);
+  // 분양 유형이 아닌 LH 공고는 시세를 보지 않는다.
+  const rental = applyLhDetail(listNotice({ name: '마곡 나눔형', typeLabel: '임대주택 국민임대' }), { detail: detailBody(), supply: supplyBody() }, { lh: config.lh }).notice;
+  const rentalResult = await evaluateLh(rental, trades(2200));
+  assert.equal(rentalResult.reason, '제한 유형(나눔형)은 로또 판별 대상이 아님; 참고 마진 없음(판별 대상 유형이 아님)');
+  assert.equal(rentalResult.margin, null);
   const noData = await evaluateLh(listNotice({ name: '마곡 나눔형', lhDetailState: 'ok' }), trades(2200));
   assert.equal(noData.reason, '제한 유형(나눔형)은 로또 판별 대상이 아님; 참고 마진 없음(LH 공급 정보 없음)');
   assert.equal(noData.clearMarket, true);
@@ -510,7 +523,7 @@ test('a full run gives an LH sale notice stages, models, an address and a priced
   const high = runHarness({ unit: 2200 });
   assert.equal(await run({ env: high.env, deps: high.deps }), 0);
   const [{ notice, evaluation, properties }] = high.state.upserts;
-  assert.deepEqual(notice.stages.map((stage) => [stage.name, stage.start, stage.end]), [['특별공급', '2026-11-05', '2026-11-06'], ['1순위 일반공급 1순위', '2026-11-09', '2026-11-09'], ['2순위 일반공급 2순위', '2026-11-10', '2026-11-10']]);
+  assert.deepEqual(notice.stages.map((stage) => [stage.name, stage.start, stage.end]), [['특별공급', '2026-11-05', '2026-11-06'], ['1순위 일반공급', '2026-11-09', '2026-11-09'], ['2순위 일반공급', '2026-11-10', '2026-11-10']]);
   assert.equal(notice.address, '서울특별시 강서구 마곡동 123-45 일원');
   assert.equal(notice.models.length, 1);
   assert.equal(evaluation.status, STATUS.LOTTO);
@@ -551,7 +564,7 @@ test('나눔형 and 신혼희망 LH notices are 대상 외 with a reference marg
   assert.equal(await run({ argv: ['--force-weekly'], env: h.env, deps: h.deps }), 0);
   assert.deepEqual(h.state.upserts.map((item) => [item.notice.key, item.evaluation.status]), [['LH-n1', STATUS.OUT_OF_SCOPE], ['LH-s1', STATUS.OUT_OF_SCOPE]]);
   const [shared, newlywed] = h.state.upserts;
-  assert.ok(shared.evaluation.reason.startsWith('참고 마진(차익 공유 유형, 내 몫 ×0.7) 5.6억; 안전 마진 8.0억'), shared.evaluation.reason);
+  assert.ok(shared.evaluation.reason.startsWith('참고 마진(차익 공유 유형, 내 몫 ×0.7) 5.6억, 마진율 56%; (조정 전) 안전 마진 8.0억'), shared.evaluation.reason);
   assert.ok(newlywed.evaluation.reason.startsWith('참고 마진(신혼희망타운: 수익공유형 대출 조건 확인); 안전 마진 8.0억'), newlywed.evaluation.reason);
   // Notion 열: 대상 외, 참고 마진, 마진율, 신뢰도, 추정 시세, 분양가가 채워진다.
   assert.equal(shared.properties['로또 여부'].select.name, '대상 외');
@@ -608,7 +621,7 @@ test('a full run recommends an LH track per applicant, writes the Notion columns
   // 같은 날 특별공급은 신혼부부가 생애최초보다 먼저다.
   assert.equal(sale.properties['추천 전형'].select.name, '을순 특별(신혼부부)');
   assert.deepEqual(sale.properties['추천 접수일'].date, { start: '2026-11-06' });
-  assert.ok(sale.evaluation.reason.endsWith('\n추천: 갑돌 생애최초 특별공급 11/6 (1순위 일반공급 1순위 11/9도 가능) / 을순 신혼부부 특별공급 11/6 (1순위 일반공급 1순위 11/9도 가능); 소득·자산 기준 확인'), sale.evaluation.reason);
+  assert.ok(sale.evaluation.reason.endsWith('\n추천: 갑돌 생애최초 특별공급 11/6 (1순위 일반공급 11/9도 가능) / 을순 신혼부부 특별공급 11/6 (1순위 일반공급 11/9도 가능); 소득·자산 기준 확인'), sale.evaluation.reason);
   assert.equal(sale.evaluation.status, STATUS.LOTTO);
   const town = byKey['LH-s1'];
   assert.equal(town.properties['로또 여부'].select.name, '대상 외');
