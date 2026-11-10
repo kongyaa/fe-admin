@@ -4,154 +4,396 @@
 #   여러 블록 기사는 한 건으로 'A9·A11'처럼 가운뎃점(·)으로 잇는다(모든 블록이 그 지구에 있어야 한다).
 # - date: 기사 날짜 YYYY-MM-DD, url: 기사 주소(http(s)), outlet: 매체 이름
 # - title: 기사 제목이 아니라 우리가 쓴 한 줄 요약. 기사에 적힌 사실만 쓰고 추정은 넣지 않는다.
+#   합쇼체 문장(…입니다/…했습니다.)으로 끝낸다. 지역 브리핑(briefs.js)이 이 요약을 문단에 그대로 옮긴다.
 # - local: 지역지(하남일보·하남Times 등)면 true. rental: 임대 블록 기사면 true(같은 블록의 분양 줄과 구분).
 # - kind: 비우면 뉴스. 공급 계획 보도는 일정으로 적을 수 있다.
-# 2026-11-10 조사 자료(구리갈매역세권·하남교산 조사 노트)에 출처와 날짜가 적힌 기사만 넣었다.
-asOf: "2026-11-10"
+# 2026-11-10 조사 자료(구리갈매역세권·하남교산 조사 노트)와 2026-11-11 조사 자료(남양주왕숙·남양주왕숙2·고양창릉·인천계양·부천대장·광명시흥
+# 조사 노트)에 출처와 날짜가 적힌 기사만 넣었다.
+asOf: "2026-11-11"
 items:
   # 구리갈매역세권
   - town: guri-galmae-station
     block: B-1
     date: "2026-11-08"
-    title: "84㎡ 평균 분양가 7억7,356만 원, 인근 갈매역아이파크 84㎡ 평균 8억9,300만 원(국토부 기준)과 비교. 소규모 단지·중도금 20% 자납·거주의무 3년은 단점으로 꼽음"
+    title: "84㎡ 평균 분양가는 7억7,356만 원으로, 기사는 인근 갈매역아이파크 84㎡ 평균 8억9,300만 원(국토부 기준)과 비교했습니다. 기사는 소규모 단지·중도금 20% 자납·거주의무 3년을 단점으로 들었습니다."
     outlet: 스트레이트뉴스
     url: https://www.straightnews.co.kr/news/articleView.html?idxno=314854
   - town: guri-galmae-station
     block: B-1
     date: "2026-11-03"
-    title: "신안인스빌 디센트 견본주택 10월 30일 개관. 특별공급 11월 9일, 1순위 10일, 2순위 11일, 당첨자 발표 17일"
+    title: "신안인스빌 디센트 견본주택은 10월 30일 개관했습니다. 특별공급 11월 9일, 1순위 10일, 2순위 11일, 당첨자 발표 17일입니다."
     outlet: 메트로신문
     url: https://www.metroseoul.co.kr/article/20261103500089
   - town: guri-galmae-station
     block: B-1
     date: "2026-11-02"
-    title: "최고 분양가 75㎡ 6억9,580만 원, 84㎡ 7억8,500만 원(모집공고 기준)"
+    title: "최고 분양가는 75㎡ 6억9,580만 원, 84㎡ 7억8,500만 원입니다(모집공고 기준)."
     outlet: 투어코리아
     url: https://www.tournews21.com/news/articleView.html?idxno=147323
   - town: guri-galmae-station
     block: A-1
     rental: true
     date: "2026-10-27"
-    title: "A-1 행복주택 609가구 공급, 11월 10~12일 접수. LH 4분기 공공임대 공급 계획에 포함"
+    title: "A-1 행복주택 609가구를 공급하고 11월 10~12일 접수합니다. LH 4분기 공공임대 공급 계획에 포함됐습니다."
     outlet: 메트로신문
     url: https://www.metroseoul.co.kr/article/20261027500075
   - town: guri-galmae-station
     date: "2026-10-15"
-    title: "(가칭)갈매역세권1초는 2027년 중앙투자심사, 2031년 개교 목표(구리남양주교육지원청 자료 인용)"
+    title: "(가칭)갈매역세권1초는 2027년 중앙투자심사, 2031년 개교가 목표입니다(구리남양주교육지원청 자료 인용)."
     outlet: 선데이뉴스신문
     url: https://www.newssunday.co.kr/news/view.php?no=254703
   - town: guri-galmae-station
     block: B-1
     date: "2026-10-05"
-    title: "B-1블록 신안인스빌 디센트 213가구 공급 예정, 분양가상한제 적용"
+    title: "B-1블록 신안인스빌 디센트 213가구를 공급할 예정이며 분양가상한제가 적용됩니다."
     outlet: 파이낸셜뉴스
     url: https://www.fnnews.com/news/202610021332429533
   - town: guri-galmae-station
     block: S-1
     kind: 일정
     date: "2026-05-06"
-    title: "S-1블록 734가구 우미린 2026년 하반기 공급 예정"
+    title: "S-1블록 734가구 우미린을 2026년 하반기에 공급할 예정입니다."
     outlet: 한국경제
     url: https://www.hankyung.com/article/2026050694481
   - town: guri-galmae-station
     date: "2026-04-23"
-    title: "GTX-B 갈매역 추가 정차: 구리시 자체 용역에서 B/C 1.0을 넘었다며 국토부에 재검증을 요청할 계획"
+    title: "GTX-B 갈매역 추가 정차: 구리시는 자체 용역에서 B/C 1.0을 넘었다며 국토부에 재검증을 요청할 계획입니다."
     outlet: 이코노미스트
     url: https://economist.co.kr/article/view/ecn202604230054
   - town: guri-galmae-station
     date: "2026-04-22"
-    title: "구리시, 갈매동 경춘선 약 3km 구간을 교통소음 관리지역으로 지정(GTX-B 개통 뒤 운행 증가 대비)"
+    title: "구리시가 갈매동 경춘선 약 3km 구간을 교통소음 관리지역으로 지정했습니다(GTX-B 개통 뒤 운행 증가 대비)."
     outlet: 뉴시스
     url: https://www.newsis.com/view/NISX20260422_0003601951
   - town: guri-galmae-station
     block: A-4
     date: "2026-02-06"
-    title: "A-4 공공분양 본청약 92가구에 1만71명 신청(109.47 대 1). 사전청약 당첨자 189명 중 149명이 본청약으로 전환"
+    title: "A-4 공공분양 본청약 92가구에 1만71명이 신청했습니다(109.47 대 1). 사전청약 당첨자 189명 중 149명이 본청약으로 전환했습니다."
     outlet: 한국경제
     url: https://www.hankyung.com/article/2026020697301
   # A-4 본청약 공고(2025-12-29, 공공분양 251·6년 분양전환 공공임대 310)는 청약홈 공고·분양 이력 소식으로 이미 보여 기사를 따로 넣지 않는다.
   - town: guri-galmae-station
     date: "2025-12-24"
-    title: "국토부, GTX-B 갈매역 추가 정차에 '사업타당성 부족' 통보(별내역과 1.4km 거리, 수요 등)"
+    title: "국토부가 GTX-B 갈매역 추가 정차에 '사업타당성 부족'을 통보했습니다(별내역과 1.4km 거리, 수요 등)."
     outlet: 뉴시스
     url: https://www.newsis.com/view/NISX20251224_0003454066
   - town: guri-galmae-station
     block: A-2
     rental: true
     date: "2025-12-04"
-    title: "A-2 공공임대 362가구 아파트 3공구 시공사 입찰, 금강주택 컨소시엄이 종합심사 1순위(최종 낙찰은 미확인)"
+    title: "A-2 공공임대 362가구 아파트 3공구 시공사 입찰에서 금강주택 컨소시엄이 종합심사 1순위에 올랐습니다(최종 낙찰은 미확인)."
     outlet: 헤럴드경제
     url: https://www.heraldk.com/article/2025120416454851370
   - town: guri-galmae-station
     block: A-1
     date: "2025-08-05"
-    title: "A-1 신혼희망타운 1,182가구 본청약 공급. 사전청약 당첨자 8월 11~12일, 신규 신청자 13~14일 접수"
+    title: "A-1 신혼희망타운 1,182가구를 본청약으로 공급합니다. 사전청약 당첨자는 8월 11~12일, 신규 신청자는 13~14일 접수입니다."
     outlet: 한국경제
     url: https://www.hankyung.com/article/2025080530681
 
   # 하남교산
   - town: hanam-gyosan
     date: "2026-10-27"
-    title: "송파하남선(3호선 연장) 공구별 시공사 선정 단계, 2공구는 남광토건 컨소시엄 수주 눈앞. 착공 2027년·개통 2032년 목표"
+    title: "송파하남선(3호선 연장)은 공구별 시공사 선정 단계이고, 2공구는 남광토건 컨소시엄 수주를 눈앞에 뒀습니다. 착공 2027년·개통 2032년이 목표입니다."
     outlet: 머니투데이방송
     url: https://news.mtn.co.kr/article/2026102715442934162
   - town: hanam-gyosan
     date: "2026-08-12"
-    title: "하남시의회, 송파하남선 조속 추진 촉구. 둔촌오륜역 연결 논의가 사업을 늦춰서는 안 된다는 입장"
+    title: "하남시의회가 송파하남선 조속 추진을 촉구했습니다. 둔촌오륜역 연결 논의가 사업을 늦춰서는 안 된다는 입장입니다."
     outlet: 서울신문
     url: https://m.go.seoul.co.kr/news/2026/08/12/20260812500136
   - town: hanam-gyosan
     date: "2026-08-04"
-    title: "교산3고(가칭) 교육부 중앙투자심사 통과, 2030년 3월 개교 목표. 교산 첫 고등학교"
+    title: "교산3고(가칭)가 교육부 중앙투자심사를 통과했고 2030년 3월 개교가 목표입니다. 교산 첫 고등학교입니다."
     outlet: 한국교육신문
     url: https://hangyo.com/mobile/article.html?no=108727
   - town: hanam-gyosan
     block: A5
     date: "2026-07-24"
-    title: "A5 사전청약 당첨자 대출 조건 갈등: 시의회가 나눔형 전용 모기지 원안 이행을 요구. 본청약 공고는 아직"
+    title: "A5 사전청약 당첨자 대출 조건 갈등: 시의회가 나눔형 전용 모기지 원안 이행을 요구했습니다. 본청약 공고는 아직 나지 않았습니다."
     outlet: 서울신문
     url: https://m.go.seoul.co.kr/news/2026/07/24/20260724500252
   - town: hanam-gyosan
     block: A5
     date: "2026-07-23"
-    title: "시의원들이 A5 본청약 공고 전 주민설명회와 나눔형 모기지 원안 유지를 요구(이 날까지 본청약 공고 전)"
+    title: "시의원들이 A5 본청약 공고 전 주민설명회와 나눔형 모기지 원안 유지를 요구했습니다(이 날까지 본청약 공고 전)."
     outlet: 오마이뉴스
     url: https://www.ohmynews.com/NWS_Web/View/at_pg.aspx?CNTN_CD=A0003253568
   - town: hanam-gyosan
     date: "2026-07-09"
-    title: "하남시, 교산 현안 해결 촉구: 하남 거주자 우선공급 30%→50% 상향 요청(확정 아님), 광역교통대책 변경 협의 중단 지적"
+    title: "하남시가 교산 현안 해결을 촉구했습니다. 하남 거주자 우선공급 30%→50% 상향을 요청했고(확정 아님), 광역교통대책 변경 협의 중단을 지적했습니다."
     outlet: 파이낸셜뉴스
     url: https://www.fnnews.com/news/202607091343262181
   - town: hanam-gyosan
     block: A3
     rental: true
     date: "2026-04-27"
-    title: "A3 통합공공임대 1,100가구(GH) 사업계획 승인(2026-04-23)"
+    title: "A3 통합공공임대 1,100가구(GH) 사업계획이 승인됐습니다(2026-04-23)."
     outlet: 글로벌이코노믹
     url: https://www.g-enews.com/article/General-News/2026/04/2026042710544162568fbfc802b3_1
   - town: hanam-gyosan
     block: A9·A11
     kind: 일정
     date: "2026-03-08"
-    title: "A9·A11 공공분양 2026년 하반기 공급 예정(교산 공급 로드맵 보도)"
+    title: "A9·A11 공공분양을 2026년 하반기에 공급할 예정입니다(교산 공급 로드맵 보도)."
     outlet: 하남일보
     url: http://m.hanamilbo.net/news/articleView.html?idxno=11888
     local: true
   - town: hanam-gyosan
     date: "2025-11-24"
-    title: "교산 39개 블록 중 16개 블록(1만4,339세대) 주택건설사업 승인"
+    title: "교산 39개 블록 중 16개 블록(1만4,339세대)이 주택건설사업 승인을 받았습니다."
     outlet: 시티뉴스
     url: http://www.ctnews.co.kr/39834
     local: true
   - town: hanam-gyosan
     block: A2
     date: "2025-05-09"
-    title: "A2 본청약 일반공급 201가구에 263.3 대 1, 특별공급 186가구에 134.5 대 1(사전청약 당첨자 몫 제외)"
+    title: "A2 본청약 경쟁률은 일반공급 201가구에 263.3 대 1, 특별공급 186가구에 134.5 대 1이었습니다(사전청약 당첨자 몫 제외)."
     outlet: 뉴시스
     url: https://mobile.newsis.com/view/NISX20250509_0003170095
   - town: hanam-gyosan
     block: A2
     date: "2025-03-31"
-    title: "A2 교산 푸르지오 더 퍼스트 본청약 분양가, 사전청약 추정가보다 약 17% 올라"
+    title: "A2 교산 푸르지오 더 퍼스트 본청약 분양가는 사전청약 추정가보다 약 17% 올랐습니다."
     outlet: 뉴시스
     url: https://www.newsis.com/view/NISX20250331_0003120514
+
+  # 남양주왕숙·남양주왕숙2
+  - town: namyangju-wangsuk
+    block: A-17
+    kind: 일정
+    date: "2026-11-02"
+    title: "A-17블록 '왕숙 한신더휴센텀' 전용 59㎡ 379가구를 11월에 분양할 예정입니다. 뉴:홈 나눔형에서 일반 공공분양으로 바뀌어 환매·이익공유 조건이 없고, 입주는 2029년 7월입니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202611020958356622
+  - town: namyangju-wangsuk
+    block: A19
+    date: "2026-09-22"
+    title: "A19블록(총 1,015가구, 사전청약 932가구) 본청약이 2027년 6월에서 2028년 6월로 1년 연기됐습니다. LH는 기존 거주자 이주·철거 지연을 이유로 들었고, 6개월 넘게 늦어지면 계약금을 10%에서 5%로 낮춥니다."
+    outlet: 데일리안
+    url: https://www.dailian.co.kr/news/view/1693479/
+  - town: namyangju-wangsuk2
+    block: A-1·A-3
+    date: "2026-05-01"
+    title: "A-1(왕숙 아테라)·A-3 본청약 공고가 4월 30일 났습니다. 84㎡ 평균 분양가는 A-1 6억9,363만 원, A-3 7억3,245만 원으로 사전청약 때보다 약 1억 원 올랐다고 보도됐습니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202605011304590529
+  - town: namyangju-wangsuk
+    date: "2026-01-19"
+    title: "국토부가 2025년 12월 왕숙지구 지구계획 변경을 승인했습니다. 진건지구 편입으로 기존 6만394가구보다 3,765가구 늘어납니다."
+    outlet: 한국경제
+    url: https://www.hankyung.com/article/2026011995911
+  - town: namyangju-wangsuk2
+    date: "2025-12-14"
+    title: "왕숙2 지구계획 변경(3차)이 승인됐습니다. 공원녹지를 약 3만㎡ 줄여 주택을 1만4,510가구에서 1만5,955가구로 1,445가구 늘리고, 주상복합 용적률 상한을 350%에서 445%로 올렸습니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202512141835516008
+  - town: namyangju-wangsuk
+    block: B-1·B-2
+    date: "2025-08-13"
+    title: "왕숙 푸르지오 더 퍼스트 사전청약 당첨자 846명 중 281명이 본청약을 포기해 일반공급이 76가구에서 357가구로 늘었습니다."
+    outlet: 뉴시스
+    url: https://www.newsis.com/view/NISX20250812_0003288124
+  - town: namyangju-wangsuk
+    block: A-1·A-2
+    date: "2025-08-06"
+    title: "A-1·A-2 사전청약 당첨자 698명 중 422명(약 60%)만 본청약을 신청했습니다. 입주 예정은 사전청약 때 2027년 3월에서 2028년 8월로 늦어졌습니다."
+    outlet: 시사저널e
+    url: https://www.sisajournal-e.com/news/articleView.html?idxno=414125
+  - town: namyangju-wangsuk2
+    block: A6
+    date: "2025-02-19"
+    title: "A6블록 공공분양 본청약이 2025년 12월에서 2027년 4월로 1년 4개월 연기됐습니다. LH는 지장물·문화재 확인과 보상·이주 지연을 이유로 들었습니다."
+    outlet: 서울경제
+    url: https://www.sedaily.com/article/14029822
+
+  # 고양창릉
+  - town: goyang-changneung
+    block: S2
+    kind: 일정
+    date: "2026-11-04"
+    title: "S-2블록 1,057가구 중 284가구를 12월에 지분적립형으로 공급할 예정입니다. 분양가의 25%만 내고 입주한 뒤 남은 지분을 나눠 취득합니다."
+    outlet: 메트로신문
+    url: https://www.metroseoul.co.kr/article/20261104500356
+  - town: goyang-changneung
+    block: A4·S5·S6
+    date: "2026-10-13"
+    title: "LH 사장이 첫마을(A4·S5·S6, 2,089세대) 현장을 점검했습니다. 공정률은 약 45%, 첫 입주는 2027년 12월이 목표입니다."
+    outlet: 이투데이
+    url: https://www.etoday.co.kr/news/view/2635230
+  - town: goyang-changneung
+    block: S3·S4
+    date: "2026-07-26"
+    title: "S3·S4 2,306가구 중 사전청약 몫은 1,659가구, 일반청약은 647가구입니다. S4 사전청약 당첨자들은 분양가가 추정가보다 최대 2억 원 올랐다고 반발했습니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202607260701051171
+  - town: goyang-changneung
+    block: S3
+    date: "2026-07-04"
+    title: "S-3 이익공유형 본청약 공고문에서 사전청약 때 안내한 나눔형 전용 주택담보대출(연 1.9~3.0%, 최장 40년)이 빠져 사전청약 당첨자들이 비대위를 구성했습니다."
+    outlet: 고양신문
+    url: https://www.mygoyang.com/news/articleView.html?idxno=89401
+    local: true
+  - town: goyang-changneung
+    block: S3·S4
+    date: "2026-06-30"
+    title: "S-3 이익공유형 1,282가구·S-4 공공분양 1,024가구 입주자 모집공고가 났습니다. S-4 84㎡ 분양가는 8억6,000만 원대, 일반청약은 7월 27~29일입니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202606301654356359
+  - town: goyang-changneung
+    block: S1
+    date: "2026-05-29"
+    title: "S-1 우미린 그레니티 일반공급 182가구에 1만1,135건이 접수됐습니다(평균 61.2 대 1, 84㎡A 113.7 대 1)."
+    outlet: 아시아경제
+    url: https://view.asiae.co.kr/article/2026052914074692177
+  - town: goyang-changneung
+    block: A4
+    rental: true
+    kind: 일정
+    date: "2026-03-11"
+    title: "LH 2026년 건설임대 공급계획에 고양창릉 A4 행복주택 297가구가 포함됐습니다."
+    outlet: 한국경제
+    url: https://www.hankyung.com/article/202603113989i
+  - town: goyang-changneung
+    block: S3·S4
+    date: "2025-08-19"
+    title: "S3·S4 본청약이 2026년 3월에서 6월로 3개월 연기됐습니다. LH는 지장물 이전 지연으로 문화재 발굴조사 등 후속 공정이 밀렸다고 설명했습니다."
+    outlet: SBS Biz
+    url: https://biz.sbs.co.kr/amp/article/20000254083
+
+  # 인천계양
+  - town: incheon-gyeyang
+    block: AC3·AC4
+    date: "2026-11-05"
+    title: "카이브 유보라 1·2순위에 AC3 474가구 436건(0.92대 1), AC4 392가구 381건(0.97대 1)이 접수됐습니다. 15개 주택형 중 11개가 공급보다 신청이 적었고, 84㎡ 최고 분양가는 8억2600만·8억2200만 원입니다."
+    outlet: 이투데이
+    url: https://www.etoday.co.kr/news/view/2644642
+  - town: incheon-gyeyang
+    block: A4·A5·A7·A15·A21
+    kind: 일정
+    date: "2026-11-05"
+    title: "지난 8월 공개된 공급 계획상 2027년 상반기에 A7(662)·A21(536)·A4(379)·A15(546)·A5(691) 5개 블록 2,814가구를 민간분양할 예정입니다."
+    outlet: 이투데이
+    url: https://www.etoday.co.kr/news/view/2644642
+  - town: incheon-gyeyang
+    date: "2026-10-05"
+    title: "A2·A3 1,285가구가 12월 첫 입주 예정입니다. 7701번 버스 10월 개통을 목표로 한 초기 6개 노선과 BRT·M버스 검토가 보도됐습니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202610011612036134
+  - town: incheon-gyeyang
+    block: A17
+    date: "2026-09-30"
+    title: "신혼희망타운 전용 55㎡ 단일이고 평균 분양가는 5억400만 원입니다. 사전청약 물량을 뺀 일반공급은 176가구이고 10월 26~27일 접수합니다."
+    outlet: 뉴스1
+    url: https://www.news1.kr/realestate/general/6306453
+  - town: incheon-gyeyang
+    block: A6
+    date: "2026-09-08"
+    title: "59A㎡ 확정 분양가는 5억3490만 원으로 사전청약 추정가 3억8262만 원보다 39.8% 올랐고, 84A㎡는 5억2770만 원에서 7억1433만 원으로 35.4% 올랐습니다."
+    outlet: 머니투데이방송
+    url: https://news.mtn.co.kr/news-detail/2026090716394098031
+  - town: incheon-gyeyang
+    block: AC2-1
+    rental: true
+    local: true
+    date: "2026-08-15"
+    title: "주상복합(오피스텔 373실) 계획이던 AC2-1블록을 보편형 공공임대 793가구(전용 60~85㎡)로 바꿨고, LH는 내년 중 착공이 목표입니다."
+    outlet: 경인일보
+    url: https://www.kyeongin.com/article/1769069
+  - town: incheon-gyeyang
+    date: "2026-07-28"
+    title: "인천시·계양구·LH·iH·경찰이 입주지원 TF 첫 회의를 열었습니다. 12월 A2·A3 1,285세대 입주에 대비한 초기 대중교통 운영안을 공유했고 입주 전까지 매월 점검합니다."
+    outlet: 데일리안
+    url: https://www.dailian.co.kr/news/view/1671902/
+  - town: incheon-gyeyang
+    local: true
+    date: "2026-03-03"
+    title: "A2·A3는 공정률 65%로 12월 입주 예정입니다. LH 인천본부는 올해 3개 블록 1,300가구를 착공할 계획입니다."
+    outlet: 경인일보
+    url: https://www.kyeongin.com/article/1759713
+
+  # 부천대장
+  - town: bucheon-daejang
+    block: A2
+    date: "2026-11-06"
+    title: "A2 부천대장 하우스토리 디센트(LH·남광토건 컨소시엄) 견본주택이 11월 13일 개관합니다. 548가구, 전용 59·74·84㎡, 지하 2층~지상 15층입니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202611061659481516
+  - town: bucheon-daejang
+    date: "2026-09-22"
+    title: "국토부 장관이 취임 첫 현장으로 방문했습니다. 2024년 12월 첫 주택을 착공했고, A5·A6 1,600가구가 2027년 11월 첫 입주 예정입니다."
+    outlet: SBS Biz
+    url: https://biz.sbs.co.kr/amp/article/20000336340
+  - town: bucheon-daejang
+    block: A1
+    rental: true
+    date: "2026-04-22"
+    title: "A1 통합공공임대 사업계획 변경이 승인됐습니다. 16개 동 중 1개 동 축소, 사업비 2,831억→3,239억 원(408억 증액), 사업기간 2030년 3월→2029년 1월입니다."
+    outlet: 헤럴드경제
+    url: https://www.heraldk.com/article/2026042217103952995
+  - town: bucheon-daejang
+    date: "2026-01-09"
+    title: "대장홍대선은 2025년 12월 15일 착공식을 열었고 2031년 개통이 목표입니다. 20.1km·12개 정거장, 총사업비 2조1,287억 원이며, 홍대까지 57분→27분으로 추정됩니다."
+    outlet: 한국경제
+    url: https://www.hankyung.com/article/202601051766i
+  - town: bucheon-daejang
+    date: "2026-01-05"
+    title: "정부가 공개한 A5·A6·A7·A8 공정률은 8~11%입니다. 2027·2028년 입주 예정이지만 현장에서는 2029~2030년 입주를 예상하는 목소리도 있다고 보도됐습니다."
+    outlet: 메트로신문
+    url: https://www.metroseoul.co.kr/article/20260105500023
+  - town: bucheon-daejang
+    date: "2025-12-15"
+    title: "LH가 대한항공·SK하이닉스·SK이노베이션·DN솔루션즈와 약 13만㎡·4,100억 원 규모 산업용지 매매계약을 맺었습니다."
+    outlet: 이투데이
+    url: https://www.etoday.co.kr/news/view/2536138
+  - town: bucheon-daejang
+    block: A7·A8
+    date: "2025-07-02"
+    title: "A7·A8 일반공급에 2만6,081명이 신청했습니다(평균 128 대 1). 당첨 하한 납입액은 A7 59형 2,430만~2,590만 원, A8 2,265만~2,505만 원입니다."
+    outlet: 뉴시스
+    url: https://mobile.newsis.com/view/NISX20250702_0003236563
+  - town: bucheon-daejang
+    block: A5·A6
+    date: "2025-05-16"
+    title: "e편한세상 대장 퍼스티움 본청약 670가구(사전청약 잔여 포함)에 1만4,951명이 신청해 평균 22.3 대 1, 최고 A6 55㎡ 39.5 대 1이었습니다."
+    outlet: 스마트투데이
+    url: https://www.smarttoday.co.kr/ko-kr/articles/80944
+
+  # 광명시흥
+  - town: gwangmyeong-siheung
+    date: "2026-09-29"
+    title: "LH 국회 제출 자료에 따르면 사유지 보상금은 약 15조436억 원(당초 알려진 금액보다 약 5조 원 증가), 현금 약 13조5천억·대토 약 1조1천억·채권 약 4,300억 원, 토지주 8,734명입니다."
+    outlet: SBS Biz
+    url: https://biz.sbs.co.kr/amp/article/20000337365
+  - town: gwangmyeong-siheung
+    date: "2026-09-02"
+    title: "협의보상 시작 약 한 달 만에 토지 소유자 수 기준 계약률은 약 27%, 보상금은 약 2조4천억 원입니다. LH는 보상 전담 인력을 1팀 21명에서 2팀 41명으로 늘렸고, 2027년 착공이 목표입니다."
+    outlet: SBS Biz
+    url: https://biz.sbs.co.kr/amp/article/20000332286
+  - town: gwangmyeong-siheung
+    date: "2026-07-14"
+    title: "LH가 7월 9일 협의보상 안내문을 보냈고, 7월 31일부터 연말까지 토지·지장물·영업권을 일괄 협의합니다(당초 11월에서 4개월 앞당김). 대상은 약 1만3천 명이고 2027년 말 착공이 목표입니다."
+    outlet: 파이낸셜뉴스
+    url: https://www.fnnews.com/news/202607140859105377
+  - town: gwangmyeong-siheung
+    date: "2026-05-24"
+    title: "토지 감정평가가 5월 19일 마무리돼 7월부터 보상에 착수합니다(당초 연말). 2027년 말 착공, 2029년 첫 분양, 2031년 최초 입주가 목표입니다."
+    outlet: 디지털타임스
+    url: https://www.dt.co.kr/article/12063975
+  - town: gwangmyeong-siheung
+    date: "2025-07-30"
+    title: "임병택 시흥시장이 LH에 보상계획 공고를 '2025년 9월 말'에서 '8월 말'로, 보상 개시를 '2026년 하반기'에서 '2026년 6월'로 앞당겨 달라고 건의했습니다."
+    outlet: 헤럴드경제
+    url: https://www.heraldk.com/article/2025073015162293642
+  - town: gwangmyeong-siheung
+    block: S1-10·B1-3
+    date: "2025-07-25"
+    title: "DL이앤씨 컨소시엄이 S1-10(일반형 1,568가구)·B1-3(나눔형 1,148가구) 민간참여 공공주택 우선협상대상자로 선정됐습니다. 총 2,716가구, 공사기간은 착공일부터 36개월입니다."
+    outlet: 서울경제
+    url: https://www.sedaily.com/article/14096538
+  - town: gwangmyeong-siheung
+    block: S2-4·S2-6
+    date: "2025-07-17"
+    title: "DL건설 컨소시엄이 S2-4(선택형 708가구)·S2-6(일반형 1,231가구) 민간참여 공공주택 우선협상대상자로 선정됐습니다. 사업비는 5,329억 원, 2031년 12월 착공·2034년 10월 준공 예정입니다."
+    outlet: 서울경제
+    url: https://www.sedaily.com/article/14093060

@@ -500,9 +500,13 @@ test('buildMap with real data files fills notices stages, calendar, feed, news, 
   assert.ok(data.feed.every((i) => i.source.url === null || /^https?:\/\//.test(i.source.url)));
   assert.equal(new Set(data.feed.map((i) => i.id)).size, data.feed.length);
 
-  assert.equal(data.watchlist.length, 8);
+  assert.equal(data.watchlist.length, 9);
+  // 지역 브리핑: 추적 중인 지구마다 하나, 출처 번호는 foot 안
+  for (const w of data.watchlist) assert.ok(data.briefs[w.projectId]?.headline, w.name);
+  assert.match(data.briefs['town-guri-galmae-station'].headline, /^구리갈매역세권, B-1 당첨 발표는 11월 17일$/);
+  assert.ok(data.watchlist.every((w) => w.tracked));
   assert.deepEqual(data.sources.curatedNews, {
-    asOf: '2026-11-10', count: data.sources.curatedNews.count, skipped: null, unmatched: 0,
+    asOf: '2026-11-11', count: data.sources.curatedNews.count, skipped: null, unmatched: 0,
   });
   assert.ok(data.sources.curatedNews.count > 0);
   assert.equal(data.sources.previous.skipped, null);

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import {
   NEWS_BUDGET_MS, NEWS_ENDPOINTS, NEWS_TIMEOUT_MS, cleanTitle, collectNews, createNewsClient, dedupe, keepRecent,
   namesOtherDistrict, newsDate, newsQuery, newsTargets, normalizeItem, normalizeNewsTitle, outletOf, relevant, seoulNewsName,
-  zoneName,
+  shadowKeys, zoneName,
 } from '../src/pipeline/news.js';
 
 const today = '2026-11-10';
@@ -147,6 +147,50 @@ test('relevance for towns uses name or noticeMatch', () => {
   assert.equal(relevant(item({ title: '구리 토평2지구 보상' }), topyeong), true);
   assert.equal(relevant(item({ title: '토평20단지' }), topyeong), false);
   assert.equal(relevant(item({ title: '하남교산 소식' }), town({ noticeMatch: undefined })), true);
+});
+
+// 남양주왕숙(왕숙1)과 남양주왕숙2는 다른 지구다. 가장 긴 지구 이름을 먼저 본다: '남양주왕숙2' 제목은 왕숙1 기사가 아니다.
+const wangsuk = town({
+  id: 'town-namyangju-wangsuk', name: '남양주왕숙', district: '남양주시', noticeMatch: ['왕숙A', '왕숙B', '왕숙S', '왕숙지구', '왕숙공공주택지구', '왕숙푸르지오', '왕숙한신더휴'],
+});
+const wangsuk2 = town({ id: 'town-namyangju-wangsuk2', name: '남양주왕숙2', district: '남양주시', noticeMatch: ['왕숙2', '왕숙아테라'] });
+
+test('town relevance prefers the longest town name (남양주왕숙2 is not 남양주왕숙)', () => {
+  const towns = [town(), wangsuk, wangsuk2, seoul()];
+  assert.deepEqual(shadowKeys(wangsuk, towns), ['남양주왕숙2']);
+  assert.deepEqual(shadowKeys(wangsuk2, towns), []);
+  assert.deepEqual(shadowKeys(town(), towns), []);
+  const one = { shadows: shadowKeys(wangsuk, towns) };
+  const two = { shadows: shadowKeys(wangsuk2, towns) };
+  const cases = [
+    ['남양주왕숙2 A-3 본청약 경쟁률 126.8대 1', false, true],
+    ['남양주 왕숙2 첫 공공분양 흥행', false, true],
+    ['남양주왕숙 B-17 경쟁률 109.6대 1', true, false],
+    ['남양주왕숙지구 A-1블록 본청약', true, false],
+    // 두 지구를 함께 말하면 둘 다
+    ['남양주왕숙·남양주왕숙2 착공식', true, true],
+    ['남양주왕숙2·남양주왕숙 보상', true, true],
+    ['하남교산 A2 입주', false, false],
+  ];
+  for (const [title, forOne, forTwo] of cases) {
+    assert.equal(relevant(item({ title }), wangsuk, one), forOne, `왕숙1: ${title}`);
+    assert.equal(relevant(item({ title }), wangsuk2, two), forTwo, `왕숙2: ${title}`);
+  }
+  // shadows 없이 부르면 예전처럼 이름만 본다
+  assert.equal(relevant(item({ title: '남양주왕숙2 A-3 본청약' }), wangsuk), true);
+});
+
+test('collectNews gives a 남양주왕숙2 headline only to 남양주왕숙2', async () => {
+  const both = [
+    raw({ title: '남양주왕숙2 A-3 본청약 경쟁률', originallink: 'https://www.newsis.com/w2', pubDate: 'Mon, 09 Nov 2026 10:00:00 +0900' }),
+    raw({ title: '남양주왕숙 B-17 본청약', originallink: 'https://www.newsis.com/w1', pubDate: 'Sun, 08 Nov 2026 10:00:00 +0900' }),
+  ];
+  const { fetch } = fakeFetch(() => Response.json(okBody(both)));
+  const result = await collectNews({
+    projects: [wangsuk, wangsuk2], client: createNewsClient({ fetch, env, sleep: noSleep }), today, sleep: noSleep,
+  });
+  assert.deepEqual(result.byId['town-namyangju-wangsuk'].map((x) => x.url), ['https://www.newsis.com/w1']);
+  assert.deepEqual(result.byId['town-namyangju-wangsuk2'].map((x) => x.url), ['https://www.newsis.com/w2']);
 });
 
 // 서울 구역명 -> 검색어와 제목 비교값(keys). link-notices.js의 zoneKey와 별개인 뉴스용 규칙이다.
@@ -332,6 +376,8 @@ test('collectNews filters, trims and isolates failures', async () => {
   });
   assert.equal(result.checked, 3);
   assert.equal(result.matched, 1);
+  // 검색이 성공한 사업만(기사가 없어도). 실패한 신길2는 빠진다
+  assert.deepEqual(result.searched, ['town-hanam-gyosan', 'seoul-sindang1']);
   assert.deepEqual(result.errors, ['news_http_500']);
   assert.equal(result.stopped, null);
   // 500은 한 번 재시도한다. 사업 사이에만 쉰다.
