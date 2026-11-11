@@ -183,7 +183,17 @@ export function selectWeekly(records, monday, sunday, alertRegions) {
     const weekStages = record.notice.stages
       .filter((stage) => stage.start <= sunday && (stage.end ?? stage.start) >= monday)
       .sort((a, b) => a.start.localeCompare(b.start));
-    if (weekStages.length > 0) items.push({ notice: record.notice, status: record.status, weekStages });
+    if (weekStages.length > 0) {
+      items.push({
+        notice: record.notice,
+        status: record.status,
+        weekStages,
+        // 확인 필요 항목을 주간 메일에 적는 데 쓴다. 이번 실행에서 판정하지 않은 공고는 값이 없다.
+        marginRate: record.marginRate ?? null,
+        confidence: record.confidence ?? null,
+        checkNote: record.checkNote ?? null,
+      });
+    }
   }
   return items.sort((a, b) => a.weekStages[0].start.localeCompare(b.weekStages[0].start));
 }
@@ -478,7 +488,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     lhDetailCounts = enriched.counts;
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, check_needed: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0 };
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
@@ -530,13 +540,15 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         evaluation = { status: STATUS.UNDETERMINED, reason: '판별 실패' };
       }
       // 시세로 로또·아님을 정한 LH 공고 수. 대상 외와 판별 불가(조회 실패, 추정 없음)는 세지 않는다. 이전 판별 유지 전 값으로 센다.
-      if (isLhItem(notice) && [STATUS.LOTTO, STATUS.NOT].includes(evaluation.status)) counts.lh_evaluated += 1;
+      if (isLhItem(notice) && [STATUS.LOTTO, STATUS.CHECK, STATUS.NOT].includes(evaluation.status)) counts.lh_evaluated += 1;
       // 추천한 LH 공고 수와 참고 마진(차익 공유 유형)을 적은 공고 수. 건수만 남긴다.
       if (isLhItem(notice) && evaluation.recommendation) counts.lh_recommended += 1;
       if (evaluation.referenceMargin) counts.reference_margin += 1;
       // dry-run도 읽어 둔 행의 이전 상태로 같은 보호를 적용해 일반 실행과 건수가 같게 한다.
       evaluation = keepPreviousLotto(evaluation, (previous ?? dryRunRows?.get(notice.key))?.lotto);
       counts.evaluated += 1;
+      // 확인 필요로 정한 공고 수. 긴급 알림은 가지 않으니 건수로만 남긴다.
+      if (evaluation.status === STATUS.CHECK) counts.check_needed += 1;
       if (evaluation.confidence) marketCounts[evaluation.confidence] += 1;
       if (evaluation.stationState) marketCounts[stationCountNames[evaluation.stationState]] += 1;
       if (evaluation.recommendation) recommendCounts.recommended += 1;
@@ -546,7 +558,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       marketCounts.complexOutliers += evaluation.complexOutliers ?? 0;
       // 계산 방식이 바뀌어 로또에서 빠진 공고가 몇 건인지 건수만 남긴다. dry-run은 읽어 둔 행으로 센다.
       const stored = previous ?? dryRunRows?.get(notice.key);
-      if (stored?.lotto === STATUS.LOTTO && [STATUS.NOT, STATUS.OUT_OF_SCOPE].includes(evaluation.status)) counts.lotto_demoted += 1;
+      if (stored?.lotto === STATUS.LOTTO && [STATUS.NOT, STATUS.CHECK, STATUS.OUT_OF_SCOPE].includes(evaluation.status)) counts.lotto_demoted += 1;
     }
     // 신청할 수 없는 공고(src/recommend.js의 unapplicableReason)는 저장하지 않고 로또·주간 알림에서도 뺀다. 건수와 사유 종류만 남긴다.
     // 관심을 체크한 행은 보통 공고처럼 갱신하고 로또·주간 알림도 그대로 둔다. 접수가 끝나면 주간 정리가 옮긴다.
@@ -570,6 +582,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       shortReason: evaluation?.shortReason ?? evaluation?.reason ?? null,
       urgentDate: previous?.urgentDate ?? null,
       pageId: previous?.id ?? null,
+      marginRate: evaluation?.marginRate ?? null,
+      confidence: evaluation?.confidence ?? null,
+      checkNote: evaluation?.checkNote ?? null,
       // 관심 체크로 남긴 신청할 수 없는 공고. --print 표시에만 쓴다.
       unapplicable,
     };
@@ -676,12 +691,13 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
 
   if (flags.dryRun) {
     const lotto = records.filter((record) => record.status === STATUS.LOTTO).length;
+    const checkNeeded = records.filter((record) => record.status === STATUS.CHECK).length;
     const urgent = selectUrgent(records, today, config.alertRegions);
     // Notion을 읽지 못한 dry-run은 후보를 알 수 없어 건수를 남기지 않는다.
     const interest = dryRunRows
       ? ` interest_candidates=${selectInterest([...interestRows.values()], today, new Set(urgent.map((record) => record.notice.key))).length}`
       : '';
-    log(`dry-run lotto=${lotto} urgent_candidates=${urgent.length}${interest}`);
+    log(`dry-run lotto=${lotto} check_needed=${checkNeeded} urgent_candidates=${urgent.length}${interest}`);
     // 휴지통으로 옮길 저장된 임대 행 수. Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run rental_archive_candidates=${rentalRows.length}`);
     // 휴지통으로 옮길 신청할 수 없는 공고의 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.

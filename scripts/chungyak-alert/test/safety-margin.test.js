@@ -678,7 +678,7 @@ test('the reason leads with the margin so the Kakao text keeps it, with terms re
   assert.ok(!result.reason.includes('차익'));
 });
 
-test('a price-rule 로또 needs at least 중 confidence; triggers do not', async () => {
+test('a price-rule 로또 needs at least 중 confidence; a trigger with a 하 estimate is 확인 필요 instead', async () => {
   const one = saleRows(5, 2500);
   const two = ['1', '2', '3', '4'].flatMap((n) => saleRows(5, 2500, { aptName: `비교단지${n}`, jibun: `10${n}` }));
   const weak = await evaluate(apt(), { trades: one });
@@ -691,7 +691,8 @@ test('a price-rule 로또 needs at least 중 confidence; triggers do not', async
   assert.equal(firm.confidence, '중');
   assert.equal(firm.status, STATUS.LOTTO);
   const trigger = await evaluate(apt({ flags: { priceCap: true, publicDistrict: false } }), { trades: one });
-  assert.equal(trigger.status, STATUS.LOTTO);
+  // 조건형 공고도 신뢰도 하 추정의 양수 마진은 로또가 아니라 확인 필요다.
+  assert.equal(trigger.status, STATUS.CHECK);
   assert.equal(trigger.confidence, '하');
   // 이미 로또였던 공고는 신뢰도 하인 결과로 빠지지 않는다.
   const kept = keepPreviousLotto(weak, STATUS.LOTTO);
@@ -869,7 +870,7 @@ test('a model outage across restricted notices is logged once per run and sends 
 test('the average price is recorded for triggered, priced and undetermined notices alike', async () => {
   const models = [{ houseType: '059A', area: 59, price: 40000, households: 100 }, { houseType: '084A', area: 84, price: 60000, households: 300 }];
   const triggered = await evaluate(apt({ flags: { priceCap: true, publicDistrict: false } }), { models, trades: saleRows(5, 1000) });
-  assert.equal(triggered.status, STATUS.LOTTO);
+  assert.equal(triggered.status, STATUS.CHECK);
   assert.equal(triggered.averagePrice, 55000);
   const priced = await evaluate(apt(), { models, trades: saleRows(5, 1000) });
   assert.equal(priced.averagePrice, 55000);
@@ -2031,7 +2032,7 @@ test('dry-run sends and archives nothing and logs only the candidate count', asy
   assert.ok(h.logs.includes('dry-run unapplicable_archive_candidates=1'), h.logs.join('|'));
   assert.ok(summaryOf(h).includes(' unapplicable_skipped=1 unapplicable_region=0 unapplicable_ended=1 unapplicable_archived=0 unapplicable_kept_interest=1'), summaryOf(h));
   // 뺀 8-8은 로또 후보가 아니고, 관심으로 남긴 9-9는 후보다.
-  assert.ok(h.logs.includes('dry-run lotto=2 urgent_candidates=2 interest_candidates=0'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run lotto=2 check_needed=0 urgent_candidates=2 interest_candidates=0'), h.logs.join('|'));
   // 로그에는 공고 이름이 없다.
   assert.ok(!h.logs.join('\n').includes('끝난공고단지'));
 });
@@ -2209,4 +2210,72 @@ test('config has every coefficient and SETUP says they are judgement starting va
   assert.ok(config.market.comparables.minStationShare > 0);
   assert.ok(config.market.adjustment.station.bands.every((band) => band.maxMinutes > 0));
   assert.equal(config.market.optionCostManwon, 1500);
+});
+
+// ---- 확인 필요: 조건형 공고의 근거가 약하면 카카오톡 없이 Notion과 주간 메일에만 남는다 ----
+
+// 비교 단지 4곳이 모두 같은 가격이라 신뢰도 중이다. 분양가 10억 기준 마진 = amount - 104800.
+const confidentTrades = (amount) => ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount }));
+const checkRow = (extra = {}) => aptRow({ PARCPRC_ULS_AT: 'Y', ...extra });
+
+test('a trigger notice with a thin 중 margin is 확인 필요: no Kakao, written to Notion, counted, and a stored 로또 is demoted', async () => {
+  const wasLotto = new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]]);
+  // 105,500 - 104,800 = 700만원(분양가의 0.7%)
+  const h = harness({ store: fakeStore(wasLotto), fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('105,500') }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(h.kakao.length, 0);
+  assert.equal(h.mails.filter((mail) => mail.subject.startsWith('[청약 긴급]')).length, 0);
+  assert.deepEqual(h.store.state.stamps, []);
+  const [{ evaluation, properties }] = h.store.state.upserts;
+  assert.equal(evaluation.status, '확인 필요');
+  assert.equal(evaluation.confidence, '중');
+  assert.deepEqual(properties['로또 여부'], { select: { name: '확인 필요' } });
+  assert.ok(properties['판별 근거'].rich_text[0].text.content.startsWith('분양가상한제 적용 해당이나 마진이 근소함(마진율 0.7% < 3%); '));
+  assert.ok(summaryLine(h).includes(' lotto_demoted=1 check_needed=1 '), summaryLine(h));
+  // 로그에는 건수만 있고 공고 이름이 없다.
+  assert.ok(!h.logs.join('\n').includes('비밀공고단지'));
+});
+
+test('a trigger notice with a 하 estimate from a wide scope is 확인 필요 and its reason says so', async () => {
+  // 읍·면 주소인데 같은 읍·면 거래가 없고 시군구의 비싼 단지 하나뿐이다. 마진율 +27.5%.
+  const row = checkRow({ SUBSCRPT_AREA_CODE_NM: '경기', HSSPLY_ADRES: '경기도 남양주시 오남읍 양지리 1' });
+  const farTrades = [tradeTags({ name: '합성먼단지', umd: '다산동', jibun: '9', amount: '132,300' })];
+  const h = harness({ fetch: worldFetch({ rows: [row], trades: farTrades }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(h.kakao.length, 0);
+  const [{ evaluation }] = h.store.state.upserts;
+  assert.equal(evaluation.status, '확인 필요');
+  assert.equal(evaluation.confidence, '하');
+  assert.ok(evaluation.reason.startsWith('분양가상한제 적용 해당이나 시세 근거가 약함(신뢰도 하, 비교 범위 확대(같은 읍·면 단지 없어 시군구)); '), evaluation.reason);
+  assert.ok(summaryLine(h).includes(' check_needed=1 '), summaryLine(h));
+});
+
+test('a firm trigger margin still alerts and is not counted as 확인 필요', async () => {
+  // 108,000 - 104,800 = 3200만원(3.2%)
+  const h = harness({ fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('108,000') }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(h.store.state.upserts[0].evaluation.status, '로또');
+  assert.equal(h.kakao.length, 1);
+  assert.ok(summaryLine(h).includes(' check_needed=0 '), summaryLine(h));
+});
+
+test('dry-run logs the 확인 필요 count with the candidate counts and sends nothing', async () => {
+  const h = harness({ store: null, fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('105,500') }).fetch, argv: ['--dry-run'] });
+  h.deps.store = undefined;
+  assert.equal(await run({ argv: h.argv, env: { DATA_GO_KR_KEY: DATA_SECRET }, deps: h.deps }), 0);
+  assert.equal(h.kakao.length, 0);
+  assert.ok(h.logs.includes('dry-run lotto=0 check_needed=1 urgent_candidates=0'), h.logs.join('|'));
+  assert.ok(!h.logs.join('\n').includes('비밀공고단지'));
+});
+
+test('the weekly mail carries the 확인 필요 section for a notice that got no alert', async () => {
+  const h = harness({ fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('105,500') }).fetch, argv: ['--force-weekly'] });
+  assert.equal(await run({ argv: h.argv, env: h.env, deps: h.deps }), 0);
+  assert.equal(h.kakao.length, 0);
+  const weekly = h.mails.find((mail) => mail.subject.includes('금주 일정'));
+  assert.ok(weekly, h.mails.map((mail) => mail.subject).join('|'));
+  assert.ok(weekly.html.includes('<h3>확인 필요(시세 근거 약함)</h3>'), weekly.html);
+  assert.ok(weekly.html.includes('비밀공고단지 (서울): 마진율 0.7%, 신뢰도 중, 분양가상한제 적용 해당이나 마진이 근소함(마진율 0.7% &lt; 3%)'), weekly.html);
+  assert.ok(!weekly.html.includes('<strong>[로또]</strong>'));
+  assert.ok(weekly.text.includes('[확인 필요] 비밀공고단지'));
 });

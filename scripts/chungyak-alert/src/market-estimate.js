@@ -472,7 +472,9 @@ export function selectComparables(complexes, subject, { market, lotto }) {
       // 가장 좁은 범위에 거래가 충분했는데 연식 때문에 넓혔으면 한 단계 내린다.
       const scopePenalty = scope !== scopes[0][0] && total(firstPool) >= lotto.minSamples;
       const townWide = Boolean(place.town) && scope === '시군구';
-      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge, scopePenalty, townWide };
+      // widened는 가장 좁은 범위가 아니라 넓힌 범위에서 비교 단지를 골랐다는 뜻이다. 연식 때문이든 거래가 모자라서든 같다.
+      const widened = scope !== scopes[0][0];
+      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge, scopePenalty, townWide, widened };
     }
   }
   return null;
@@ -550,6 +552,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       scope: scoped.scope,
       maxAge: scoped.maxAge,
       townWide: scoped.townWide,
+      widened: scoped.widened,
       // 근거의 금액은 공고 주택형 면적 기준이다. 작은 주택형의 ㎡당 가격을 84㎡로 늘리면 실제보다 비싸 보인다.
       area: model.area,
       outliers,

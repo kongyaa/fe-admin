@@ -296,10 +296,10 @@ test('an LH sale notice with models and an address is priced with the priceCap t
   assert.equal(none.averagePrice, 100000);
   // 이전 로또는 유지된다.
   assert.equal(keepPreviousLotto(none, STATUS.LOTTO).status, STATUS.LOTTO);
-  // 신뢰도 하 추정은 다른 조건형 공고처럼 로또다(놓치지 않게).
+  // 신뢰도 하 추정은 다른 조건형 공고처럼 양수 마진이어도 로또가 아니라 확인 필요다.
   const weak = await evaluateLh(notice, trades(2200).slice(0, 5));
   assert.equal(weak.confidence, '하');
-  assert.equal(weak.status, STATUS.LOTTO);
+  assert.equal(weak.status, STATUS.CHECK);
 });
 
 test('a failed or capped LH lookup is 판별 불가, missing data stays 대상 외', async () => {

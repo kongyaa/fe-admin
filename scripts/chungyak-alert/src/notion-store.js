@@ -64,7 +64,7 @@ const DB_SCHEMA = {
   [P.recommendDate]: { date: {} },
   [P.lotto]: {
     select: {
-      options: [{ name: '로또' }, { name: '아님' }, { name: '판별 불가' }, { name: '대상 외' }],
+      options: [{ name: '로또' }, { name: '아님' }, { name: '판별 불가' }, { name: '대상 외' }, { name: '확인 필요' }],
     },
   },
   [P.reason]: { rich_text: {} },

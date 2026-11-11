@@ -23,6 +23,8 @@ export const STATUS = {
   NOT: '아님',
   UNDETERMINED: '판별 불가',
   OUT_OF_SCOPE: '대상 외',
+  // 조건에는 해당하나 시세 근거가 약해 로또라고 보기 어려운 경우. 긴급 알림은 보내지 않고 주간 메일과 표에서만 알린다.
+  CHECK: '확인 필요',
 };
 
 const eok = (manwon) => {
@@ -226,6 +228,12 @@ const lowMinRateOf = (lotto) => {
   return typeof rate === 'number' && Number.isFinite(rate) && rate <= 0 ? rate : null;
 };
 
+// triggerMinMarginRate가 0 이상의 유한한 수일 때만 최소 마진율 규칙을 쓴다. 없거나 null이면 끈다(예전처럼 마진 0 이상이면 로또).
+const triggerMinRateOf = (lotto) => {
+  const rate = lotto.triggerMinMarginRate;
+  return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? rate : null;
+};
+
 // 판별 근거용 비율 표기. -0.05 → "-5%", -0.025 → "-2.5%".
 const ratePercent = (rate) => `${Math.round(rate * 1000) / 10}%`;
 
@@ -234,17 +242,28 @@ export function badTriggerConfig(lotto) {
   const checks = lotto.triggerPriceCheck;
   const maxRound = lotto.remainderMaxRound;
   const lowMinRate = lotto.lowConfidenceMinMarginRate;
+  const triggerMinRate = lotto.triggerMinMarginRate;
   return (checks !== undefined && !isPlainObject(checks))
     || (maxRound !== undefined && maxRound !== null && maxRoundOf(lotto) === null)
-    || (lowMinRate !== undefined && lowMinRate !== null && lowMinRateOf(lotto) === null);
+    || (lowMinRate !== undefined && lowMinRate !== null && lowMinRateOf(lotto) === null)
+    || (triggerMinRate !== undefined && triggerMinRate !== null && triggerMinRateOf(lotto) === null);
+}
+
+// 비교 범위를 넓혀 쓴 추정이면 판별 근거에 덧붙일 말. 읍·면 주소가 같은 읍·면 단지를 못 찾아 시군구로 넓힌 경우가 가장 위험하다.
+function scopeNote(basis) {
+  if (basis.kind !== 'comparables' || !basis.widened) return '';
+  return basis.townWide ? ', 비교 범위 확대(같은 읍·면 단지 없어 시군구)' : `, 비교 범위 확대(${basis.scope})`;
 }
 
 // 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다.
-// 신뢰도 중 이상 추정이 있으면 안전 마진 부호로 정한다(가격 기준을 넘으면 마진이 양수라 로또다).
-// 추정이 없거나 신뢰도 하이면 놓치지 않게 로또로 둔다. 다만 순서대로
-// 1) 신뢰도 하 추정이라도 가격 기준을 넘으면 놓치지 않게 로또다.
-// 2) 신뢰도 하 추정의 마진율이 lowConfidenceMinMarginRate(-5%) 이하로 뚜렷한 음수면 아님이다(lowConfidenceNegative).
-// 3) 무순위가 remainderMaxRound차 이상이면 아님이다(repeatedRound).
+// 시세 근거가 로또라고 말하기에 약하면 아님이 아니라 확인 필요다(STATUS.CHECK). 긴급 알림은 보내지 않는다.
+// 1) 신뢰도 중 이상 추정: 마진이 음수면 아님. 마진율이 triggerMinMarginRate(3%) 미만이면 추정 오차 안이라 확인 필요, 이상이면 로또다.
+// 2) 신뢰도 하 추정: 마진율이 lowConfidenceMinMarginRate(-5%) 이하로 뚜렷한 음수면 아님(lowConfidenceNegative).
+//    마진이 양수면 가격 기준과 상관없이 확인 필요다. 신뢰도 하 추정은 비교 범위가 넓어 과대 추정일 수 있어
+//    양수 마진만으로 로또라 하면 안 된다. 마진율이 -5%와 0 사이면 놓치지 않게 로또로 둔다.
+// 3) 추정이 없으면 놓치지 않게 로또로 둔다.
+// 4) 무순위가 remainderMaxRound차 이상이면 확인 필요가 될 공고도, 추정이 없거나 약한 공고도 아님이다(repeatedRound).
+//    신뢰도 중 이상에서 마진율이 기준을 넘는 로또만 차수와 상관없이 로또로 둔다.
 function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
   const { key, label } = trigger;
   const candidate = {
@@ -253,30 +272,10 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
     shortReason: best ? `${label}; ${shortPriceText(best)}` : label,
   };
   if (!priceCheckOn(lotto, key)) return candidate;
-  if (best && best.confidence !== CONFIDENCE.LOW) {
-    if (best.margin >= 0) return candidate;
-    return {
-      status: STATUS.NOT,
-      reason: `${label} 해당이나 시세 대비 이점 없음; ${priceText(best)}`,
-      shortReason: `${label} 해당이나 시세 이점 없음; ${shortPriceText(best)}`,
-    };
-  }
-  if (best && meetsPriceRule(best, lotto)) return candidate;
-  const lowMinRate = lowMinRateOf(lotto);
-  if (best && best.confidence === CONFIDENCE.LOW && lowMinRate !== null
-    && Number.isFinite(best.marginRate) && best.marginRate <= lowMinRate) {
-    const head = `${label} 해당이나 시세 대비 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
-    const shortHead = `${label} 해당이나 시세 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
-    return {
-      status: STATUS.NOT,
-      reason: `${head}; ${priceText(best)}`,
-      shortReason: `${shortHead}; ${shortPriceText(best)}`,
-      lowConfidenceNegative: true,
-    };
-  }
   const round = key === 'remainder' ? parseRemainderRound(notice.name) : null;
   const maxRound = maxRoundOf(lotto);
-  if (round !== null && maxRound !== null && round >= maxRound) {
+  const repeated = round !== null && maxRound !== null && round >= maxRound;
+  const repeatedResult = () => {
     const head = `${label} ${round}차 반복 공급`;
     return {
       status: STATUS.NOT,
@@ -284,7 +283,44 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
       shortReason: `${head}; ${best ? shortPriceText(best) : '시세 추정 없음'}`,
       repeatedRound: round,
     };
+  };
+  // 반복 공급이면 확인 필요 대신 아님이다. 같은 공고가 계속 나오는 무순위를 근거가 약한 채로 알리지 않는다.
+  // checkNote는 주간 메일의 확인 필요 항목에 쓰는 짧은 사유다. 마진과 신뢰도는 메일에서 따로 적는다.
+  const checkResult = (head) => (repeated ? repeatedResult() : {
+    status: STATUS.CHECK,
+    reason: `${head}; ${priceText(best)}`,
+    shortReason: `${head}; ${shortPriceText(best)}`,
+    checkNote: head,
+  });
+  if (best && best.confidence !== CONFIDENCE.LOW) {
+    if (best.margin < 0) {
+      return {
+        status: STATUS.NOT,
+        reason: `${label} 해당이나 시세 대비 이점 없음; ${priceText(best)}`,
+        shortReason: `${label} 해당이나 시세 이점 없음; ${shortPriceText(best)}`,
+      };
+    }
+    const minRate = triggerMinRateOf(lotto);
+    if (minRate !== null && Number.isFinite(best.marginRate) && best.marginRate < minRate) {
+      return checkResult(`${label} 해당이나 마진이 근소함(마진율 ${ratePercent(best.marginRate)} < ${ratePercent(minRate)})`);
+    }
+    return candidate;
   }
+  if (best) {
+    const lowMinRate = lowMinRateOf(lotto);
+    if (lowMinRate !== null && Number.isFinite(best.marginRate) && best.marginRate <= lowMinRate) {
+      const head = `${label} 해당이나 시세 대비 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
+      const shortHead = `${label} 해당이나 시세 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
+      return {
+        status: STATUS.NOT,
+        reason: `${head}; ${priceText(best)}`,
+        shortReason: `${shortHead}; ${shortPriceText(best)}`,
+        lowConfidenceNegative: true,
+      };
+    }
+    if (best.margin > 0) return checkResult(`${label} 해당이나 시세 근거가 약함(신뢰도 하${scopeNote(best.basis)})`);
+  }
+  if (repeated) return repeatedResult();
   return candidate;
 }
 
@@ -496,10 +532,10 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
 // 이번 판정이 불가이거나, 신뢰도 하인 추정이 가격 기준만으로 로또를 빼려 하면 이전 로또를 유지한다.
 // 약한 추정 하나로 알림이 조용히 사라지지 않게 하려는 것이다.
 // 신뢰도 중 이상 추정으로 아님이 된 조건형 공고는 그대로 뺀다. 무순위 반복 공급으로 아님이 된 공고도
-// 추정이 아니라 차수로 정한 것이라 유지하지 않는다(추정이 없을 때와 똑같이 뺀다). 반복 공급이라도
-// 가격 기준을 넘는 추정은 신뢰도 하여도 로또라 여기까지 오지 않는다.
+// 추정이 아니라 차수로 정한 것이라 유지하지 않는다(추정이 없을 때와 똑같이 뺀다). 확인 필요가 될 반복 공급도 같다.
 // 조건형 공고가 신뢰도 하 추정의 뚜렷한 음수 마진율(lowConfidenceNegative)로 아님이 된 것도 사용자 결정으로
 // 유지하지 않고 뺀다.
+// 확인 필요(STATUS.CHECK)도 시세로 정한 판정이라 유지하지 않는다. 유지하면 근거가 약한 로또가 계속 알림으로 나간다.
 export function keepPreviousLotto(evaluation, previousStatus) {
   if (previousStatus !== STATUS.LOTTO) return evaluation;
   const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE.LOW
