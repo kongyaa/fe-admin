@@ -758,3 +758,15 @@ test('a full run drops a stored 로또 when a 하 estimate is clearly negative',
   assert.equal(off.state.upserts[0].evaluation.status, STATUS.LOTTO);
   assert.ok(summaryOf(off).includes(' lotto_demoted=0 '), summaryOf(off));
 });
+
+test('an LH notice that evaluates to 확인 필요 is counted in lh_evaluated and sends no alert', async () => {
+  // 비교 단지 1곳(신뢰도 하)의 양수 마진
+  const h = runHarness({ unit: 2200, jibuns: ['a1'] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ evaluation, properties }] = h.state.upserts;
+  assert.equal(evaluation.status, STATUS.CHECK);
+  assert.equal(properties['로또 여부'].select.name, STATUS.CHECK);
+  assert.equal(h.kakao.length, 0);
+  assert.ok(summaryOf(h).includes(' lh_evaluated=1 '), summaryOf(h));
+  assert.ok(summaryOf(h).includes(' check_needed=1 '), summaryOf(h));
+});

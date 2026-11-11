@@ -1213,7 +1213,7 @@ test('weekly mail lists 확인 필요 in its own section apart from 로또, and 
         weekStages: week,
         marginRate: 0.275,
         confidence: '하',
-        checkNote: '무순위 해당이나 시세 근거가 약함(신뢰도 하, 비교 범위 확대)',
+        checkNote: '무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))',
       },
       { notice: notice({ key: 'c', name: '합성일반단지' }), status: '아님', weekStages: week },
     ],
@@ -1222,7 +1222,7 @@ test('weekly mail lists 확인 필요 in its own section apart from 로또, and 
   });
   // 별도 구역에 이름, 마진율, 신뢰도, 사유가 있다. HTML은 이스케이프한다.
   assert.ok(mail.html.includes('<h3>확인 필요(시세 근거 약함)</h3>'), mail.html);
-  assert.ok(mail.html.includes('<li>합성&lt;확인&gt;단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(신뢰도 하, 비교 범위 확대)</li>'), mail.html);
+  assert.ok(mail.html.includes('<li>합성&lt;확인&gt;단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))</li>'), mail.html);
   assert.ok(!mail.html.includes('<확인>'));
   // 구역은 목록 뒤, 면책 문구 앞이다. 로또와 섞이지 않는다.
   assert.ok(mail.html.indexOf('</table>') < mail.html.indexOf('확인 필요(시세 근거 약함)'));
@@ -1235,7 +1235,7 @@ test('weekly mail lists 확인 필요 in its own section apart from 로또, and 
   assert.ok(mail.text.includes('[로또] 합성로또단지'));
   assert.ok(mail.text.includes('[확인 필요] 합성<확인>단지'));
   assert.ok(mail.text.includes('확인 필요(시세 근거 약함)\n'));
-  assert.ok(mail.text.includes('- 합성<확인>단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(신뢰도 하, 비교 범위 확대)'));
+  assert.ok(mail.text.includes('- 합성<확인>단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))'));
   assert.ok(!mail.text.includes('- 합성로또단지'));
   assert.equal(mail.subject, '[청약] 금주 일정 2026-11-02 ~ 2026-11-08 (3건)');
 
@@ -1246,8 +1246,14 @@ test('weekly mail lists 확인 필요 in its own section apart from 로또, and 
     sunday: '2026-11-08',
   });
   assert.ok(!none.html.includes('확인 필요') && !none.text.includes('확인 필요'));
-  const sparse = buildWeeklyMail({ items: [{ notice: notice({ name: '합성빈값' }), status: '확인 필요', weekStages: week }], monday: '2026-11-02', sunday: '2026-11-08' });
-  assert.ok(sparse.html.includes('<li>합성빈값 (서울): 마진율 없음</li>'), sparse.html);
+  // 이번 실행에서 판정하지 않고 저장된 상태만 가져온 행(checkNote 없음)은 구역에 넣지 않는다. 목록의 표시는 그대로다.
+  const carried = buildWeeklyMail({ items: [{ notice: notice({ name: '합성이월' }), status: '확인 필요', weekStages: week, marginRate: null, confidence: null, checkNote: null }], monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(!carried.html.includes('<h3>') && !carried.html.includes('마진율 없음'), carried.html);
+  assert.ok(!carried.text.includes('마진율 없음') && !carried.text.includes('확인 필요(시세 근거 약함)'), carried.text);
+  assert.ok(carried.html.includes('[확인 필요] 합성이월'));
+  // 마진율과 신뢰도는 한 번만 적는다.
+  const once = buildWeeklyMail({ items: [{ notice: notice({ name: '합성일회' }), status: '확인 필요', weekStages: week, marginRate: 0.007, confidence: '중', checkNote: '사유' }], monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(once.html.includes('<li>합성일회 (서울): 마진율 0.7%, 신뢰도 중, 사유</li>'), once.html);
   const empty = buildWeeklyMail({ items: [], monday: '2026-11-02', sunday: '2026-11-08' });
   assert.ok(!empty.html.includes('확인 필요') && empty.html.includes('금주 수도권 접수 일정이 없습니다.'));
 });

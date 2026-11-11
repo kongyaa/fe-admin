@@ -4,6 +4,7 @@ import {
   badSharedGainConfig,
   buildSubject,
   cleanTrades,
+  effectiveConfidence,
   estimateBestMargin,
   lookupCandidates,
   marginRateOf,
@@ -11,6 +12,7 @@ import {
   meetsPriceRule,
   restrictedType,
   sharedGainOf,
+  triggerMinRateOf,
 } from './market-estimate.js';
 import { hasLhModels } from './lh-detail-map.js';
 import { lhTypeClass } from './lh-scope.js';
@@ -228,14 +230,11 @@ const lowMinRateOf = (lotto) => {
   return typeof rate === 'number' && Number.isFinite(rate) && rate <= 0 ? rate : null;
 };
 
-// triggerMinMarginRate가 0 이상의 유한한 수일 때만 최소 마진율 규칙을 쓴다. 없거나 null이면 끈다(예전처럼 마진 0 이상이면 로또).
-const triggerMinRateOf = (lotto) => {
-  const rate = lotto.triggerMinMarginRate;
-  return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? rate : null;
-};
-
 // 판별 근거용 비율 표기. -0.05 → "-5%", -0.025 → "-2.5%".
 const ratePercent = (rate) => `${Math.round(rate * 1000) / 10}%`;
+
+// 기준 미만임을 보이는 비율 표기. 소수 첫째 자리까지 내림해 2.96%가 "3% < 3%"로 찍히지 않게 한다.
+const floorPercent = (rate) => `${Math.floor(rate * 1000 + 1e-9) / 10}%`;
 
 // 있는데 형식이 틀린 조건형 설정. 예전 동작으로 돌아가므로 로그의 soft=bad_trigger_config로 알린다.
 export function badTriggerConfig(lotto) {
@@ -250,9 +249,10 @@ export function badTriggerConfig(lotto) {
 }
 
 // 비교 범위를 넓혀 쓴 추정이면 판별 근거에 덧붙일 말. 읍·면 주소가 같은 읍·면 단지를 못 찾아 시군구로 넓힌 경우가 가장 위험하다.
+// 더 좁은 범위를 실제로 볼 수 있었을 때만 적는다(basis.widened).
 function scopeNote(basis) {
-  if (basis.kind !== 'comparables' || !basis.widened) return '';
-  return basis.townWide ? ', 비교 범위 확대(같은 읍·면 단지 없어 시군구)' : `, 비교 범위 확대(${basis.scope})`;
+  if (basis.kind !== 'comparables' || !basis.widened) return null;
+  return basis.townWide ? '비교 범위 확대(같은 읍·면 단지 없어 시군구)' : `비교 범위 확대(${basis.scope})`;
 }
 
 // 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다.
@@ -264,6 +264,8 @@ function scopeNote(basis) {
 // 3) 추정이 없으면 놓치지 않게 로또로 둔다.
 // 4) 무순위가 remainderMaxRound차 이상이면 확인 필요가 될 공고도, 추정이 없거나 약한 공고도 아님이다(repeatedRound).
 //    신뢰도 중 이상에서 마진율이 기준을 넘는 로또만 차수와 상관없이 로또로 둔다.
+// 신뢰도는 분양권·역 정보 조회 실패로만 내려갔으면 내려가기 전 값으로 본다(effectiveConfidence). 조회 한 번 실패로
+// 중 신뢰도의 로또가 확인 필요가 되어 알림이 사라지지 않게 한다. 표시하는 신뢰도는 하 그대로다.
 function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
   const { key, label } = trigger;
   const candidate = {
@@ -286,25 +288,32 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
   };
   // 반복 공급이면 확인 필요 대신 아님이다. 같은 공고가 계속 나오는 무순위를 근거가 약한 채로 알리지 않는다.
   // checkNote는 주간 메일의 확인 필요 항목에 쓰는 짧은 사유다. 마진과 신뢰도는 메일에서 따로 적는다.
-  const checkResult = (head) => (repeated ? repeatedResult() : {
+  const checkResult = (head, note) => (repeated ? repeatedResult() : {
     status: STATUS.CHECK,
     reason: `${head}; ${priceText(best)}`,
     shortReason: `${head}; ${shortPriceText(best)}`,
-    checkNote: head,
+    checkNote: note,
   });
-  if (best && best.confidence !== CONFIDENCE.LOW) {
+  const level = best ? effectiveConfidence(best) : null;
+  // 조회 실패로 낮아진 신뢰도를 되돌려 판정했으면 판별 근거 끝에 밝힌다.
+  const lookupNote = best && level !== best.confidence ? `; 분양권·역 정보 조회 실패로 신뢰도를 ${best.confidence}로 낮췄으나 ${level} 기준으로 판정` : '';
+  if (best && level !== CONFIDENCE.LOW) {
     if (best.margin < 0) {
       return {
         status: STATUS.NOT,
-        reason: `${label} 해당이나 시세 대비 이점 없음; ${priceText(best)}`,
+        reason: `${label} 해당이나 시세 대비 이점 없음; ${priceText(best)}${lookupNote}`,
         shortReason: `${label} 해당이나 시세 이점 없음; ${shortPriceText(best)}`,
       };
     }
     const minRate = triggerMinRateOf(lotto);
     if (minRate !== null && Number.isFinite(best.marginRate) && best.marginRate < minRate) {
-      return checkResult(`${label} 해당이나 마진이 근소함(마진율 ${ratePercent(best.marginRate)} < ${ratePercent(minRate)})`);
+      const result = checkResult(
+        `${label} 해당이나 마진이 근소함(마진율 ${floorPercent(best.marginRate)} < ${ratePercent(minRate)})`,
+        `${label} 해당이나 마진이 근소함(최소 ${ratePercent(minRate)} 미만)`,
+      );
+      return result.status === STATUS.CHECK ? { ...result, reason: `${result.reason}${lookupNote}` } : result;
     }
-    return candidate;
+    return lookupNote ? { ...candidate, reason: `${candidate.reason}${lookupNote}` } : candidate;
   }
   if (best) {
     const lowMinRate = lowMinRateOf(lotto);
@@ -318,7 +327,13 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
         lowConfidenceNegative: true,
       };
     }
-    if (best.margin > 0) return checkResult(`${label} 해당이나 시세 근거가 약함(신뢰도 하${scopeNote(best.basis)})`);
+    if (best.margin > 0) {
+      const scope = scopeNote(best.basis);
+      return checkResult(
+        `${label} 해당이나 시세 근거가 약함(신뢰도 하${scope ? `, ${scope}` : ''})`,
+        `${label} 해당이나 시세 근거가 약함${scope ? `(${scope})` : ''}`,
+      );
+    }
   }
   if (repeated) return repeatedResult();
   return candidate;

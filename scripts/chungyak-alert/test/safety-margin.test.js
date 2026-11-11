@@ -2275,7 +2275,43 @@ test('the weekly mail carries the 확인 필요 section for a notice that got no
   const weekly = h.mails.find((mail) => mail.subject.includes('금주 일정'));
   assert.ok(weekly, h.mails.map((mail) => mail.subject).join('|'));
   assert.ok(weekly.html.includes('<h3>확인 필요(시세 근거 약함)</h3>'), weekly.html);
-  assert.ok(weekly.html.includes('비밀공고단지 (서울): 마진율 0.7%, 신뢰도 중, 분양가상한제 적용 해당이나 마진이 근소함(마진율 0.7% &lt; 3%)'), weekly.html);
+  assert.ok(weekly.html.includes('비밀공고단지 (서울): 마진율 0.7%, 신뢰도 중, 분양가상한제 적용 해당이나 마진이 근소함(최소 3% 미만)'), weekly.html);
   assert.ok(!weekly.html.includes('<strong>[로또]</strong>'));
   assert.ok(weekly.text.includes('[확인 필요] 비밀공고단지'));
+});
+
+test('a lookup failure does not demote a 중 trigger 로또: the alert still goes out, for a new notice and a stored 로또', async () => {
+  // 분양권 조회가 실패하면 신뢰도 중 추정이 하로 내려간다. 마진율 +10.2%인 분양가상한제 공고는 그래도 로또다.
+  const presaleDown = () => new Response('Forbidden', { status: 403 });
+  const wasLotto = () => new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]]);
+  for (const store of [fakeStore(), fakeStore(wasLotto())]) {
+    const h = harness({ store, fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('115,000'), presale: presaleDown }).fetch });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    const [{ evaluation }] = h.store.state.upserts;
+    assert.equal(evaluation.confidence, '하');
+    assert.equal(evaluation.status, '로또');
+    assert.equal(h.kakao.length, 1);
+    assert.ok(summaryLine(h).includes(' lotto_demoted=0 check_needed=0 '), summaryLine(h));
+  }
+});
+
+test('a 확인 필요 notice with 관심 checked still gets its interest alert, and no 로또 alert', async () => {
+  const row = { id: 'x', key: '7-7', lotto: '확인 필요', interest: true, urgentDate: null, start: THU, end: THU, name: '비밀공고단지' };
+  const h = harness({ store: fakeStore(new Map([['7-7', row]])), fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('105,500') }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(h.store.state.upserts[0].evaluation.status, '확인 필요');
+  assert.equal(h.kakao.length, 1);
+  assert.ok(h.kakao[0].text.startsWith('[관심 청약]'), h.kakao[0].text);
+  assert.ok(!h.kakao[0].text.startsWith('[로또 청약]'));
+  assert.deepEqual(h.store.state.stamps, [{ id: 'x', date: THU }]);
+});
+
+test('dry-run counts a stored 로또 that became 확인 필요 as demoted, from the rows it read', async () => {
+  const wasLotto = new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]]);
+  const h = harness({ store: fakeStore(wasLotto), fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('105,500') }).fetch, argv: ['--dry-run'] });
+  assert.equal(await run({ argv: h.argv, env: h.env, deps: h.deps }), 0);
+  assert.ok(summaryLine(h).includes(' lotto_demoted=1 check_needed=1 '), summaryLine(h));
+  assert.ok(h.logs.includes('dry-run lotto=0 check_needed=1 urgent_candidates=0 interest_candidates=0'), h.logs.join('|'));
+  assert.equal(h.kakao.length, 0);
+  assert.deepEqual(h.store.state.upserts, []);
 });
