@@ -15,6 +15,7 @@ import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } f
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
 import { parseProfile } from './recommend.js';
 import { isRental } from './rental.js';
+import { emptyScopeCounts, splitDuplicates, splitTableScope } from './table-scope.js';
 import { formatLhTypes, isLhItem, isUnknownLhRegion, isUnknownLhType, lhRegionLogLabel, lhScopeRule, lhTypeLogLabel, lhTypeRule, storedLhScopeRule } from './lh-scope.js';
 import {
   decodeServiceKey,
@@ -108,13 +109,16 @@ export function splitLhScope(notices, rows, config) {
     counts[`lh_out_of_scope_${reason}`] += 1;
   }
   const archiveRows = [];
+  // 이 정리가 다룬 키(범위 밖 공고와 행). 뒤 단계(표 범위, src/table-scope.js)가 같은 행을 다시 세거나 옮기지 않게 알려 준다.
+  const claimedKeys = new Set(outKeys);
   for (const row of rows.values()) {
     if (keptKeys.has(row.key)) continue;
     if (!outKeys.has(row.key) && !storedLhScopeRule(row, config)) continue;
+    claimedKeys.add(row.key);
     if (row.interest) counts.lh_out_of_scope_kept_interest += 1;
     else archiveRows.push(row);
   }
-  return { notices: kept, archiveRows, counts, saleRegions };
+  return { notices: kept, archiveRows, counts, saleRegions, claimedKeys };
 }
 
 export function selectUrgent(records, today, alertRegions) {
@@ -472,6 +476,23 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     existing.delete(row.key);
     dryRunRows?.delete(row.key);
   }
+  // 오피스텔·도시형(config.excludeUrbty)과 수도권 밖 공고(config.tableRegions)를 판별 전에 뺀다(src/table-scope.js). 관심 체크 행은 남긴다.
+  // 앞 단계가 다룬 행은 다시 세지 않고, 옮긴 행은 existing에서 빼 같은 행을 두 번 옮기지 않는다.
+  const tableScope = splitTableScope(lhScope.notices, dryRunRows ?? existing, config, lhScope.claimedKeys);
+  const urbtyRows = tableScope.archiveRows.urbty;
+  const regionRows = tableScope.archiveRows.region;
+  for (const row of [...urbtyRows, ...regionRows]) {
+    existing.delete(row.key);
+    dryRunRows?.delete(row.key);
+  }
+  // 청약홈과 LH에 함께 올라온 같은 공고는 정보가 많은 쪽 하나만 남긴다. 진 공고는 판별, 저장, 알림을 하지 않는다.
+  // LH 상세 조회 전에 하므로 상세 조회 상한 때문에 승자가 바뀌지 않는다. 관심 체크로 남긴 범위 밖 공고는 비교하지 않는다.
+  const duplicateScope = splitDuplicates(tableScope.notices, dryRunRows ?? existing, config, tableScope.keptOutKeys);
+  const duplicateRows = duplicateScope.archiveRows;
+  for (const row of duplicateRows) {
+    existing.delete(row.key);
+    dryRunRows?.delete(row.key);
+  }
   // LH 상세·공급 API로 범위 안 LH 공고의 일정, 주택형, 단지 주소를 덮는다(src/lh-detail-map.js). 접수가 끝난 공고는 부르지 않는다.
   // API마다 실행당 lh.detailMaxCalls까지 부르고, 모든 모드에서 읽기만 한다. 실패와 읽지 못한 값은 soft로만 세고 그 공고는 예전 동작이다.
   const lhDetail = createLhDetailClient({
@@ -482,10 +503,10 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     onSoft: addSoftError,
   });
   const lhShapes = createShapeLog(config.lh.labelLogWords);
-  let scopedNotices = lhScope.notices;
+  let scopedNotices = duplicateScope.notices;
   let lhDetailCounts = { lh_detail_ok: 0, lh_schedule_parsed: 0, lh_models_parsed: 0, lh_models_unattached: 0, lh_model_rows_merged: 0, lh_detail_capped: 0, lh_supply_capped: 0 };
   if (dataKey) {
-    const enriched = await enrichLhNotices(lhScope.notices, {
+    const enriched = await enrichLhNotices(duplicateScope.notices, {
       client: lhDetail,
       isTarget: (notice) => isLhItem(notice) && !lhScopeRule(notice, config) && !isClosedNotice(notice, today),
       lh: config.lh,
@@ -496,7 +517,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     lhDetailCounts = enriched.counts;
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, check_needed: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0, status_updated: 0, status_deferred: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, check_needed: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0, status_updated: 0, status_deferred: 0, ...emptyScopeCounts(), ...tableScope.counts, ...duplicateScope.counts };
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
@@ -713,6 +734,25 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
+  // 오피스텔·도시형, 수도권 밖, 중복에서 진 공고의 저장된 행을 휴지통으로 옮긴다. 관심 체크 행은 위에서 남겼고, 한 행은 한 목록에만 있다.
+  // 임대 행처럼 알림 뒤라 실패해도 발송을 막지 않는다. 오류에는 종류만 남긴다.
+  if (store) {
+    const scopeArchives = [
+      [urbtyRows, 'urbty_archived', 'urbty_archive_failed'],
+      [regionRows, 'region_scope_archived', 'region_scope_archive_failed'],
+      [duplicateRows, 'duplicate_archived', 'duplicate_archive_failed'],
+    ];
+    for (const [rows, countName, failKind] of scopeArchives) {
+      const { archived, failed, done } = await archivePages(store, rows, (error) => {
+        addError(failKind);
+        addError(safeError(error));
+      });
+      counts[countName] += archived;
+      done.forEach((id) => archivedIds.add(id));
+      if (failed > 0) notionFailed = true;
+    }
+  }
+
   // 신청할 수 없는 공고의 저장된 행을 휴지통으로 옮긴다. 이번 실행에 수집된 공고의 행만이고, 관심 체크 행은 위에서 남겼다.
   // 임대 행처럼 알림 뒤라 실패해도 발송을 막지 않는다.
   if (store) {
@@ -779,6 +819,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     if (dryRunRows) log(`dry-run unapplicable_archive_candidates=${unapplicableRows.length}`);
     // 휴지통으로 옮길 LH 범위 밖 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run lh_out_of_scope_archive_candidates=${lhScope.archiveRows.length}`);
+    // 휴지통으로 옮길 오피스텔·도시형, 수도권 밖, 중복 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
+    if (dryRunRows) log(`dry-run urbty_archive_candidates=${urbtyRows.length} region_scope_archive_candidates=${regionRows.length} duplicate_archive_candidates=${duplicateRows.length}`);
     // 접수 상태를 고칠 저장된 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run status_update_candidates=${statusUpdates.length}`);
   }

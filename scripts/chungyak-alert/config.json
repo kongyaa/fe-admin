@@ -1,5 +1,9 @@
 {
   "alertRegions": ["서울", "경기", "인천"],
+  "tableRegions": ["서울", "경기", "인천", "세종"],
+  "excludeUrbty": true,
+  "dedupeAcrossSources": true,
+  "duplicateToleranceDays": 3,
   "lookbackDays": 60,
   "excludeRental": true,
   "rentalKeywords": ["임대", "행복주택", "국민임대", "영구임대", "공공임대", "매입임대", "전세임대", "분양전환", "장기전세"],
