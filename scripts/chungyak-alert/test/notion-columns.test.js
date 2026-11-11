@@ -742,3 +742,89 @@ test('parseExistingPage reads 접수 상태 and ignores a same-named column of a
   assert.equal(parseExistingPage(page('k', { extra: { [STATUS_COLUMN]: { rich_text: [{ plain_text: '마감' }] } } })).receptionStatus, null);
   assert.equal(parseExistingPage(page('k')).receptionStatus, null);
 });
+
+// ---------- 접수 상태 갱신의 안전장치 ----------
+const baseConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+const withMarket = (market) => ({ ...baseConfig, market: { ...baseConfig.market, ...market } });
+const endedPages = (count) => Array.from({ length: count }, (_, index) => statusPage(`e${index}`, '2026-09-01', '2026-10-01', '접수 중'));
+const pagePatchCalls = (fake) => fake.calls.filter((call) => call.method === 'PATCH' && call.path.startsWith('/pages/'));
+
+for (const status of [503, 429]) {
+  test(`repeated ${status} on 접수 상태 patches stops after three failures, retries once, and still reaches the summary`, async () => {
+    const fake = notionFake({
+      pages: endedPages(10),
+      intercept: (call) => (call.method === 'PATCH' && call.path.startsWith('/pages/id-e') ? new Response('', { status }) : null),
+    });
+    const h = harness(fake, { rows: [remainderRow] });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    // 쪽당 시도 1번과 재시도 1번, 세 쪽에서 멈춘다.
+    const statusCalls = pagePatchCalls(fake).filter((call) => statusOnly(call));
+    assert.equal(statusCalls.length, 6, statusCalls.map((call) => call.path).join(','));
+    assert.equal(new Set(statusCalls.map((call) => call.path)).size, 3);
+    assert.equal(errorMail(h), undefined);
+    assert.deepEqual(h.kakao.map((message) => message.text.slice(0, 7)), ['[로또 청약]']);
+    assert.ok(summary(h).includes(' status_updated=0 status_deferred=7'), summary(h));
+    const marketLine = h.logs.find((line) => line.startsWith('market '));
+    assert.match(marketLine, /reception_status_failed:3/);
+    assert.match(marketLine, /reception_status_breaker:1/);
+    assert.ok(h.logs.includes('errors=none'));
+  });
+}
+
+test('접수 상태 patches per run are capped by market.statusUpdateMax and the rest wait for later runs', async () => {
+  const fake = notionFake({ pages: endedPages(5) });
+  const h = harness(fake, { config: withMarket({ statusUpdateMax: 2 }) });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(statusPatches(fake).length, 2);
+  assert.ok(summary(h).includes(' status_updated=2 status_deferred=3'), summary(h));
+  // 다음 실행은 이어서 고친다(고친 쪽은 이미 마감이다).
+  const next = notionFake({ pages: [...endedPages(5).slice(0, 2).map((item, index) => statusPage(`e${index}`, '2026-09-01', '2026-10-01', '마감')), ...endedPages(5).slice(2)] });
+  const h2 = harness(next, { config: withMarket({ statusUpdateMax: 2 }) });
+  await run({ env: h2.env, deps: h2.deps });
+  assert.equal(statusPatches(next).length, 2);
+});
+
+test('접수 상태 patches for the closed rows come first when the cap is tight', async () => {
+  const fake = notionFake({ pages: [statusPage('future', '2026-12-01', '2026-12-05', null), statusPage('ended', '2026-09-01', '2026-10-01', '접수 중')] });
+  const h = harness(fake, { config: withMarket({ statusUpdateMax: 1 }) });
+  await run({ env: h.env, deps: h.deps });
+  assert.deepEqual(statusPatches(fake).map((call) => call.path), ['/pages/id-ended']);
+});
+
+test('rows moved to the trash or left out of scope never get a 접수 상태 patch', async () => {
+  const rental = rentalWorld();
+  const h = harness(rental, rentalSources);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const trashed = archivedIds(rental);
+  assert.deepEqual(trashed, ['id-9-9', 'id-LH-old', 'id-LH-r1']);
+  const patched = statusPatches(rental).map((call) => call.path.replace('/pages/', ''));
+  for (const id of trashed) assert.ok(!patched.includes(id), id);
+  // 남은 저장 행은 고친다(상태 열이 비어 있던 행).
+  assert.ok(patched.includes('id-sale'), patched.join(','));
+
+  const lh = lhWorld();
+  const h2 = harness(lh, lhSources);
+  assert.equal(await run({ env: h2.env, deps: h2.deps }), 0);
+  const lhTrashed = archivedIds(lh);
+  assert.deepEqual(lhTrashed, ['id-LH-busan', 'id-LH-goyang']);
+  const lhPatched = statusPatches(lh).map((call) => call.path.replace('/pages/', ''));
+  for (const id of lhTrashed) assert.ok(!lhPatched.includes(id), id);
+  assert.ok(lhPatched.length > 0);
+});
+
+test('stored LH rows without stage dates only ever get 마감', async () => {
+  const lhPage = (key, start, end, extra = {}) => statusPage(key, start, end, null, { 소스: { select: { name: 'LH' } }, ...extra });
+  const fake = notionFake({
+    pages: [
+      lhPage('LH-ended', '2026-10-01', '2026-10-20'),
+      lhPage('LH-open-window', '2026-10-01', '2026-12-20'),
+      lhPage('LH-detail', '2026-10-01', '2026-12-20', { '1순위 접수일': { date: { start: '2026-11-02' } } }),
+    ],
+  });
+  const h = harness(fake);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(statusPatches(fake).map((call) => [call.path, call.body.properties[STATUS_COLUMN].select.name]), [
+    ['/pages/id-LH-ended', '마감'],
+    ['/pages/id-LH-detail', '접수 중'],
+  ]);
+});

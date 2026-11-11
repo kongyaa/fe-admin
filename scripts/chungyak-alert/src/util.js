@@ -191,8 +191,13 @@ export function firstStageDate(stages, prefix) {
   return starts[0] ?? null;
 }
 
+// 종료일이 없는 단계는 시작일을 종료일로 본다. 가장 늦은 종료일이 그렇게 채운 값이면(실제 종료일이 아님) endInferred를 켠다.
+// 접수 상태는 이 값으로 마감을 단정하지 않는다. 아니면 필드를 두지 않는다.
 export function withOverall(notice) {
+  const { endInferred: _stale, ...rest } = notice;
   const starts = notice.stages.map((stage) => stage.start).filter(Boolean).sort();
   const ends = notice.stages.map((stage) => stage.end ?? stage.start).filter(Boolean).sort();
-  return { ...notice, overallStart: starts[0] ?? null, overallEnd: ends.at(-1) ?? null };
+  const overallEnd = ends.at(-1) ?? null;
+  const inferred = overallEnd !== null && !notice.stages.some((stage) => stage.end && stage.end === overallEnd);
+  return { ...rest, overallStart: starts[0] ?? null, overallEnd, ...(inferred ? { endInferred: true } : {}) };
 }

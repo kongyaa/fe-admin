@@ -230,6 +230,8 @@ export function applyLhDetail(notice, { detail = null, supply = null }, { lh = {
     stages: scheduleParsed ? schedule.stages : notice.stages,
     flags: { ...notice.flags, priceCap: lhTypeClass(notice, lh) === 'sale' },
   };
+  // 상세 일정을 읽었으면 시작일은 접수 시작일이다. 목록의 공고일~마감일 대체가 아니다.
+  if (scheduleParsed) delete next.windowFromList;
   if (modelsAttached) next.models = mapped.models;
   else if (modelsParsed) next.lhModelsUnattached = true;
   return { notice: withOverall(next), scheduleParsed, modelsParsed, modelsAttached, merged: mapped.merged };

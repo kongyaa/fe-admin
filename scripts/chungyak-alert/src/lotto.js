@@ -205,7 +205,15 @@ export async function evaluateLotto(notice, options) {
     if (!models) modelsFailed = true;
     return models;
   };
-  const priced = await evaluatePrice(notice, { ...options, getModels });
+  // 분양가 사실 조회는 신청할 수 없어 저장하지 않을 공고에는 하지 않는다(관심 체크 행은 예외). 이 경로에서는 판정용 주택형을 읽지 않았으므로
+  // 주택형을 모르는 것으로 본 판단과 아래의 unapplicable이 같다.
+  const getFactModels = options.getFactModels && options.profile
+    ? async (target) => {
+      const dropped = unapplicableReason({ notice: target, models: null, profile: options.profile, config: options.config, today: options.today });
+      return dropped && !options.interest ? null : options.getFactModels(target);
+    }
+    : options.getFactModels;
+  const priced = await evaluatePrice(notice, { ...options, getModels, getFactModels });
   if (!options.profile) return priced;
   const unapplicable = unapplicableReason({ notice, models: modelsFailed ? null : models, profile: options.profile, config: options.config, today: options.today });
   // 추천 문구(v2 이름표 포함)는 판별 근거에만 붙인다. 카카오톡·긴급 알림의 짧은 근거는 붙이기 전 값으로 고정한다.
@@ -401,7 +409,7 @@ async function estimateNotice(notice, models, { config, today, getTrades, getPre
 const priceFields = (best) => ({
   topPrice: best.price,
   // 안전 마진과 최고 분양가를 정한 주택형의 전용면적(㎡)
-  judgedArea: best.area ?? null,
+  judgedArea: Number.isFinite(best.area) ? Math.round(best.area * 100) / 100 : null,
   estimate: best.estimate,
   margin: best.margin,
   marginRate: best.marginRate,

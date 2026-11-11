@@ -55,15 +55,23 @@ export function priceFactsOf(models, averagePriceOf) {
   };
 }
 
-// 판정에 쓰지 않는 분양가 조회용 주택형 조회. 실행당 budget건까지만 부르고(공고 하나는 한 번), 넘으면 onExceeded를 부르고 null을 돌려준다.
-// budget이 0 이상의 정수가 아니면 기능을 끈 것으로 보고 조회도 건수도 남기지 않는다. 같은 공고는 다시 부르지 않는다.
-export function createFactLookup({ getModels, budget, onExceeded = () => {} }) {
+// 판정에 쓰지 않는 분양가 조회용 주택형 조회. 실행당 budget건과 첫 조회부터 budgetMs까지만 부르고(공고 하나는 한 번),
+// 넘으면 onExceeded(건수)나 onTimeExceeded(시간)를 부르고 null을 돌려준다.
+// skip(notice)가 true인 공고(이미 분양가를 채운 저장된 행)는 부르지 않고 한도에도 세지 않는다.
+// budget이 0 이상의 정수가 아니면 기능을 끈 것으로 보고 조회도 건수도 남기지 않는다. budgetMs가 없으면 시간은 제한하지 않는다.
+export function createFactLookup({ getModels, budget, budgetMs = null, now = () => new Date(), skip = () => false, onExceeded = () => {}, onTimeExceeded = () => {} }) {
   if (!Number.isInteger(budget) || budget < 0) return async () => null;
   const cache = new Map();
   let used = 0;
+  let startedAt = null;
   return async (notice) => {
     if (cache.has(notice.key)) return cache.get(notice.key);
-    if (!notice.mdlOp) return null;
+    if (!notice.mdlOp || skip(notice)) return null;
+    startedAt ??= now().getTime();
+    if (Number.isFinite(budgetMs) && now().getTime() - startedAt > budgetMs) {
+      onTimeExceeded();
+      return null;
+    }
     if (used >= budget) {
       onExceeded();
       return null;

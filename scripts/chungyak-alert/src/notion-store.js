@@ -1,4 +1,4 @@
-import { receptionStatus } from './reception.js';
+import { statusFor } from './reception.js';
 import { AppError, defaultSleep, fetchWithRetry, firstStageDate, safeHttpUrl } from './util.js';
 
 const API = 'https://api.notion.com/v1';
@@ -90,6 +90,11 @@ const numberProp = (value) => (Number.isFinite(value) ? { number: value } : unde
 const selectProp = (value) => (value ? { select: { name: String(value).replace(/,/g, ' ').slice(0, 100) } } : undefined);
 const textProp = (value) => (value ? { rich_text: text(value) } : undefined);
 
+// 이번 판정에 마진이 없고(추정 실패, 조회 실패 등) 추정 값을 지우지도 않는데 저장된 행에 판단 주택형이나 마진이 있으면,
+// 최고 분양가는 그 주택형의 값이라 모든 주택형의 최고 분양가로 덮지 않는다. 마진과 판단 주택형을 함께 지우는 것보다 덜 건드리는 쪽이다.
+const keepsJudgment = (evaluation, existing) => Boolean(evaluation) && !evaluation.clearMarket && !Number.isFinite(evaluation.margin)
+  && (Number.isFinite(existing?.judgedArea) || Number.isFinite(existing?.margin));
+
 // 값이 없는 속성은 보내지 않아 기존 값을 지우지 않는다. 긴급 알림 발송일과 사용자가 입력하는 관심, 역 도보(분)은 여기서 쓰지 않는다.
 // 제한 유형은 clearMarket으로 저장된 추정 값을 명시적으로 지운다.
 // existing은 저장된 행이다. 공고에 날짜가 없으면 저장된 날짜로 접수 상태를 계산한다(날짜 열도 값이 없으면 저장된 값을 둔다).
@@ -107,7 +112,7 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
     [P.rank1]: dateProp(firstStageDate(notice.stages, '1순위')),
     [P.rank2]: dateProp(firstStageDate(notice.stages, '2순위')),
     [P.winner]: dateProp(notice.winnerDate),
-    [P.topPrice]: numberProp(evaluation?.topPrice),
+    [P.topPrice]: keepsJudgment(evaluation, existing) ? undefined : numberProp(evaluation?.topPrice),
     [P.estimate]: evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.estimate),
     [P.lotto]: selectProp(evaluation?.status),
     [P.reason]: textProp(evaluation?.reason),
@@ -126,7 +131,7 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
   // 판단 주택형은 안전 마진과 함께 정해지므로 제한 유형처럼 추정 값을 지울 때 같이 지운다.
   if (columns.judgedArea) properties[columns.judgedArea] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.judgedArea);
   // 접수 상태는 공고 날짜로 계산한다. 계산할 수 없으면 보내지 않아 저장된 값을 둔다.
-  if (columns.receptionStatus) properties[columns.receptionStatus] = selectProp(receptionStatus(notice.overallStart ?? existing?.start ?? null, notice.overallEnd ?? existing?.end ?? null, today));
+  if (columns.receptionStatus) properties[columns.receptionStatus] = selectProp(statusFor(notice, existing, today));
   // 추천은 프로필이 있을 때만 판정에 들어 있다. 없으면(undefined) 건드리지 않고, 추천이 없으면(null) 지운다.
   if (evaluation && evaluation.recommendation !== undefined) {
     const recommendation = evaluation.recommendation;
@@ -139,6 +144,8 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
   }
   return Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
 }
+
+const finiteNumber = (value) => (Number.isFinite(value) ? value : null);
 
 export function parseExistingPage(page) {
   const props = page.properties ?? {};
@@ -163,6 +170,14 @@ export function parseExistingPage(page) {
     walkMinutes: Number.isFinite(walk) && walk >= 0 ? walk : null,
     // 같은 이름의 다른 타입 속성은 빈 값으로 본다.
     receptionStatus: props[P.receptionStatus]?.select?.name ?? null,
+    // 이미 채운 분양가 사실이 있으면 청약홈 주택형을 다시 조회하지 않는다.
+    modelPrices: (props[P.modelPrices]?.rich_text ?? []).map((part) => part.plain_text).join('') || null,
+    judgedArea: finiteNumber(props[P.judgedArea]?.number),
+    margin: finiteNumber(props[P.margin]?.number ?? props[LEGACY.margin]?.number),
+    // LH 행의 접수 시작일을 믿을 수 있는지 가르는 데 쓴다(src/reception.js).
+    special: props[P.special]?.date?.start?.slice(0, 10) ?? null,
+    rank1: props[P.rank1]?.date?.start?.slice(0, 10) ?? null,
+    rank2: props[P.rank2]?.date?.start?.slice(0, 10) ?? null,
     recommendTrack: props[P.recommendTrack]?.select?.name ?? null,
     recommendDate: props[P.recommendDate]?.date?.start?.slice(0, 10) ?? null,
     recommendEnd: props[P.recommendDate]?.date?.end?.slice(0, 10) ?? null,
@@ -181,7 +196,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   let columns = DEFAULT_COLUMNS;
   const schemaIssues = [];
 
-  async function request(method, path, body, { idempotent = true } = {}) {
+  async function request(method, path, body, { idempotent = true, retries = 5 } = {}) {
     if (outage) throw outage;
     const wait = lastCall + minIntervalMs - Date.now();
     if (wait > 0) await sleep(wait);
@@ -199,7 +214,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
           },
           body: body ? JSON.stringify(body) : undefined,
         },
-        { kind: 'notion', retries: 5, idempotent, sleep },
+        { kind: 'notion', retries, idempotent, sleep },
       );
       return await response.json();
     } catch (error) {
@@ -398,7 +413,8 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     // 이번 실행에서 쓸 수 있는 열이 없으면(없고 추가도 못 함, 다른 타입) 호출하지 않고 false를 돌려준다.
     async setReceptionStatus(pageId, status) {
       if (!columns.receptionStatus) return false;
-      await request('PATCH', `/pages/${pageId}`, { properties: { [columns.receptionStatus]: { select: { name: status } } } });
+      // 표시용 갱신이라 재시도를 한 번만 한다. 5xx나 429가 이어져도 잡 제한 시간을 쓰지 않게 한다.
+      await request('PATCH', `/pages/${pageId}`, { properties: { [columns.receptionStatus]: { select: { name: status } } } }, { retries: 1 });
       return true;
     },
 
