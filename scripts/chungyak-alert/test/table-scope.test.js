@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
+  cleanupExceeded,
+  cleanupLimits,
   dateGap,
   dedupeAcrossSources,
+  isClosed,
   isDuplicate,
   noticeScore,
   normalizeName,
@@ -12,6 +15,7 @@ import {
   splitDuplicates,
   splitTableScope,
   tableRegions,
+  tableRegionsInvalid,
   urbtyRule,
 } from '../src/table-scope.js';
 
@@ -86,9 +90,10 @@ test('dates too far apart are NOT a duplicate; close announce dates or overlappi
   const noWindow = (extra) => ({ announceDate: null, stages: [], overallStart: null, overallEnd: null, ...extra });
   assert.equal(isDuplicate(applyhome({ ...noWindow({ announceDate: '2026-11-01' }) }), lh({ ...noWindow({ announceDate: '2026-11-04' }) })), true);
   assert.equal(isDuplicate(applyhome({ ...noWindow({ announceDate: '2026-11-01' }) }), lh({ ...noWindow({ announceDate: '2026-11-05' }) })), false);
-  // 모집공고일이 멀어도 접수 기간이 겹치면(LH 목록은 공고일부터 마감일까지) 같은 공고다.
-  assert.equal(isDuplicate(applyhome({ announceDate: '2026-10-01' }), lh({ announceDate: '2026-11-02' })), true);
-  // 접수 기간 사이가 3일 안이면 같고, 그보다 멀면 다르다.
+  // 둘 다 모집공고일이 있으면 접수 기간이 겹쳐도 공고일이 멀면(42일) 다른 공고다.
+  assert.equal(isDuplicate(applyhome({ announceDate: '2026-10-01' }), lh({ announceDate: '2026-11-12' })), false);
+  // 한쪽에 모집공고일이 없을 때만 접수 기간 사이의 간격(3일 안이면 같고, 그보다 멀면 다름)을 본다.
+  assert.equal(isDuplicate(applyhome({ announceDate: null }), lh({ announceDate: '2026-11-02' })), true);
   const window = (start, end) => ({ announceDate: null, overallStart: start, overallEnd: end, stages: [{ name: '접수', start, end }] });
   assert.equal(isDuplicate(applyhome(window('2026-11-01', '2026-11-03')), lh(window('2026-11-06', '2026-11-08'))), true);
   assert.equal(isDuplicate(applyhome(window('2026-11-01', '2026-11-03')), lh(window('2026-11-07', '2026-11-08'))), false);
@@ -166,21 +171,34 @@ test('with dedupeAcrossSources false nothing is merged; missing keys keep it on'
   assert.equal(dedupeAcrossSources(apart, { ...base, duplicateToleranceDays: 7 }).notices.length, 1);
 });
 
-test('exempt notices are left out of the comparison', () => {
-  const result = dedupeAcrossSources([applyhome(), lh()], base, new Set(['LH-0001']));
+test('a pair that holds an exempt notice is not merged (범위 규칙이 관심으로 남긴 공고)', () => {
+  const result = dedupeAcrossSources([applyhome(), lh()], base, { exemptKeys: new Set(['LH-0001']) });
   assert.equal(result.notices.length, 2);
+  assert.equal(result.examined, 1);
 });
 
-test('splitDuplicates trashes a stored loser row but keeps a checked 관심 row, and counts only', () => {
+test('splitDuplicates trashes a stored loser row; a pair with a 관심 or 역 도보 row is not merged at all', () => {
   const stored = rowsOf(row('LH-0001', { source: 'LH' }), row('100-1'));
   const out = splitDuplicates([applyhome(), lh()], stored, base);
   assert.deepEqual(out.notices.map((notice) => notice.key), ['100-1']);
   assert.deepEqual(out.archiveRows.map((item) => item.id), ['id-LH-0001']);
-  assert.deepEqual([out.counts.duplicate_skipped, out.counts.duplicate_kept_interest], [1, 0]);
+  assert.deepEqual([out.counts.duplicate_skipped, out.counts.duplicate_kept_interest, out.counts.duplicate_pairs_examined], [1, 0, 1]);
 
-  const kept = splitDuplicates([applyhome(), lh()], rowsOf(row('LH-0001', { source: 'LH', interest: true })), base);
-  assert.deepEqual(kept.archiveRows, []);
-  assert.deepEqual([kept.counts.duplicate_skipped, kept.counts.duplicate_kept_interest], [1, 1]);
+  // 관심 행이 loser 쪽이든 winner 쪽이든 쌍을 합치지 않고 둘 다 보통 공고로 둔다.
+  for (const checked of ['LH-0001', '100-1']) {
+    const kept = splitDuplicates([applyhome(), lh()], rowsOf(row('LH-0001', { source: 'LH', interest: checked === 'LH-0001' }), row('100-1', { interest: checked === '100-1' })), base);
+    assert.deepEqual(kept.archiveRows, [], checked);
+    assert.equal(kept.notices.length, 2, checked);
+    assert.deepEqual([kept.counts.duplicate_skipped, kept.counts.duplicate_kept_interest, kept.counts.duplicate_pairs_examined], [0, 1, 1], checked);
+  }
+
+  // 역 도보(분)을 입력한 행도 사용자가 만진 행이라 같다(0분도 입력한 값이다).
+  for (const walkMinutes of [7, 0]) {
+    const walked = splitDuplicates([applyhome(), lh()], rowsOf(row('LH-0001', { source: 'LH', walkMinutes })), base);
+    assert.deepEqual(walked.archiveRows, [], String(walkMinutes));
+    assert.equal(walked.notices.length, 2, String(walkMinutes));
+    assert.equal(walked.counts.duplicate_kept_interest, 1, String(walkMinutes));
+  }
 
   // 저장된 행이 없으면 건너뛴 수만 센다.
   const none = splitDuplicates([applyhome(), lh()], new Map(), base);
@@ -298,4 +316,85 @@ test('keys claimed by the LH scope are not counted or trashed again', () => {
   assert.equal(out.notices.length, 1);
   assert.deepEqual(out.archiveRows, { urbty: [], region: [] });
   assert.deepEqual(Object.values(out.counts).reduce((sum, value) => sum + value, 0), 0);
+});
+
+// ---------- 진행 중인 공고가 사라지지 않게 ----------
+
+const TODAY = '2026-11-05';
+
+test('a closed notice is never paired with a live one (예전 회차가 끝난 청약홈과 재공고한 LH)', () => {
+  // 청약홈 회차는 10-20~10-22에 끝났고, 같은 이름의 LH 재공고는 10-24부터 11-20까지 진행 중이다. 기간 사이가 2일이다.
+  const ended = applyhome({ announceDate: null, overallStart: '2026-10-20', overallEnd: '2026-10-22', stages: [{ name: '무순위 접수', start: '2026-10-20', end: '2026-10-22' }] });
+  const live = lh({ announceDate: null, overallStart: '2026-10-24', overallEnd: '2026-11-20', stages: [{ name: '공고~마감', start: '2026-10-24', end: '2026-11-20' }] });
+  assert.equal(isClosed(ended, TODAY), true);
+  assert.equal(isClosed(live, TODAY), false);
+  assert.equal(isDuplicate(ended, live), true);
+  assert.equal(isDuplicate(ended, live, 3, TODAY), false);
+  const out = dedupeAcrossSources([ended, live], base, { today: TODAY });
+  assert.equal(out.notices.length, 2);
+  assert.equal(out.duplicates.length, 0);
+  // 공고일이 가까워도 한쪽이 끝났으면 짝짓지 않는다.
+  const endedAnnounced = applyhome({ announceDate: '2026-10-10', overallStart: '2026-10-12', overallEnd: '2026-10-14' });
+  const liveAnnounced = lh({ announceDate: '2026-10-11' });
+  assert.equal(isDuplicate(endedAnnounced, liveAnnounced, 3, TODAY), false);
+  assert.equal(dedupeAcrossSources([endedAnnounced, liveAnnounced], base, { today: TODAY }).notices.length, 2);
+  // 끝난 쪽이 점수가 높아도 진행 중인 쪽이 이긴다(둘 다 이미 짝지을 수 없지만 방어한다).
+  assert.equal(pickWinner(endedAnnounced, liveAnnounced, TODAY).key, 'LH-0001');
+  assert.equal(pickWinner(liveAnnounced, endedAnnounced, TODAY).key, 'LH-0001');
+  // LH 상태가 마감이고 날짜가 없는 공고도 끝난 공고다.
+  assert.equal(isClosed({ kind: 'lh', noticeStatus: '접수마감', stages: [] }, TODAY), true);
+  assert.equal(isClosed({ kind: 'lh', noticeStatus: '접수중', stages: [] }, TODAY), false);
+});
+
+test('two closed notices, or two live ones, are still paired as before', () => {
+  const live = dedupeAcrossSources([applyhome(), lh()], base, { today: TODAY });
+  assert.deepEqual(live.duplicates.map(({ winner, loser }) => [winner.key, loser.key]), [['100-1', 'LH-0001']]);
+  const closedA = applyhome({ announceDate: '2026-10-01', overallStart: '2026-10-05', overallEnd: '2026-10-06' });
+  const closedL = lh({ announceDate: '2026-10-02', overallStart: '2026-10-02', overallEnd: '2026-10-20' });
+  const both = dedupeAcrossSources([closedA, closedL], base, { today: TODAY });
+  assert.equal(both.duplicates.length, 1);
+});
+
+test('announce dates 42 days apart are different notices even when the windows overlap', () => {
+  const first = applyhome({ announceDate: '2026-10-01', overallStart: '2026-11-08', overallEnd: '2026-11-12' });
+  const later = lh({ announceDate: '2026-11-12', overallStart: '2026-11-12', overallEnd: '2026-11-30' });
+  assert.equal(dateGap(first, later), 42);
+  assert.equal(isDuplicate(first, later, 3, TODAY), false);
+  assert.equal(dedupeAcrossSources([first, later], base, { today: TODAY }).notices.length, 2);
+});
+
+test('a normal duplicate pair is still merged with today given: the 청약홈 notice wins', () => {
+  const out = splitDuplicates([applyhome(), lh()], rowsOf(row('LH-0001', { source: 'LH' })), base, { today: TODAY });
+  assert.deepEqual(out.notices.map((notice) => notice.key), ['100-1']);
+  assert.deepEqual(out.archiveRows.map((item) => item.key), ['LH-0001']);
+});
+
+test('the candidate pairs examined are counted, merged or not', () => {
+  const out = splitDuplicates([applyhome(), lh(), applyhome({ key: '9-9', name: '다른 단지', region: '경기' }), lh({ key: 'LH-9', name: '다른 단지', region: '경기' })], new Map(), base, { today: TODAY, exemptKeys: new Set(['LH-9']) });
+  assert.equal(out.counts.duplicate_pairs_examined, 2);
+  assert.equal(out.counts.duplicate_skipped, 1);
+});
+
+// ---------- 설정 검사와 한 번에 옮길 행의 상한 ----------
+
+test('tableRegions with a non-시도 entry is invalid; valid, empty and non-array values are not', () => {
+  assert.equal(tableRegionsInvalid({ tableRegions: ['서울', '경기', '인천', '세종'] }), false);
+  assert.equal(tableRegionsInvalid({ tableRegions: ['서울', '서울시'] }), true);
+  assert.equal(tableRegionsInvalid({ tableRegions: ['Seoul'] }), true);
+  assert.equal(tableRegionsInvalid({ tableRegions: [1] }), true);
+  for (const value of [undefined, null, '서울', [], 7]) assert.equal(tableRegionsInvalid({ tableRegions: value }), false, JSON.stringify(value));
+});
+
+test('cleanupExceeded checks both the row cap and the share, with defaults 25 and 0.5', () => {
+  assert.deepEqual(cleanupLimits({}), { maxRows: 25, maxShare: 0.5 });
+  assert.deepEqual(cleanupLimits({ cleanupMaxRows: 'x', cleanupMaxShare: 3 }), { maxRows: 25, maxShare: 0.5 });
+  assert.deepEqual(cleanupLimits({ cleanupMaxRows: 5, cleanupMaxShare: 0.2 }), { maxRows: 5, maxShare: 0.2 });
+  // 처음 실행에서 예상하는 규모(45행 중 15행)는 지나간다.
+  assert.equal(cleanupExceeded(15, 45, {}), false);
+  assert.equal(cleanupExceeded(25, 100, {}), false);
+  assert.equal(cleanupExceeded(26, 100, {}), true);
+  assert.equal(cleanupExceeded(23, 45, {}), true);
+  assert.equal(cleanupExceeded(22, 45, {}), false);
+  assert.equal(cleanupExceeded(0, 0, {}), false);
+  assert.equal(cleanupExceeded(3, 4, { cleanupMaxShare: 1 }), false);
 });

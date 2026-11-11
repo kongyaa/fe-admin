@@ -15,7 +15,7 @@ import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } f
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
 import { parseProfile } from './recommend.js';
 import { isRental } from './rental.js';
-import { emptyScopeCounts, splitDuplicates, splitTableScope } from './table-scope.js';
+import { cleanupExceeded, cleanupLimits, emptyScopeCounts, splitDuplicates, splitTableScope, tableRegionsInvalid } from './table-scope.js';
 import { formatLhTypes, isLhItem, isUnknownLhRegion, isUnknownLhType, lhRegionLogLabel, lhScopeRule, lhTypeLogLabel, lhTypeRule, storedLhScopeRule } from './lh-scope.js';
 import {
   decodeServiceKey,
@@ -462,6 +462,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   // 이미 저장된 임대 행은 이번 실행에서 다루지 않고 알림 뒤에 휴지통으로 옮긴다. 관심 체크도 예외가 아니다.
   // 이번 실행에 임대로 빠진 공고의 행은 저장된 유형과 관계없이 옮긴다.
   // 이번 실행에 수집되어 남은(임대가 아닌) 공고의 행은 저장된 값으로 다시 보지 않는다. 낡은 유형 때문에 옮겼다가 다시 만들지 않게 한다.
+  // 저장된 행 수. 한 번에 옮길 행 수의 상한(비율)을 잴 때 쓴다.
+  const storedTotal = (dryRunRows ?? existing).size;
   const rentalKeys = new Set(collected.filter((notice) => isRental(notice, config)).map((notice) => notice.key));
   const rentalKeptKeys = new Set(notices.map((notice) => notice.key));
   const rentalRows = [...(dryRunRows ?? existing).values()].filter((row) => rentalKeys.has(row.key) || (!rentalKeptKeys.has(row.key) && isRental(row, config)));
@@ -478,16 +480,36 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   }
   // 오피스텔·도시형(config.excludeUrbty)과 수도권 밖 공고(config.tableRegions)를 판별 전에 뺀다(src/table-scope.js). 관심 체크 행은 남긴다.
   // 앞 단계가 다룬 행은 다시 세지 않고, 옮긴 행은 existing에서 빼 같은 행을 두 번 옮기지 않는다.
-  const tableScope = splitTableScope(lhScope.notices, dryRunRows ?? existing, config, lhScope.claimedKeys);
+  // tableRegions에 시도 이름이 아닌 값이 있으면(오타로 서울까지 빠지는 일을 막으려고) 이 실행에서는 지역 범위를 끄고 오류 종류만 남긴다.
+  const regionsInvalid = tableRegionsInvalid(config);
+  if (regionsInvalid) addError('table_scope_config_invalid');
+  const scopeConfig = regionsInvalid ? { ...config, tableRegions: undefined } : config;
+  // 청약홈과 LH에 함께 올라온 같은 공고는 정보가 많은 쪽 하나만 남긴다. 진 공고는 판별, 저장, 알림을 하지 않는다.
+  // LH 상세 조회 전에 하므로 상세 조회 상한 때문에 승자가 바뀌지 않는다. 범위 규칙이 관심으로 남긴 공고(표 범위, LH 범위)와
+  // 관심 행이나 역 도보(분)이 있는 행의 쌍은 합치지 않는다.
+  const scopeRows = dryRunRows ?? existing;
+  const planScope = (scopeOptions) => {
+    const table = splitTableScope(lhScope.notices, scopeRows, scopeOptions, lhScope.claimedKeys);
+    const duplicates = splitDuplicates(table.notices, scopeRows, scopeOptions, { exemptKeys: new Set([...table.keptOutKeys, ...lhScope.claimedKeys]), today });
+    return { table, duplicates };
+  };
+  let plan = planScope(scopeConfig);
+  // 한 번에 옮길 행이 상한(cleanupMaxRows, 저장된 행 대비 cleanupMaxShare)을 넘으면 설정 오류일 수 있어 아무것도 옮기지 않는다.
+  // 공고와 저장된 행이 어긋나지 않게 이 실행에서는 세 정리 모두 공고도 빼지 않는다. 관심 행은 옮길 행에 들어 있지 않다.
+  // dry-run은 막지 않고 후보 건수와 막힐지 여부만 남긴다.
+  const cleanupCandidates = plan.table.archiveRows.urbty.length + plan.table.archiveRows.region.length + plan.duplicates.archiveRows.length;
+  const cleanupWouldBlock = cleanupExceeded(cleanupCandidates, storedTotal, config);
+  if (cleanupWouldBlock && !flags.dryRun) {
+    addError('table_cleanup_blocked');
+    plan = planScope({ ...scopeConfig, tableRegions: undefined, excludeUrbty: false, dedupeAcrossSources: false });
+  }
+  const { table: tableScope, duplicates: duplicateScope } = plan;
   const urbtyRows = tableScope.archiveRows.urbty;
   const regionRows = tableScope.archiveRows.region;
   for (const row of [...urbtyRows, ...regionRows]) {
     existing.delete(row.key);
     dryRunRows?.delete(row.key);
   }
-  // 청약홈과 LH에 함께 올라온 같은 공고는 정보가 많은 쪽 하나만 남긴다. 진 공고는 판별, 저장, 알림을 하지 않는다.
-  // LH 상세 조회 전에 하므로 상세 조회 상한 때문에 승자가 바뀌지 않는다. 관심 체크로 남긴 범위 밖 공고는 비교하지 않는다.
-  const duplicateScope = splitDuplicates(tableScope.notices, dryRunRows ?? existing, config, tableScope.keptOutKeys);
   const duplicateRows = duplicateScope.archiveRows;
   for (const row of duplicateRows) {
     existing.delete(row.key);
@@ -820,7 +842,12 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     // 휴지통으로 옮길 LH 범위 밖 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run lh_out_of_scope_archive_candidates=${lhScope.archiveRows.length}`);
     // 휴지통으로 옮길 오피스텔·도시형, 수도권 밖, 중복 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
-    if (dryRunRows) log(`dry-run urbty_archive_candidates=${urbtyRows.length} region_scope_archive_candidates=${regionRows.length} duplicate_archive_candidates=${duplicateRows.length}`);
+    if (dryRunRows) {
+      log(`dry-run urbty_archive_candidates=${urbtyRows.length} region_scope_archive_candidates=${regionRows.length} duplicate_archive_candidates=${duplicateRows.length} duplicate_pairs_examined=${duplicateScope.counts.duplicate_pairs_examined}`);
+      // 일반 실행이면 막힐지 여부(table_cleanup_blocked). 건수만 남긴다.
+      const limits = cleanupLimits(config);
+      log(`dry-run cleanup_candidates=${cleanupCandidates} stored_rows=${storedTotal} max_rows=${limits.maxRows} max_share=${limits.maxShare} would_block=${cleanupWouldBlock}`);
+    }
     // 접수 상태를 고칠 저장된 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run status_update_candidates=${statusUpdates.length}`);
   }

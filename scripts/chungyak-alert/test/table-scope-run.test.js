@@ -7,6 +7,8 @@ import { run } from '../src/main.js';
 const THU_NOW = '2026-11-04T22:30:00Z';
 const THU = '2026-11-05';
 const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+// 작은 표로 시험하므로 옮길 비율 상한은 풀고(1), 상한 시험만 따로 건다.
+const loose = { ...fileConfig, cleanupMaxShare: 1 };
 const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTracks":["생애최초"]}';
 
 const DUP_NAME = '가나지구 A-2블록 신혼희망타운(공공분양) 잔여세대 추가입주자모집공고';
@@ -29,8 +31,8 @@ const urbtyRow = (no, name, region = '서울') => ({
   HOUSE_MANAGE_NO: String(no), PBLANC_NO: '1', HOUSE_NM: name, HOUSE_SECD: '02', SEARCH_HOUSE_SECD: '0202', SUBSCRPT_AREA_CODE_NM: region, HSSPLY_ADRES: `${region} 가나구 가나동 ${no}`,
   RCRIT_PBLANC_DE: '2026-11-01', SUBSCRPT_RCEPT_BGNDE: '2026-11-10', SUBSCRPT_RCEPT_ENDDE: '2026-11-12', PBLANC_URL: 'https://www.applyhome.co.kr/x',
 });
-const lhRow = (id, name, cnp = '서울특별시') => ({
-  PAN_ID: id, PAN_NM: name, UPP_AIS_TP_NM: '분양주택', AIS_TP_CD_NM: '공공분양', CNP_CD_NM: cnp, PAN_NT_ST_DT: '2026.11.02', CLSG_DT: '2026.11.20', DTL_URL: 'https://apply.lh.or.kr/x',
+const lhRow = (id, name, cnp = '서울특별시', { start = '2026.11.02', end = '2026.11.20' } = {}) => ({
+  PAN_ID: id, PAN_NM: name, UPP_AIS_TP_NM: '분양주택', AIS_TP_CD_NM: '공공분양', CNP_CD_NM: cnp, PAN_NT_ST_DT: start, CLSG_DT: end, DTL_URL: 'https://apply.lh.or.kr/x',
 });
 
 function apiFetch({ remainders = [], apts = [], urbties = [], lhRows = [] } = {}) {
@@ -85,7 +87,7 @@ function harness({ store, world, argv = [], env = {}, config } = {}) {
     write: () => {},
     sendMail: async (mail) => { mails.push(mail); },
     sendKakao: async (message) => { kakao.push(message); store.state.events.push('kakao'); },
-    ...(config ? { config } : {}),
+    config: config ?? loose,
   };
   const fullEnv = { DATA_GO_KR_KEY: 'SECRET-DATA-KEY', NOTION_KEY: 'n', CHUNGYAK_NOTION_PAGE_ID: 'p', ...env };
   return { argv, deps, env: fullEnv, mails, kakao, logs, store };
@@ -129,13 +131,61 @@ test('the winner does not flip when the LH row is listed first', async () => {
   assert.equal(count(h, 'duplicate_archived'), 0);
 });
 
-test('a loser row with 관심 checked is kept and nothing is archived for it', async () => {
+test('a pair with a 관심 row is not merged: both notices stay in the normal flow and nothing is archived', async () => {
   const store = fakeStore([stored('31-1'), stored('LH-d1', { source: 'LH', typeLabel: '분양주택 공공분양', interest: true })]);
   const h = harness({ store, world: dupWorld() });
   assert.equal(await go(h), 0);
   assert.deepEqual(store.state.archived, []);
-  assert.ok(!store.state.upserts.includes('LH-d1'));
-  assert.ok(count(h, 'duplicate_skipped') === 1 && count(h, 'duplicate_archived') === 0 && count(h, 'duplicate_kept_interest') === 1);
+  // 예전에는 관심 행의 공고를 얼려 두었다. 이제는 두 공고 모두 보통 공고처럼 갱신한다.
+  assert.ok(store.state.upserts.includes('LH-d1') && store.state.upserts.includes('31-1'));
+  assert.ok(count(h, 'duplicate_skipped') === 0 && count(h, 'duplicate_archived') === 0 && count(h, 'duplicate_kept_interest') === 1 && count(h, 'duplicate_pairs_examined') === 1, summary(h));
+});
+
+test('a pair whose stored row has 역 도보(분) typed in is not merged either', async () => {
+  const store = fakeStore([stored('31-1'), stored('LH-d1', { source: 'LH', typeLabel: '분양주택 공공분양', walkMinutes: 9 })]);
+  const h = harness({ store, world: dupWorld() });
+  assert.equal(await go(h), 0);
+  assert.deepEqual(store.state.archived, []);
+  assert.ok(store.state.upserts.includes('LH-d1'));
+  assert.ok(count(h, 'duplicate_skipped') === 0 && count(h, 'duplicate_kept_interest') === 1, summary(h));
+});
+
+test('a 관심 loser whose 청약홈 winner is unapplicable is not frozen: the 관심 notice is still updated normally', async () => {
+  // 부산 공고(수도권 거주 프로필 기준 신청할 수 없음)라 청약홈 쪽은 저장하지 않는다. 합쳤다면 관심 행의 LH 공고가 얼어 아무것도 남지 않는다.
+  // 이름에 신혼희망 같은 제한 유형 단어가 있으면 신청할 수 없는 공고로 보지 않으므로 쓰지 않는다.
+  const world = { apts: [aptRowOf(81, '타카지구 단지 민영주택', '부산')], lhRows: [lhRow('u1', '타카지구 단지[민영주택]', '부산광역시')] };
+  const store = fakeStore([stored('LH-u1', { source: 'LH', region: '부산', typeLabel: '분양주택 공공분양', interest: true })]);
+  const h = harness({ store, world, env: { CHUNGYAK_PROFILE: PROFILE_JSON }, config: { ...loose, tableRegions: undefined } });
+  assert.equal(await go(h), 0);
+  assert.deepEqual(store.state.upserts, ['LH-u1']);
+  // LH 부산 공고는 LH 범위 규칙이 관심으로 남겼으므로 그쪽에서만 센다(합치기 규칙은 그 공고가 든 쌍을 건너뛴다).
+  assert.ok(count(h, 'unapplicable_skipped') === 1 && count(h, 'duplicate_skipped') === 0 && count(h, 'lh_out_of_scope_kept_interest') === 1, summary(h));
+  assert.deepEqual(store.state.archived, []);
+});
+
+test('an LH notice kept by the LH out-of-scope 관심 exemption enters no merge', async () => {
+  // LH 부산 공고는 LH 범위 밖이지만 관심 행이라 남는다. 같은 이름의 청약홈 부산 공고와 합치지 않는다(범위 규칙이 이미 센 공고).
+  const world = { remainders: [remainder(82, DUP_NAME, { region: '부산' })], lhRows: [lhRow('o1', DUP_NAME_LH, '부산광역시')] };
+  const store = fakeStore([stored('LH-o1', { source: 'LH', region: '부산', typeLabel: '분양주택 공공분양', interest: true })]);
+  const h = harness({ store, world, config: { ...loose, tableRegions: undefined } });
+  assert.equal(await go(h), 0);
+  assert.ok(store.state.upserts.includes('LH-o1') && store.state.upserts.includes('82-1'));
+  assert.ok(count(h, 'lh_out_of_scope_kept_interest') === 1 && count(h, 'duplicate_skipped') === 0, summary(h));
+  assert.deepEqual(store.state.archived, []);
+});
+
+test('a live LH re-announcement is not merged away by an ended 청약홈 round of the same name', async () => {
+  // 청약홈 회차는 10-24~10-26에 끝났고(공고 10-23) 같은 이름의 LH 재공고(공고 10-24)는 11-20까지 진행 중이다.
+  const world = {
+    remainders: [remainder(83, DUP_NAME, { announce: '2026-10-23', start: '2026-10-24', end: '2026-10-26' })],
+    lhRows: [lhRow('e1', DUP_NAME_LH, '서울특별시', { start: '2026.10.24', end: '2026.11.20' })],
+  };
+  const store = fakeStore([stored('LH-e1', { source: 'LH', typeLabel: '분양주택 공공분양' })]);
+  const h = harness({ store, world });
+  assert.equal(await go(h), 0);
+  assert.deepEqual(store.state.archived, []);
+  assert.ok(store.state.upserts.includes('LH-e1'));
+  assert.ok(count(h, 'duplicate_skipped') === 0 && count(h, 'duplicate_pairs_examined') === 0, summary(h));
 });
 
 test('a failed archive of a duplicate loser does not block the alerts and is reported by kind only', async () => {
@@ -157,7 +207,7 @@ test('dry-run archives nothing, logs the candidate counts and still skips the lo
   assert.deepEqual(store.state.archived, []);
   assert.deepEqual(store.state.upserts, []);
   assert.equal(h.kakao.length, 0);
-  assert.ok(h.logs.includes('dry-run urbty_archive_candidates=0 region_scope_archive_candidates=0 duplicate_archive_candidates=1'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run urbty_archive_candidates=0 region_scope_archive_candidates=0 duplicate_archive_candidates=1 duplicate_pairs_examined=1'), h.logs.join('|'));
   assert.ok(count(h, 'duplicate_skipped') === 1 && count(h, 'duplicate_archived') === 0);
 
   // Notion을 읽지 못한 dry-run은 후보를 알 수 없어 건수를 남기지 않는다.
@@ -233,7 +283,7 @@ test('dry-run counts region candidates without any archive', async () => {
   const h = harness({ store, world: regionWorld(), argv: ['--dry-run'] });
   assert.equal(await go(h), 0);
   assert.deepEqual(store.state.archived, []);
-  assert.ok(h.logs.includes('dry-run urbty_archive_candidates=0 region_scope_archive_candidates=3 duplicate_archive_candidates=0'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run urbty_archive_candidates=0 region_scope_archive_candidates=3 duplicate_archive_candidates=0 duplicate_pairs_examined=0'), h.logs.join('|'));
 });
 
 test('a failed region archive reaches the error mail by kind and the rest are still moved', async () => {
@@ -320,7 +370,7 @@ test('dry-run counts urbty candidates without any archive', async () => {
   const h = harness({ store, world: urbtyWorld(), argv: ['--dry-run'] });
   assert.equal(await go(h), 0);
   assert.deepEqual(store.state.archived, []);
-  assert.ok(h.logs.includes('dry-run urbty_archive_candidates=3 region_scope_archive_candidates=0 duplicate_archive_candidates=0'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run urbty_archive_candidates=3 region_scope_archive_candidates=0 duplicate_archive_candidates=0 duplicate_pairs_examined=0'), h.logs.join('|'));
 });
 
 test('with excludeUrbty off or missing urbty notices are stored as before and nothing is archived', async () => {
@@ -341,4 +391,75 @@ test('a stored row that is both a rental and out of scope is trashed once', asyn
   assert.equal(await go(h), 0);
   assert.deepEqual([...store.state.archived].sort(), ['id-old-rent', 'id-old-urbty-busan']);
   assert.ok(count(h, 'rental_archived') === 1 && count(h, 'urbty_archived') === 1 && count(h, 'region_scope_archived') === 0, summary(h));
+});
+
+// ---------- 설정 검사와 한 번에 옮기는 행의 상한 ----------
+
+const errorsLine = (h) => h.logs.find((line) => line.startsWith('errors='));
+
+test('a tableRegions entry that is not a 시도 turns the region scope off for the run and is reported by kind', async () => {
+  const store = fakeStore(regionStored());
+  const h = harness({ store, world: regionWorld(), config: { ...loose, tableRegions: ['서울', '경기', '인천', '세종시'] } });
+  assert.equal(await go(h), 0);
+  assert.deepEqual(store.state.archived, []);
+  assert.ok(count(h, 'region_scope_skipped') === 0 && count(h, 'region_scope_archived') === 0, summary(h));
+  for (const key of ['51-1', '55-1']) assert.ok(store.state.upserts.includes(key), key);
+  assert.ok(errorsLine(h).includes('table_scope_config_invalid:1'), errorsLine(h));
+  assert.ok(errorMail(h).text.includes('table_scope_config_invalid x1'));
+  assert.equal(h.kakao.length, 1);
+});
+
+test('more rows to trash than cleanupMaxRows block every cleanup: nothing is archived, notices stay, alerts still go out', async () => {
+  const store = fakeStore([...regionStored(), ...urbtyStored()]);
+  const h = harness({ store, world: { ...regionWorld(), urbties: urbtyWorld().urbties }, config: { ...loose, cleanupMaxRows: 4 } });
+  assert.equal(await go(h), 0);
+  assert.deepEqual(store.state.archived, []);
+  // 공고도 빼지 않아 저장된 행과 어긋나지 않는다.
+  for (const key of ['51-1', '55-1', '71-1', '73-1']) assert.ok(store.state.upserts.includes(key), key);
+  for (const name of ['region_scope_skipped', 'urbty_skipped', 'region_scope_archived', 'urbty_archived', 'duplicate_skipped']) assert.equal(count(h, name), 0, name);
+  assert.equal(h.kakao.length, 1);
+  assert.ok(errorsLine(h).includes('table_cleanup_blocked:1'), errorsLine(h));
+  assert.ok(errorMail(h).text.includes('table_cleanup_blocked x1'));
+  assert.ok(!h.logs.join('\n').includes('부산 무순위'));
+});
+
+test('the share of stored rows blocks too, and 관심 rows are not counted', async () => {
+  // 후보 3행 / 저장 6행 = 0.5. 상한 0.4면 막고, 0.5면 지나간다.
+  const blocked = harness({ store: fakeStore(regionStored()), world: regionWorld(), config: { ...loose, cleanupMaxShare: 0.4 } });
+  assert.equal(await go(blocked), 0);
+  assert.deepEqual(blocked.store.state.archived, []);
+  assert.ok(errorsLine(blocked).includes('table_cleanup_blocked:1'));
+  const passed = harness({ store: fakeStore(regionStored()), world: regionWorld(), config: { ...loose, cleanupMaxShare: 0.5 } });
+  assert.equal(await go(passed), 0);
+  assert.equal(passed.store.state.archived.length, 3);
+  // 관심 행(54-1)은 세지 않으므로 상한이 후보 3행과 같으면 지나간다.
+  const exact = harness({ store: fakeStore(regionStored()), world: regionWorld(), config: { ...loose, cleanupMaxRows: 3 } });
+  assert.equal(await go(exact), 0);
+  assert.equal(exact.store.state.archived.length, 3);
+  assert.equal(errorsLine(exact), 'errors=none');
+});
+
+test('a count under the caps passes: the expected first run (about 12 of 45 rows) is archived with the default limits', async () => {
+  const filler = Array.from({ length: 33 }, (_, i) => stored('keep-' + i, { start: '2026-12-10', end: '2026-12-20' }));
+  const stale = Array.from({ length: 12 }, (_, i) => stored('gone-' + i, { region: '대전' }));
+  const store = fakeStore([...filler, ...stale]);
+  const h = harness({ store, world: { remainders: [alertRow] }, config: fileConfig });
+  assert.equal(await go(h), 0);
+  assert.equal(store.state.archived.length, 12);
+  assert.equal(count(h, 'region_scope_archived'), 12);
+  assert.equal(errorsLine(h), 'errors=none');
+});
+
+test('dry-run is never blocked: it logs the candidates and whether a normal run would be blocked', async () => {
+  const store = fakeStore(regionStored());
+  const h = harness({ store, world: regionWorld(), argv: ['--dry-run'], config: { ...loose, cleanupMaxRows: 2 } });
+  assert.equal(await go(h), 0);
+  assert.deepEqual(store.state.archived, []);
+  assert.ok(h.logs.includes('dry-run urbty_archive_candidates=0 region_scope_archive_candidates=3 duplicate_archive_candidates=0 duplicate_pairs_examined=0'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run cleanup_candidates=3 stored_rows=6 max_rows=2 max_share=1 would_block=true'), h.logs.join('|'));
+  assert.equal(errorsLine(h), 'errors=none');
+  assert.equal(count(h, 'region_scope_skipped'), 2);
+  const ok = harness({ store: fakeStore(regionStored()), world: regionWorld(), argv: ['--dry-run'], config: loose });
+  await go(ok);
+  assert.ok(ok.logs.some((line) => line.startsWith('dry-run cleanup_candidates=3 ') && line.endsWith('would_block=false')), ok.logs.join('|'));
 });

@@ -21,7 +21,26 @@ export const emptyScopeCounts = () => ({
   duplicate_skipped: 0,
   duplicate_archived: 0,
   duplicate_kept_interest: 0,
+  duplicate_pairs_examined: 0,
 });
+
+// tableRegions에 시도 이름이 아닌 값이 있으면 true. 오타로 서울을 빼고 모두 지우는 일을 막으려고 그 실행에서는 기능을 끈다.
+export const tableRegionsInvalid = (config) => Array.isArray(config.tableRegions) && config.tableRegions.some((region) => !SIDO.includes(region));
+
+// 한 번에 옮길 행의 상한. 배포 설정(cleanupMaxRows, cleanupMaxShare)이 없거나 잘못되면 기본값을 쓴다.
+const DEFAULT_CLEANUP_MAX_ROWS = 25;
+const DEFAULT_CLEANUP_MAX_SHARE = 0.5;
+export function cleanupLimits(config) {
+  const maxRows = Number.isInteger(config.cleanupMaxRows) && config.cleanupMaxRows >= 0 ? config.cleanupMaxRows : DEFAULT_CLEANUP_MAX_ROWS;
+  const maxShare = typeof config.cleanupMaxShare === 'number' && config.cleanupMaxShare >= 0 && config.cleanupMaxShare <= 1 ? config.cleanupMaxShare : DEFAULT_CLEANUP_MAX_SHARE;
+  return { maxRows, maxShare };
+}
+
+// 옮길 행 수가 상한을 넘는지. 저장된 행 수(storedTotal) 대비 비율도 본다. 관심 행은 옮길 행에 들어 있지 않다.
+export function cleanupExceeded(total, storedTotal, config) {
+  const { maxRows, maxShare } = cleanupLimits(config);
+  return total > maxRows || (storedTotal > 0 && total / storedTotal > maxShare);
+}
 
 // 오피스텔·도시형·생활숙박시설이면 'urbty'. 수집한 공고는 kind로, 저장된 행은 유형 이름으로 본다. 꺼져 있으면 null이다.
 export function urbtyRule(item, config) {
@@ -117,15 +136,21 @@ function windowOf(notice) {
   return { start: dayNumber(start), end: dayNumber(notice.overallEnd && notice.overallEnd >= start ? notice.overallEnd : start) };
 }
 
-// 두 공고의 날짜 간격(일). 모집공고일 차이와 접수 기간 사이의 간격(겹치면 0) 중 작은 값이다. 비교할 날짜가 없으면 Infinity다.
-// LH 목록의 기간은 공고일부터 마감일이라 접수 시작일이 아닐 수 있다. 기간이 겹치는지도 함께 보는 이유다.
+// 두 공고의 날짜 간격(일). 둘 다 모집공고일이 있으면 그 차이만 본다(접수 기간이 겹쳐도 공고일이 멀면 다른 공고다).
+// 한쪽에 모집공고일이 없을 때만 접수 기간 사이의 간격(겹치면 0)을 쓴다. LH 목록의 기간은 공고일부터 마감일이다. 비교할 날짜가 없으면 Infinity다.
 export function dateGap(a, b) {
-  let gap = Infinity;
-  if (a.announceDate && b.announceDate) gap = Math.abs(dayNumber(a.announceDate) - dayNumber(b.announceDate));
+  if (a.announceDate && b.announceDate) return Math.abs(dayNumber(a.announceDate) - dayNumber(b.announceDate));
   const wa = windowOf(a);
   const wb = windowOf(b);
-  if (wa && wb) gap = Math.min(gap, Math.max(0, wa.start - wb.end, wb.start - wa.end));
-  return gap;
+  if (wa && wb) return Math.max(0, wa.start - wb.end, wb.start - wa.end);
+  return Infinity;
+}
+
+// 접수가 끝난 공고. src/main.js의 isClosedNotice와 같은 기준이다(날짜가 있으면 날짜, 없으면 LH 상태). today가 없으면 따지지 않는다.
+export function isClosed(notice, today) {
+  if (!today) return false;
+  if (notice.overallEnd) return notice.overallEnd < today;
+  return notice.kind === 'lh' && /마감|종료/.test(notice.noticeStatus ?? '');
 }
 
 const DEFAULT_TOLERANCE_DAYS = 3;
@@ -134,16 +159,19 @@ export const dedupeEnabled = (config) => config.dedupeAcrossSources !== false;
 
 // 서로 다른 소스의 같은 공고인지. 시도가 같고, 정규화한 이름이 같고, 날짜가 허용 간격 안이어야 한다.
 // 같은 소스 안의 공고는 합치지 않는다. 시도나 이름을 모르면 합치지 않는다.
-export function isDuplicate(a, b, toleranceDays = DEFAULT_TOLERANCE_DAYS) {
+// today가 있으면 접수가 끝난 공고와 진행 중인 공고는 짝짓지 않는다(진행 중인 쪽이 표에서 사라지는 일을 막는다).
+export function isDuplicate(a, b, toleranceDays = DEFAULT_TOLERANCE_DAYS, today = null) {
   if (!a.source || a.source === b.source) return false;
   if (!a.region || a.region !== b.region) return false;
   const name = normalizeName(a.name);
   if (!name || name !== normalizeName(b.name)) return false;
+  if (isClosed(a, today) !== isClosed(b, today)) return false;
   return dateGap(a, b) <= toleranceDays;
 }
 
-// 남길 공고. 점수가 높은 쪽, 같으면 청약홈, 그래도 같으면 키가 앞선 쪽이다. 입력 순서와 관계없이 같은 결과를 낸다.
-export function pickWinner(a, b) {
+// 남길 공고. 진행 중인 쪽, 점수가 높은 쪽, 같으면 청약홈, 그래도 같으면 키가 앞선 쪽이다. 입력 순서와 관계없이 같은 결과를 낸다.
+export function pickWinner(a, b, today = null) {
+  if (isClosed(a, today) !== isClosed(b, today)) return isClosed(a, today) ? b : a;
   const diff = noticeScore(a) - noticeScore(b);
   if (diff !== 0) return diff > 0 ? a : b;
   if ((a.source === '청약홈') !== (b.source === '청약홈')) return a.source === '청약홈' ? a : b;
@@ -152,15 +180,20 @@ export function pickWinner(a, b) {
 
 // 소스 사이의 중복을 하나로 합친다. exemptKeys의 공고는 비교하지 않는다.
 // 한 공고는 한 쌍에만 들어간다(간격이 가까운 쌍, 키 순으로 짝짓는다). 돌려주는 공고는 입력 순서를 지킨다.
-export function dedupeAcrossSources(notices, config, exemptKeys = new Set()) {
-  if (!dedupeEnabled(config)) return { notices, duplicates: [] };
+// 손으로 고른 행. 관심을 체크했거나 역 도보(분)을 입력한 행은 사용자가 만진 행이라 합치지 않는다.
+const touchedByUser = (row) => Boolean(row) && (row.interest === true || Number.isFinite(row.walkMinutes));
+
+// 규칙에 맞는 쌍은 모두 센다(examined). 그중 다음 쌍은 합치지 않고 둘 다 보통 공고로 둔다.
+// - exemptKeys의 공고가 든 쌍(범위 규칙이 관심으로 남긴 공고)
+// - 저장된 행이 관심이거나 역 도보(분)이 입력된 쌍(어느 한쪽이라도). touched로 센다.
+export function dedupeAcrossSources(notices, config, { exemptKeys = new Set(), rows = new Map(), today = null } = {}) {
+  if (!dedupeEnabled(config)) return { notices, duplicates: [], examined: 0, touched: 0 };
   const tolerance = toleranceOf(config);
-  const pool = notices.filter((notice) => !exemptKeys.has(notice.key));
   const pairs = [];
-  for (let i = 0; i < pool.length; i += 1) {
-    for (let j = i + 1; j < pool.length; j += 1) {
-      if (!isDuplicate(pool[i], pool[j], tolerance)) continue;
-      const [first, second] = String(pool[i].key) <= String(pool[j].key) ? [pool[i], pool[j]] : [pool[j], pool[i]];
+  for (let i = 0; i < notices.length; i += 1) {
+    for (let j = i + 1; j < notices.length; j += 1) {
+      if (!isDuplicate(notices[i], notices[j], tolerance, today)) continue;
+      const [first, second] = String(notices[i].key) <= String(notices[j].key) ? [notices[i], notices[j]] : [notices[j], notices[i]];
       pairs.push({ first, second, gap: dateGap(first, second) });
     }
   }
@@ -168,29 +201,29 @@ export function dedupeAcrossSources(notices, config, exemptKeys = new Set()) {
   const used = new Set();
   const losers = new Set();
   const duplicates = [];
+  let touched = 0;
   for (const { first, second } of pairs) {
+    if (exemptKeys.has(first.key) || exemptKeys.has(second.key)) continue;
+    if (touchedByUser(rows.get(first.key)) || touchedByUser(rows.get(second.key))) {
+      touched += 1;
+      continue;
+    }
     if (used.has(first.key) || used.has(second.key)) continue;
     used.add(first.key);
     used.add(second.key);
-    const winner = pickWinner(first, second);
+    const winner = pickWinner(first, second, today);
     const loser = winner === first ? second : first;
     losers.add(loser.key);
     duplicates.push({ winner, loser });
   }
-  return { notices: notices.filter((notice) => !losers.has(notice.key)), duplicates };
+  return { notices: notices.filter((notice) => !losers.has(notice.key)), duplicates, examined: pairs.length, touched };
 }
 
-// 중복에서 진 공고의 저장된 행을 가른다. 관심을 체크한 행은 옮기지 않고 남긴다(그 공고는 이번 실행에서 다루지 않는다).
-export function splitDuplicates(notices, rows, config, exemptKeys = new Set()) {
-  const counts = { duplicate_skipped: 0, duplicate_kept_interest: 0 };
-  const { notices: kept, duplicates } = dedupeAcrossSources(notices, config, exemptKeys);
-  counts.duplicate_skipped = duplicates.length;
-  const archiveRows = [];
-  for (const { loser } of duplicates) {
-    const row = rows.get(loser.key);
-    if (!row) continue;
-    if (row.interest) counts.duplicate_kept_interest += 1;
-    else archiveRows.push(row);
-  }
+// 중복에서 진 공고의 저장된 행을 가른다. 진 공고는 이번 실행에서 다루지 않는다.
+// 관심 행이나 역 도보(분)이 있는 행의 쌍은 합치지 않으므로(그 쌍 수를 duplicate_kept_interest로 센다) 옮길 행에는 그런 행이 없다.
+export function splitDuplicates(notices, rows, config, { exemptKeys = new Set(), today = null } = {}) {
+  const { notices: kept, duplicates, examined, touched } = dedupeAcrossSources(notices, config, { exemptKeys, rows, today });
+  const counts = { duplicate_skipped: duplicates.length, duplicate_kept_interest: touched, duplicate_pairs_examined: examined };
+  const archiveRows = duplicates.map(({ loser }) => rows.get(loser.key)).filter(Boolean);
   return { notices: kept, archiveRows, counts, duplicates };
 }

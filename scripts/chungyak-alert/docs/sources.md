@@ -23,7 +23,7 @@ LH 분양 공고(예: 신혼희망타운 잔여세대 추가입주자모집)는 
 - 청약홈: 키 `<HOUSE_MANAGE_NO>-<PBLANC_NO>`(숫자-숫자), `소스` = `청약홈`, 이름 `HOUSE_NM`, 시도 `SUBSCRPT_AREA_CODE_NM`, 모집공고일 `RCRIT_PBLANC_DE`, 상세 주소 `HSSPLY_ADRES`(`src/sources/applyhome.js`의 `normalizeDetail`).
 - LH: 키 `LH-<PAN_ID>`, `소스` = `LH`, 이름 `PAN_NM`, 시도 `CNP_CD_NM`(시도 이름뿐이라 주소로 치지 않음), 공고일 `PAN_NT_ST_DT`, 목록 기간은 공고일~마감일(`windowFromList`)(`src/sources/lh.js`의 `normalizeLh`).
 
-`src/table-scope.js`의 `dedupeAcrossSources`가 서로 다른 소스의 두 공고를 시도, 정규화한 이름(괄호 모양, 공백, 대소문자만 맞춤), 날짜(모집공고일 차이 또는 기간 간격이 3일 이내)로 비교해 하나만 남긴다. 남기는 쪽은 정보 점수(날짜 있는 단계 수 + 가격 있는 주택형 수 + 상세 주소)가 높은 쪽, 같으면 청약홈이다. LH 상세 조회 전에 하므로 목록 값으로 비교하고, 보통 청약홈이 남는다. 규칙과 설정(`dedupeAcrossSources`, `duplicateToleranceDays`)은 SETUP.md 10장의 `표 정리`.
+`src/table-scope.js`의 `dedupeAcrossSources`가 서로 다른 소스의 두 공고를 시도, 정규화한 이름(괄호 모양, 공백, 대소문자만 맞춤), 날짜(둘 다 모집공고일이 있으면 그 차이가 3일 이내, 한쪽에 없을 때만 접수 기간 간격이 3일 이내)로 비교해 하나만 남긴다. 접수가 끝난 공고와 진행 중인 공고는 짝짓지 않고, 관심 행이나 역 도보(분)을 입력한 행이 든 쌍도 합치지 않는다. 남기는 쪽은 정보 점수(날짜 있는 단계 수 + 가격 있는 주택형 수 + 상세 주소)가 높은 쪽, 같으면 청약홈이다. LH 상세 조회 전에 하므로 목록 값으로 비교하고, 보통 청약홈이 남는다. 규칙과 설정(`dedupeAcrossSources`, `duplicateToleranceDays`)은 SETUP.md 10장의 `표 정리`.
 
 ## 표에서 빼는 공고
 
