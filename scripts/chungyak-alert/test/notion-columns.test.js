@@ -418,6 +418,8 @@ test('with excludeRental off rental notices are stored as before and nothing is 
 
 // ---------- LH 범위(분양, 대상 지역) ----------
 const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+// 이 절의 시험은 LH 범위 규칙을 본다. 표 지역 범위(tableRegions)는 꺼서 부산·광주 행과 공고가 지역 정리에 걸리지 않게 한다. 그 규칙은 test/table-scope.test.js가 본다.
+const lhScopeConfig = { ...fileConfig, tableRegions: undefined };
 const lhSaleRow = (id, name, cnp = '서울특별시', upper = '분양주택', detail = '공공분양') => ({ ...lhRow(id, upper, detail, name), CNP_CD_NM: cnp });
 const storedLh = (key, typeLabel, name, { region = null, interest = false, start = '2026-11-10', end = '2026-12-01', source = 'LH' } = {}) => page(key, {
   start,
@@ -470,7 +472,7 @@ const lhSources = {
 
 test('out-of-scope LH notices are skipped and their stored rows go to the trash after the alerts', async () => {
   const fake = lhWorld();
-  const h = harness(fake, lhSources);
+  const h = harness(fake, { ...lhSources, config: lhScopeConfig });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.ok(summary(h).includes(' lh_out_of_scope_skipped=3 lh_out_of_scope_type=1 lh_out_of_scope_area=2 lh_out_of_scope_archived=2 lh_out_of_scope_kept_interest=2'), summary(h));
   assert.deepEqual(archivedIds(fake), ['id-LH-busan', 'id-LH-goyang']);
@@ -490,7 +492,7 @@ test('out-of-scope LH notices are skipped and their stored rows go to the trash 
 
 test('dry-run counts LH out-of-scope candidates without any write or message', async () => {
   const fake = lhWorld();
-  const h = harness(fake, lhSources);
+  const h = harness(fake, { ...lhSources, config: lhScopeConfig });
   assert.equal(await run({ argv: ['--dry-run'], env: h.env, deps: h.deps }), 0);
   assert.deepEqual(writes(fake), []);
   assert.equal(h.kakao.length, 0);
@@ -503,7 +505,7 @@ test('dry-run counts LH out-of-scope candidates without any write or message', a
 
 test('a failed LH archive reaches the error mail after the alerts and the rest are still moved', async () => {
   const fake = lhWorld({ intercept: (call) => (call.path === '/pages/id-LH-busan' && call.body?.archived ? new Response('body-secret', { status: 403 }) : null) });
-  const h = harness(fake, lhSources);
+  const h = harness(fake, { ...lhSources, config: lhScopeConfig });
   assert.equal(await run({ env: h.env, deps: h.deps }), 1);
   // 알림은 이미 나갔다.
   assert.deepEqual(h.kakao.map((message) => message.text.slice(0, 7)), ['[로또 청약]']);
@@ -529,7 +531,7 @@ test('with excludeRental off the LH filter still drops LH rental notices and row
 test('every run logs the LH type labels by count, without notice names', async () => {
   for (const argv of [[], ['--dry-run']]) {
     const fake = lhWorld();
-    const h = harness(fake, lhSources);
+    const h = harness(fake, { ...lhSources, config: lhScopeConfig });
     await run({ argv, env: h.env, deps: h.deps });
     const line = h.logs.find((item) => item.startsWith('lh_types '));
     assert.equal(line, 'lh_types 분양주택/공공분양=6,-/-=1', argv.join(' '));
@@ -579,7 +581,7 @@ test('with the LH filter off 토지임대부 types fall back to the old 토지 e
   const h = harness(fake, {
     rows: [remainderRow],
     lhRows: [lhSaleRow('land', '어느 공고', '서울특별시', '분양주택', '토지임대부'), lhSaleRow('busan', '어느 공고', '부산광역시')],
-    config: { ...fileConfig, lh: { ...fileConfig.lh, filterSaleArea: false } },
+    config: { ...lhScopeConfig, lh: { ...fileConfig.lh, filterSaleArea: false } },
   });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.ok(!writtenKeys(fake).includes('LH-land'));
@@ -616,7 +618,7 @@ test('a collected, kept LH notice is updated in place even when its stored value
 
 test('with the LH filter off nothing is skipped or archived for scope', async () => {
   const fake = lhWorld();
-  const h = harness(fake, { ...lhSources, config: { ...fileConfig, lh: { ...fileConfig.lh, filterSaleArea: false } } });
+  const h = harness(fake, { ...lhSources, config: { ...lhScopeConfig, lh: { ...fileConfig.lh, filterSaleArea: false } } });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.deepEqual(archivedIds(fake), []);
   for (const key of ['LH-goyang', 'LH-busan2', 'LH-select2']) assert.ok(writtenKeys(fake).includes(key), key);
@@ -803,7 +805,7 @@ test('rows moved to the trash or left out of scope never get a 접수 상태 pat
   assert.ok(patched.includes('id-sale'), patched.join(','));
 
   const lh = lhWorld();
-  const h2 = harness(lh, lhSources);
+  const h2 = harness(lh, { ...lhSources, config: lhScopeConfig });
   assert.equal(await run({ env: h2.env, deps: h2.deps }), 0);
   const lhTrashed = archivedIds(lh);
   assert.deepEqual(lhTrashed, ['id-LH-busan', 'id-LH-goyang']);

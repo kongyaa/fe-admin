@@ -13,7 +13,7 @@ const RECOMMENDED_KINDS = ['apt', 'remainder', 'arbitrary'];
 // 행복도시(세종) 공고는 기타지역 1순위가 전국이라 어느 시도 거주자든 기타지역으로 신청할 수 있다.
 const NATIONWIDE_REGIONS = ['세종'];
 // 청약홈 공급지역 이름(SUBSCRPT_AREA_CODE_NM)의 시도 짧은 이름. 이 밖의 값은 지역을 확신할 수 없다.
-const SIDO = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종', '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'];
+export const SIDO = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종', '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'];
 
 // 일반 1순위 단계 이름(src/sources/applyhome.js의 APT_STAGES)과 거주 구분
 const GENERAL_STAGES = {

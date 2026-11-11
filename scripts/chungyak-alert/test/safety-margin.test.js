@@ -1970,14 +1970,19 @@ test('a notice whose tracks have all ended is not stored and is left out of the 
 
 const busanRow = () => aptRow({ HOUSE_MANAGE_NO: '5', PBLANC_NO: '5', HOUSE_NM: '부산공고단지', SUBSCRPT_AREA_CODE_NM: '부산', HSSPLY_ADRES: '부산광역시 해운대구 우동 1' });
 
+// 신청할 수 없는 공고(프로필 기준) 시험은 표 지역 범위(tableRegions)를 끄고 본다. 범위가 켜져 있으면 부산 공고가 그 전에 빠진다(test/table-scope.test.js).
+const unscopedConfig = { ...config, tableRegions: undefined };
+
 test('an APT notice outside 수도권 is dropped for a 수도권 profile only', async () => {
   const h = harness({ fetch: worldFetch({ rows: [busanRow()] }).fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  h.deps.config = unscopedConfig;
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.deepEqual(h.store.state.upserts, []);
   assert.ok(summaryOf(h).includes(' unapplicable_skipped=1 unapplicable_region=1 unapplicable_ended=0 '), summaryOf(h));
   // 프로필이 없거나 수도권 밖 거주자면 저장한다.
   for (const env of [{}, { CHUNGYAK_PROFILE: '{"residenceSido":"울산","residenceYears":5}' }]) {
     const kept = harness({ fetch: worldFetch({ rows: [busanRow()] }).fetch, env });
+    kept.deps.config = unscopedConfig;
     await run({ env: kept.env, deps: kept.deps });
     assert.deepEqual(kept.store.state.upserts.map((item) => item.key), ['5-5']);
     assert.ok(summaryOf(kept).includes(' unapplicable_skipped=0 '), summaryOf(kept));
@@ -2041,6 +2046,7 @@ test('dry-run sends and archives nothing and logs only the candidate count', asy
 test('--print lists dropped notices with a marker', async () => {
   const { h, events } = unapplicableWorld();
   h.deps.fetch = worldFetch({ rows: [aptRow(), endedRow('8'), endedRow('9', '관심끝난단지'), busanRow()] }).fetch;
+  h.deps.config = unscopedConfig;
   assert.equal(await run({ argv: ['--print'], env: h.env, deps: h.deps }), 0);
   assert.deepEqual(events, []);
   const line = (name) => h.logs.find((item) => item.includes(` | ${name} | `));

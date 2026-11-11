@@ -375,8 +375,11 @@ async function runWith(data, { store = fakeStore(), runConfig = config, argv = [
 const marketLine = (result) => result.logs.find((line) => line.startsWith('market '));
 const summaryLine = (result) => result.logs.find((line) => line.startsWith('collected='));
 
+// 부산 공고를 저장하는 시험은 표 지역 범위(tableRegions)를 끈다. 범위 규칙은 test/table-scope.test.js가 본다.
+const unscoped = { ...config, tableRegions: undefined };
+
 test('a run fills the price facts for 임의공급 and out-of-region notices while their status stays 대상 외', async () => {
-  const { code, store, mails, calls } = await runWith({ arbitrary: [optRow(11)], apts: [{ ...optRow(12, '부산'), HOUSE_SECD: '01', RCEPT_BGNDE: '2026-11-10', RCEPT_ENDDE: '2026-11-12' }] });
+  const { code, store, mails, calls } = await runWith({ arbitrary: [optRow(11)], apts: [{ ...optRow(12, '부산'), HOUSE_SECD: '01', RCEPT_BGNDE: '2026-11-10', RCEPT_ENDDE: '2026-11-12' }] }, { runConfig: unscoped });
   assert.equal(code, 0);
   assert.equal(mails.length, 0);
   assert.equal(store.state.upserts.length, 2);
@@ -505,7 +508,7 @@ test('a timed-out price lookup does not trip the judgment lookup: a later in-reg
   const result = await runWith({
     apts: [aptRow(51, { region: '부산' }), aptRow(52, { extra: { PARCPRC_ULS_AT: 'Y' } })],
     modelHandler: timeoutFor(51),
-  });
+  }, { runConfig: unscoped });
   assert.equal(result.code, 0);
   assert.equal(result.mails.length, 0, JSON.stringify(result.mails.map((mail) => mail.text)));
   const judged = result.store.state.upserts.find(({ key }) => key === '52-1').properties;

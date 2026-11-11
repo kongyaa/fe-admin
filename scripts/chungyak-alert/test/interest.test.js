@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { run, selectInterest } from '../src/main.js';
 import { buildKakaoText } from '../src/notify-kakao.js';
@@ -707,6 +708,8 @@ test('a row skipped as ended is not upserted and stays as read', async () => {
 test('a row created in this run gets no interest alert', async () => {
   const store = recordingStore(new Map());
   const h = harness({ store, rows: [busan()] });
+  // 부산 공고는 표 지역 범위(tableRegions) 밖이라 범위를 끄고 본다. 이 시험의 주제는 관심 알림이다.
+  h.deps.config = { ...JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8')), tableRegions: undefined };
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(store.written.length, 1);
   assert.equal(h.kakao.length, 0);

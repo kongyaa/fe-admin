@@ -16,6 +16,19 @@
 | 손으로 고른 기사 (`data/news.yaml`) | 분양 예정 지도 새 소식의 `뉴스`(지구·블록·서울 사업별) | 직접 관리. 기사마다 날짜·매체·원문 주소, 제목은 우리가 쓴 한 줄 요약(기사에 적힌 사실만) | 지도에 사용(`curated-news.js`, 형식이 틀리면 빌드가 멈춤). 기간 제한 없이 남는다. 같은 기사가 네이버 검색으로도 잡히면 이 항목만 보인다. 편집 방법은 `docs/MAP.md` `data/news.yaml` 편집 |
 | 네이버 뉴스 검색 (API 허브 `search/v1/news`, 또는 developers.naver.com `v1/search/news.json`) | 분양 예정 지도의 사업별 최근 뉴스 | 공식 API, JSON, 키는 헤더(`NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`, `NAVER_NEWS_ENDPOINT`는 Variables, `hub` 또는 `legacy`). 하루 25,000건 | 지도 빌드에 연결됨(`build-map.js`, 키가 있을 때만, 실패해도 빌드 계속). 사업별 `news`와 새 소식(`feed`)의 `뉴스`(`source.provider: "naver"`)로 실려 사이트의 새 소식·지구 화면·사업 화면 "이 사업 소식"에 `검색: NAVER` 표시와 함께 보인다. 실호출 확인(2026-11 PR 실행 checked=113 matched=15 errors=0, 키 없으면 `skipped=no_key`). 호출 하나 10초, 뉴스 단계 8분 한도. 제목·언론사·날짜·링크만 저장, 지도에는 14일 안의 기사만 싣는다(다음 빌드까지 여유 7일을 더해 약관의 보관 한도 21일 안. 지금은 하루 두 번 다시 만들어 7일은 넉넉한 여유). 새 소식의 네이버 기사도 이번 빌드 것만 쓰고 이전 배포에서 잇지 않는다. 사이트는 21일이 지난 기사를 숨긴다. 실행마다 대상 사업 수만큼 호출(2026-06 자료 122건). 허브 오류 상태 코드(한도 초과가 429인지)와 오류 본문 형식은 미확인. 규칙은 `docs/MAP.md` `사업별 최근 뉴스` |
 
+## 청약홈과 LH의 같은 공고
+
+LH 분양 공고(예: 신혼희망타운 잔여세대 추가입주자모집)는 청약홈에도 올라와 같은 공고가 두 행이 될 수 있다. 두 소스는 **고유 키 형식과 `소스` 값으로 구분**한다.
+
+- 청약홈: 키 `<HOUSE_MANAGE_NO>-<PBLANC_NO>`(숫자-숫자), `소스` = `청약홈`, 이름 `HOUSE_NM`, 시도 `SUBSCRPT_AREA_CODE_NM`, 모집공고일 `RCRIT_PBLANC_DE`, 상세 주소 `HSSPLY_ADRES`(`src/sources/applyhome.js`의 `normalizeDetail`).
+- LH: 키 `LH-<PAN_ID>`, `소스` = `LH`, 이름 `PAN_NM`, 시도 `CNP_CD_NM`(시도 이름뿐이라 주소로 치지 않음), 공고일 `PAN_NT_ST_DT`, 목록 기간은 공고일~마감일(`windowFromList`)(`src/sources/lh.js`의 `normalizeLh`).
+
+`src/table-scope.js`의 `dedupeAcrossSources`가 서로 다른 소스의 두 공고를 시도, 정규화한 이름(괄호 모양, 공백, 대소문자만 맞춤), 날짜(둘 다 모집공고일이 있으면 그 차이가 3일 이내, 한쪽에 없을 때만 접수 기간 간격이 3일 이내)로 비교해 하나만 남긴다. 접수가 끝난 공고와 진행 중인 공고는 짝짓지 않고, 관심 행이나 역 도보(분)을 입력한 행이 든 쌍도 합치지 않는다. 남기는 쪽은 정보 점수(날짜 있는 단계 수 + 가격 있는 주택형 수 + 상세 주소)가 높은 쪽, 같으면 청약홈이다. LH 상세 조회 전에 하므로 목록 값으로 비교하고, 보통 청약홈이 남는다. 규칙과 설정(`dedupeAcrossSources`, `duplicateToleranceDays`)은 SETUP.md 10장의 `표 정리`.
+
+## 표에서 빼는 공고
+
+`tableRegions`(기본 서울·경기·인천·세종) 밖의 시도 공고와 `excludeUrbty`의 오피스텔·도시형생활주택·생활숙박시설(`urbty`)은 수집 단계에서 빼고, 저장된 행은 Notion 휴지통(30일)으로 옮긴다. `관심` 행은 남긴다. 공급지역 값은 시도 이름(`normalizeRegion`)이어야 지역으로 보고, 그 밖의 값(빈 값, `전국` 등)은 모르는 지역이라 남긴다. 공급지역 `SUBSCRPT_AREA_CODE_NM`과 LH `CNP_CD_NM`이 시도 이름으로 오는지는 위 `실연동 때 확인할 항목`과 같은 가정이다.
+
 ## 서울시 정비사업 추진현황
 
 2026-11-10에 데이터셋 페이지와 실제 파일(26년 6월기준)로 확인했다. 코드는 `src/pipeline/seoul-redevelop.js`.
