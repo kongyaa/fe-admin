@@ -344,6 +344,8 @@ function candidateTotals(model, market, unitMiddle, unitLow) {
   const margin = safeValue - model.price - optionCost - tax;
   return {
     houseType: model.houseType,
+    // 전용면적(㎡). Notion `판단 주택형(㎡)`에 쓴다.
+    area: model.area,
     price: model.price,
     estimate,
     safeValue,

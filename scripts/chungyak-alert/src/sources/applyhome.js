@@ -145,7 +145,8 @@ export function normalizeModel(row) {
   };
 }
 
-export async function fetchOdcloudAll({ fetch, key, op, params = {}, sleep }) {
+// fetchOptions는 fetchWithRetry의 옵션(retries, timeoutMs 등)을 덮는다. 판정과 무관한 조회에서 짧은 시간 제한과 재시도 없음을 쓴다.
+export async function fetchOdcloudAll({ fetch, key, op, params = {}, sleep, fetchOptions = {} }) {
   const rows = [];
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const query = new URLSearchParams({
@@ -158,7 +159,7 @@ export async function fetchOdcloudAll({ fetch, key, op, params = {}, sleep }) {
       fetch,
       `${BASE_URL}/${op}?${query}`,
       { headers: { Authorization: authorizationHeader(key), Accept: 'application/json' } },
-      { kind: 'applyhome', sleep },
+      { kind: 'applyhome', sleep, ...fetchOptions },
     );
     let body;
     try {
@@ -202,7 +203,12 @@ export async function collectApplyhome({ fetch, key, today, lookbackDays, sleep,
   return { notices, errors, failedAll: errors.length === endpoints.length };
 }
 
-export async function fetchModels(notice, { fetch, key, sleep }) {
+// 주택형 행의 공고 관리번호가 있으면 요청한 공고의 것이어야 한다. 서버 필터가 어긋나도 다른 공고의 주택형이 섞이지 않게 한다.
+// 번호 필드가 없는 행은 그대로 둔다.
+const sameNumber = (a, b) => String(a).trim() === String(b).trim() || (Number.isFinite(Number(a)) && Number(a) === Number(b));
+const ownModel = (notice) => (row) => row.HOUSE_MANAGE_NO === undefined || row.HOUSE_MANAGE_NO === null || sameNumber(row.HOUSE_MANAGE_NO, notice.houseManageNo);
+
+export async function fetchModels(notice, { fetch, key, sleep, fetchOptions }) {
   const rows = await fetchOdcloudAll({
     fetch,
     key,
@@ -212,17 +218,19 @@ export async function fetchModels(notice, { fetch, key, sleep }) {
       'cond[PBLANC_NO::EQ]': notice.pblancNo,
     },
     sleep,
+    fetchOptions,
   });
-  return rows.map(normalizeModel);
+  return rows.filter(ownModel(notice)).map(normalizeModel);
 }
 
 // 실행마다 하나씩 만든다. 첫 시간 초과나 네트워크 실패 뒤에는 잡 제한 시간을 아끼려고 호출하지 않는다.
-export function createModelLookup({ fetch, key, sleep }) {
+// fetchOptions는 이 조회기의 모든 호출에 쓴다. 판정용과 분양가 사실용은 조회기를 따로 만들어 장애 상태를 나눈다.
+export function createModelLookup({ fetch, key, sleep, fetchOptions }) {
   let outage = null;
   return async (notice) => {
     if (outage) throw outage;
     try {
-      return await fetchModels(notice, { fetch, key, sleep });
+      return await fetchModels(notice, { fetch, key, sleep, fetchOptions });
     } catch (error) {
       if (error.kind === 'applyhome_timeout' || error.kind === 'applyhome_network') outage = error;
       throw error;

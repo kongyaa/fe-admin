@@ -16,6 +16,7 @@ import {
 } from './market-estimate.js';
 import { hasLhModels } from './lh-detail-map.js';
 import { lhTypeClass } from './lh-scope.js';
+import { priceFactsOf, topPriceOf } from './price-facts.js';
 import { lhRecommendPending, recommendForProfile, unapplicableReason } from './recommend.js';
 import { resolveAddress } from './sgg-codes.js';
 import { AppError, completeMonths, safeError } from './util.js';
@@ -121,10 +122,26 @@ export function averagePriceOf(models) {
   return Math.round(priced.reduce((sum, model) => sum + model.price * weightOf(model), 0) / total);
 }
 
-const topPriceOf = (models) => {
-  const prices = models.map((m) => m.price).filter((p) => p > 0);
-  return prices.length > 0 ? Math.max(...prices) : null;
-};
+// 평균·최저 분양가와 주택형별 문구. 공고가 주는 사실이라 판정과 무관하게 적는다(src/price-facts.js).
+const priceFacts = (models) => priceFactsOf(models, averagePriceOf);
+
+// 판정하지 않는 공고(대상 외 경로와 조기 반환)의 분양가 사실. 최고 분양가는 모든 주택형의 최고 분양가 중 가장 큰 값이다.
+// 마진, 추정 시세, 시세 신뢰도, 판단 주택형은 두지 않는다.
+const factFields = (models) => ({ topPrice: topPriceOf(models), ...priceFacts(models) });
+
+// 판정과 무관한 분양가 조회. LH는 상세 정보를 덮을 때 읽어 둔 주택형을 쓰고 새로 부르지 않는다.
+// 청약홈은 options.getFactModels(실행당 조회 한도가 있다, src/price-facts.js)로 부른다. 없으면 부르지 않는다.
+// 표시용 값이라 실패해도 오류 메일 없이 실행당 한 번만 건수로 남기고 비워 둔다.
+async function lookupFactModels(notice, { getFactModels, onSoftOnce }) {
+  if (notice.kind === 'lh') return notice.models ?? null;
+  if (!getFactModels) return null;
+  try {
+    return await getFactModels(notice);
+  } catch {
+    onSoftOnce('price_facts_lookup_failed');
+    return null;
+  }
+}
 
 // 지번은 가장 작은 지역 단위(리가 있으면 리, 없으면 동·읍·면) 바로 뒤의 숫자다.
 function subjectJibun(address, umd, village) {
@@ -188,7 +205,15 @@ export async function evaluateLotto(notice, options) {
     if (!models) modelsFailed = true;
     return models;
   };
-  const priced = await evaluatePrice(notice, { ...options, getModels });
+  // 분양가 사실 조회는 신청할 수 없어 저장하지 않을 공고에는 하지 않는다(관심 체크 행은 예외). 이 경로에서는 판정용 주택형을 읽지 않았으므로
+  // 주택형을 모르는 것으로 본 판단과 아래의 unapplicable이 같다.
+  const getFactModels = options.getFactModels && options.profile
+    ? async (target) => {
+      const dropped = unapplicableReason({ notice: target, models: null, profile: options.profile, config: options.config, today: options.today });
+      return dropped && !options.interest ? null : options.getFactModels(target);
+    }
+    : options.getFactModels;
+  const priced = await evaluatePrice(notice, { ...options, getModels, getFactModels });
   if (!options.profile) return priced;
   const unapplicable = unapplicableReason({ notice, models: modelsFailed ? null : models, profile: options.profile, config: options.config, today: options.today });
   // 추천 문구(v2 이름표 포함)는 판별 근거에만 붙인다. 카카오톡·긴급 알림의 짧은 근거는 붙이기 전 값으로 고정한다.
@@ -383,6 +408,8 @@ async function estimateNotice(notice, models, { config, today, getTrades, getPre
 // 추정을 Notion 열 값으로 옮긴다.
 const priceFields = (best) => ({
   topPrice: best.price,
+  // 안전 마진과 최고 분양가를 정한 주택형의 전용면적(㎡)
+  judgedArea: Number.isFinite(best.area) ? Math.round(best.area * 100) / 100 : null,
   estimate: best.estimate,
   margin: best.margin,
   marginRate: best.marginRate,
@@ -403,7 +430,7 @@ const sharedGainHead = ({ type, factor }) => (type === '신혼희망'
 // 자료가 없으면(주택형, 단지 주소, 실거래 표본) 예전처럼 저장된 추정 값을 지우고(clearMarket) 까닭을 적는다.
 // 조회가 실패하면(LH 상세 조회 실패·상한, 주택형·실거래 조회 실패) 이번에는 모르는 것이라 저장된 값을 지우지 않는다.
 async function evaluateSharedGain(notice, shared, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes, onError, onSoft, onSoftOnce }) {
-  const none = (why, { clear = true, averagePrice = null } = {}) => ({
+  const none = (why, { clear = true, models = null } = {}) => ({
     status: STATUS.OUT_OF_SCOPE,
     reason: `제한 유형(${shared.type})은 로또 판별 대상이 아님; 참고 마진 없음(${why})`,
     topPrice: null,
@@ -411,17 +438,17 @@ async function evaluateSharedGain(notice, shared, { config, today, getModels, ge
     margin: null,
     marginRate: null,
     confidence: null,
-    averagePrice,
+    ...factFields(models),
     ...(clear ? { clearMarket: true } : {}),
   });
   if (notice.kind === 'lh') {
     // LH는 분양 유형(공공분양)만 시세를 본다. 보통 LH 판별과 같다(flags.priceCap은 분양 유형에만 켠다).
     if (!notice.flags?.priceCap && lhTypeClass(notice, config.lh ?? {}) !== 'sale') return none('판별 대상 유형이 아님');
     const pending = LH_PENDING_REASONS[notice.lhDetailState];
-    if (pending) return none(pending, { clear: false });
+    if (pending) return none(pending, { clear: false, models: notice.models });
     if (!hasLhModels(notice.models)) {
-      if (notice.lhDetailState !== 'ok') return none('LH 상세 정보 없음');
-      return none(notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음');
+      if (notice.lhDetailState !== 'ok') return none('LH 상세 정보 없음', { models: notice.models });
+      return none(notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음', { models: notice.models });
     }
   }
   let models = null;
@@ -432,12 +459,11 @@ async function evaluateSharedGain(notice, shared, { config, today, getModels, ge
     onSoftOnce('average_price_lookup_failed');
   }
   if (!models) return none('주택형 정보 조회 실패', { clear: false });
-  const averagePrice = averagePriceOf(models);
-  if (!models.some((model) => model.area > 0 && model.price > 0)) return none('주택형 정보 없음', { averagePrice });
+  if (!models.some((model) => model.area > 0 && model.price > 0)) return none('주택형 정보 없음', { models });
   const { best, undetermined, failed, unmapped } = await estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident: false, onError, onSoft });
   if (!best) {
     const why = unmapped && notice.kind === 'lh' ? 'LH 단지 주소 미매핑' : undetermined;
-    return none(why, { clear: !failed, averagePrice });
+    return none(why, { clear: !failed, models });
   }
   const margin = best.margin > 0 ? Math.round(best.margin * shared.factor) : best.margin;
   const marginRate = marginRateOf(margin, best.price);
@@ -450,19 +476,22 @@ async function evaluateSharedGain(notice, shared, { config, today, getModels, ge
     ...priceFields(best),
     margin,
     marginRate,
-    averagePrice,
+    ...priceFacts(models),
     referenceMargin: true,
   };
 }
 
-async function evaluatePrice(notice, { config, today, getModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {}, onSoftOnce = onSoft }) {
+async function evaluatePrice(notice, { config, today, getModels, getFactModels, getTrades, getPresale, aptInfo, walkMinutes = null, onError = () => {}, onSoft = () => {}, onSoftOnce = onSoft }) {
   const { lotto, market } = config;
   const result = (status, reason, extra = {}) => ({
     status, reason, topPrice: null, estimate: null, margin: null, marginRate: null, confidence: null, ...extra,
   });
 
+  // 대상 외 경로의 분양가는 공고의 사실이라 적는다. 판정, 마진, 추정 시세는 건드리지 않는다.
+  const facts = async () => factFields(await lookupFactModels(notice, { getFactModels, onSoftOnce }));
+
   if (!config.alertRegions.includes(notice.region)) {
-    return result(STATUS.OUT_OF_SCOPE, '알림 지역이 아님');
+    return result(STATUS.OUT_OF_SCOPE, '알림 지역이 아님', await facts());
   }
   // 판정 조건보다 먼저 본다. 저장된 추정 값이 남지 않도록 clearMarket으로 지우게 한다.
   const restricted = restrictedType(notice, market);
@@ -481,7 +510,7 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
     }
     return result(STATUS.OUT_OF_SCOPE, `제한 유형(${restricted})은 로또 판별과 안전 마진 대상이 아님`, {
       clearMarket: true,
-      averagePrice: averagePriceOf(restrictedModels),
+      ...factFields(restrictedModels),
     });
   }
 
@@ -490,13 +519,14 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
   // 자료가 없거나(요청 코드 없음, 쓸 수 있는 주택형 없음) 단지 주소를 찾지 못하면 예전처럼 대상 외다.
   if (notice.kind === 'lh') {
     const status = notice.noticeStatus ? ` (${notice.noticeStatus})` : '';
+    const lhFacts = factFields(notice.models);
     const pending = LH_PENDING_REASONS[notice.lhDetailState];
-    if (pending) return result(STATUS.UNDETERMINED, `${pending}${status}`);
+    if (pending) return result(STATUS.UNDETERMINED, `${pending}${status}`, lhFacts);
     if (!hasLhModels(notice.models)) {
-      if (notice.lhDetailState !== 'ok') return result(STATUS.OUT_OF_SCOPE, `LH 상세 정보 없음${status}`);
-      return result(STATUS.OUT_OF_SCOPE, `${notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음'}${status}`);
+      if (notice.lhDetailState !== 'ok') return result(STATUS.OUT_OF_SCOPE, `LH 상세 정보 없음${status}`, lhFacts);
+      return result(STATUS.OUT_OF_SCOPE, `${notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음'}${status}`, lhFacts);
     }
-    if (!resolveAddress(notice.address, notice.region).code) return result(STATUS.OUT_OF_SCOPE, `LH 단지 주소 미매핑${status}`);
+    if (!resolveAddress(notice.address, notice.region).code) return result(STATUS.OUT_OF_SCOPE, `LH 단지 주소 미매핑${status}`, lhFacts);
   }
 
   const trigger = flagTrigger(notice, lotto);
@@ -505,7 +535,7 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
 
   if (!usesPrice) {
     const label = notice.kind === 'remainder' || notice.kind === 'arbitrary' ? '설정에서 제외된 유형' : '판별 대상 유형이 아님';
-    return result(STATUS.OUT_OF_SCOPE, label);
+    return result(STATUS.OUT_OF_SCOPE, label, await facts());
   }
 
   let models = null;
@@ -514,8 +544,7 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
   } catch (error) {
     onError(safeError(error));
   }
-  const topPrice = models ? topPriceOf(models) : null;
-  const averagePrice = averagePriceOf(models);
+  const topPrice = topPriceOf(models);
 
   let best = null;
   let undetermined = models ? null : '주택형 정보 조회 실패';
@@ -525,8 +554,7 @@ async function evaluatePrice(notice, { config, today, getModels, getTrades, getP
     ({ best, undetermined } = await estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident, onError, onSoft }));
   }
 
-  const price = best ? priceFields(best) : { topPrice };
-  price.averagePrice = averagePrice;
+  const price = { ...(best ? priceFields(best) : { topPrice }), ...priceFacts(models) };
 
   // LH는 비교 단지가 없는 신도시 블록이 많아, 추정이 없으면 다른 분양가상한제 공고와 달리 로또로 두지 않고 판별 불가다.
   // 신뢰도 하 추정은 다른 조건형 공고와 같다.

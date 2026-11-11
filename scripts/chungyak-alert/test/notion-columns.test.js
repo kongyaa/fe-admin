@@ -45,7 +45,7 @@ function apiFetch(rows, { lhRows = [], pblrentRows = [] } = {}) {
   };
 }
 
-const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
 
 // 사용자가 모집공고일과 순번을 지운 뒤의 실제 DB 스키마
 const WITHOUT_INTEREST = {
@@ -331,7 +331,9 @@ const rentalSources = {
   pblrentRows: [pblrentRow],
 };
 const archivedIds = (fake) => fake.calls.filter((call) => call.method === 'PATCH' && call.body?.archived === true).map((call) => call.path.replace('/pages/', '')).sort();
-const rowWrites = (fake) => fake.calls.filter((call) => (call.method === 'POST' && call.path === '/pages') || (call.method === 'PATCH' && call.path.startsWith('/pages/') && call.body?.properties));
+// 접수 상태만 고치는 PATCH(저장된 행의 상태 갱신)는 행 저장(upsert)이 아니라서 뺀다.
+const statusOnly = (call) => Object.keys(call.body?.properties ?? {}).join() === '접수 상태';
+const rowWrites = (fake) => fake.calls.filter((call) => (call.method === 'POST' && call.path === '/pages') || (call.method === 'PATCH' && call.path.startsWith('/pages/') && call.body?.properties && !statusOnly(call)));
 const writtenKeys = (fake) => rowWrites(fake).map((call) => (call.method === 'POST' ? call.body.properties['고유 키'].rich_text[0].text.content : call.path.replace('/pages/id-', '')));
 const summary = (h) => h.logs.find((line) => line.startsWith('collected='));
 
@@ -619,4 +621,210 @@ test('with the LH filter off nothing is skipped or archived for scope', async ()
   assert.deepEqual(archivedIds(fake), []);
   for (const key of ['LH-goyang', 'LH-busan2', 'LH-select2']) assert.ok(writtenKeys(fake).includes(key), key);
   assert.ok(summary(h).includes(' lh_out_of_scope_skipped=0 '), summary(h));
+});
+
+// ---------- 접수 상태와 분양가 열 ----------
+const STATUS_COLUMN = '접수 상태';
+const statusPatches = (fake) => fake.calls.filter((call) => call.method === 'PATCH' && call.path.startsWith('/pages/') && statusOnly(call));
+const NEW_COLUMNS = ['최저 분양가', '주택형별 분양가', '판단 주택형(㎡)', STATUS_COLUMN];
+const withoutNewColumns = () => Object.fromEntries(Object.entries(LIVE_SCHEMA).filter(([name]) => !NEW_COLUMNS.includes(name)));
+const statusPage = (key, start, end, status, extra = {}) => page(key, {
+  start,
+  end,
+  extra: { '로또 여부': { select: { name: '로또' } }, ...(status ? { [STATUS_COLUMN]: { select: { name: status } } } : {}), ...extra },
+});
+
+test('a stored ended row gets only its 접수 상태 patched; matching rows and undated rows are not touched', async () => {
+  const fake = notionFake({
+    strict: true,
+    pages: [
+      statusPage('ended', '2026-09-01', '2026-10-01', '접수 중'),
+      statusPage('same', '2026-09-01', '2026-10-01', '마감'),
+      statusPage('future', '2026-12-01', '2026-12-05', null),
+      statusPage('undated', null, null, null),
+    ],
+  });
+  const h = harness(fake);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const patches = fake.calls.filter((call) => call.method === 'PATCH' && call.path.startsWith('/pages/'));
+  assert.deepEqual(patches.map((call) => [call.path, call.body]), [
+    ['/pages/id-ended', { properties: { [STATUS_COLUMN]: { select: { name: '마감' } } } }],
+    ['/pages/id-future', { properties: { [STATUS_COLUMN]: { select: { name: '접수 전' } } } }],
+  ]);
+  assert.deepEqual(fake.rejected, []);
+  assert.ok(summary(h).includes(' status_updated=2'), summary(h));
+  assert.equal(errorMail(h), undefined);
+  // 한 번 고친 값은 다음 실행에서 다시 보내지 않는다.
+  const again = notionFake({ pages: [statusPage('ended', '2026-09-01', '2026-10-01', '마감'), statusPage('future', '2026-12-01', '2026-12-05', '접수 전')] });
+  const h2 = harness(again);
+  assert.equal(await run({ env: h2.env, deps: h2.deps }), 0);
+  assert.deepEqual(writes(again), []);
+});
+
+test('a failed 접수 상태 patch is soft: alerts and saves go on, no error mail, exit 0', async () => {
+  const fake = notionFake({
+    pages: [statusPage('ended', '2026-09-01', '2026-10-01', '접수 중')],
+    intercept: (call) => (call.path === '/pages/id-ended' ? new Response('body-secret', { status: 403 }) : null),
+  });
+  const h = harness(fake, { rows: [remainderRow] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(errorMail(h), undefined);
+  assert.deepEqual(h.kakao.map((message) => message.text.slice(0, 7)), ['[로또 청약]']);
+  assert.ok(fake.calls.some((call) => call.method === 'POST' && call.path === '/pages'), 'new notice is still stored');
+  assert.ok(summary(h).includes(' status_updated=0'), summary(h));
+  const marketLine = h.logs.find((line) => line.startsWith('market '));
+  assert.match(marketLine, /reception_status_failed:1/);
+  assert.ok(!h.logs.join('\n').includes('body-secret'));
+});
+
+test('dry-run writes nothing to Notion and counts the 접수 상태 candidates', async () => {
+  const fake = notionFake({ pages: [statusPage('ended', '2026-09-01', '2026-10-01', '접수 중'), statusPage('same', '2026-09-01', '2026-10-01', '마감')] });
+  const h = harness(fake);
+  assert.equal(await run({ argv: ['--dry-run'], env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(writes(fake), []);
+  assert.ok(h.logs.includes('dry-run status_update_candidates=1'), h.logs.join('|'));
+  assert.ok(summary(h).includes(' status_updated=0'), summary(h));
+});
+
+test('a stored row that is re-saved gets its 접수 상태 from the new dates in the same write', async () => {
+  const fake = notionFake({ strict: true, pages: [statusPage('7-7', '2026-11-01', '2026-11-30', '접수 전')] });
+  const h = harness(fake, { rows: [remainderRow] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // 저장(upsert) 한 번과 긴급 알림 발송일 기록이 있다. 접수 상태는 저장에만 들어간다.
+  const saves = fake.calls.filter((call) => call.method === 'PATCH' && call.path === '/pages/id-7-7' && call.body.properties?.[STATUS_COLUMN]);
+  assert.equal(saves.length, 1);
+  assert.deepEqual(saves[0].body.properties[STATUS_COLUMN], { select: { name: '접수 중' } });
+  assert.equal(statusPatches(fake).length, 0);
+});
+
+test('init adds the missing price-fact and status columns once and tolerates a wrong-typed existing one', async () => {
+  const missing = notionFake({ databaseProperties: withoutNewColumns() });
+  await realStore(missing).init();
+  const added = missing.calls.filter((call) => call.method === 'PATCH' && call.path === '/databases/db').map((call) => Object.keys(call.body.properties)[0]);
+  assert.deepEqual(added, NEW_COLUMNS);
+  const status = missing.calls.find((call) => call.method === 'PATCH' && call.body?.properties?.[STATUS_COLUMN]).body.properties[STATUS_COLUMN];
+  assert.deepEqual(status.select.options.map((option) => option.name), ['접수 전', '접수 중', '마감']);
+
+  // 이미 있으면 아무것도 하지 않는다.
+  const present = notionFake();
+  await realStore(present).init();
+  assert.equal(present.calls.filter((call) => call.method === 'PATCH').length, 0);
+
+  // 같은 이름의 다른 타입 속성은 건드리지 않고 쓰지도 않는다. 접수 상태는 갱신도 하지 않는다.
+  const wrong = notionFake({
+    strict: true,
+    databaseProperties: { ...LIVE_SCHEMA, '최저 분양가': { type: 'rich_text', rich_text: {} }, '주택형별 분양가': { type: 'number', number: {} }, '판단 주택형(㎡)': { type: 'select', select: {} }, [STATUS_COLUMN]: { type: 'rich_text', rich_text: {} } },
+    pages: [statusPage('ended', '2026-09-01', '2026-10-01', null)],
+  });
+  const h = harness(wrong, { rows: [remainderRow] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(wrong.calls.filter((call) => call.method === 'PATCH' && call.path === '/databases/db').length, 0);
+  assert.deepEqual(wrong.rejected, []);
+  assert.equal(errorMail(h), undefined);
+  for (const call of wrong.calls.filter((item) => item.body?.properties && item.path !== '/databases/db')) {
+    for (const name of NEW_COLUMNS) assert.equal(Object.hasOwn(call.body.properties, name), false, name);
+  }
+  assert.equal(statusPatches(wrong).length, 0);
+  assert.ok(summary(h).includes(' status_updated=0'), summary(h));
+});
+
+test('a new database is created with the price-fact and status columns', async () => {
+  const fake = notionFake({ children: [] });
+  await realStore(fake).init();
+  const properties = fake.calls.find((call) => call.path === '/databases').body.properties;
+  for (const name of NEW_COLUMNS) assert.ok(Object.hasOwn(properties, name), name);
+  assert.deepEqual(properties['판단 주택형(㎡)'], { number: { format: 'number' } });
+  assert.deepEqual(properties['주택형별 분양가'], { rich_text: {} });
+});
+
+test('parseExistingPage reads 접수 상태 and ignores a same-named column of another type', () => {
+  assert.equal(parseExistingPage(statusPage('k', null, null, '마감')).receptionStatus, '마감');
+  assert.equal(parseExistingPage(page('k', { extra: { [STATUS_COLUMN]: { rich_text: [{ plain_text: '마감' }] } } })).receptionStatus, null);
+  assert.equal(parseExistingPage(page('k')).receptionStatus, null);
+});
+
+// ---------- 접수 상태 갱신의 안전장치 ----------
+const baseConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+const withMarket = (market) => ({ ...baseConfig, market: { ...baseConfig.market, ...market } });
+const endedPages = (count) => Array.from({ length: count }, (_, index) => statusPage(`e${index}`, '2026-09-01', '2026-10-01', '접수 중'));
+const pagePatchCalls = (fake) => fake.calls.filter((call) => call.method === 'PATCH' && call.path.startsWith('/pages/'));
+
+for (const status of [503, 429]) {
+  test(`repeated ${status} on 접수 상태 patches stops after three failures, retries once, and still reaches the summary`, async () => {
+    const fake = notionFake({
+      pages: endedPages(10),
+      intercept: (call) => (call.method === 'PATCH' && call.path.startsWith('/pages/id-e') ? new Response('', { status }) : null),
+    });
+    const h = harness(fake, { rows: [remainderRow] });
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    // 쪽당 시도 1번과 재시도 1번, 세 쪽에서 멈춘다.
+    const statusCalls = pagePatchCalls(fake).filter((call) => statusOnly(call));
+    assert.equal(statusCalls.length, 6, statusCalls.map((call) => call.path).join(','));
+    assert.equal(new Set(statusCalls.map((call) => call.path)).size, 3);
+    assert.equal(errorMail(h), undefined);
+    assert.deepEqual(h.kakao.map((message) => message.text.slice(0, 7)), ['[로또 청약]']);
+    assert.ok(summary(h).includes(' status_updated=0 status_deferred=7'), summary(h));
+    const marketLine = h.logs.find((line) => line.startsWith('market '));
+    assert.match(marketLine, /reception_status_failed:3/);
+    assert.match(marketLine, /reception_status_breaker:1/);
+    assert.ok(h.logs.includes('errors=none'));
+  });
+}
+
+test('접수 상태 patches per run are capped by market.statusUpdateMax and the rest wait for later runs', async () => {
+  const fake = notionFake({ pages: endedPages(5) });
+  const h = harness(fake, { config: withMarket({ statusUpdateMax: 2 }) });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.equal(statusPatches(fake).length, 2);
+  assert.ok(summary(h).includes(' status_updated=2 status_deferred=3'), summary(h));
+  // 다음 실행은 이어서 고친다(고친 쪽은 이미 마감이다).
+  const next = notionFake({ pages: [...endedPages(5).slice(0, 2).map((item, index) => statusPage(`e${index}`, '2026-09-01', '2026-10-01', '마감')), ...endedPages(5).slice(2)] });
+  const h2 = harness(next, { config: withMarket({ statusUpdateMax: 2 }) });
+  await run({ env: h2.env, deps: h2.deps });
+  assert.equal(statusPatches(next).length, 2);
+});
+
+test('접수 상태 patches for the closed rows come first when the cap is tight', async () => {
+  const fake = notionFake({ pages: [statusPage('future', '2026-12-01', '2026-12-05', null), statusPage('ended', '2026-09-01', '2026-10-01', '접수 중')] });
+  const h = harness(fake, { config: withMarket({ statusUpdateMax: 1 }) });
+  await run({ env: h.env, deps: h.deps });
+  assert.deepEqual(statusPatches(fake).map((call) => call.path), ['/pages/id-ended']);
+});
+
+test('rows moved to the trash or left out of scope never get a 접수 상태 patch', async () => {
+  const rental = rentalWorld();
+  const h = harness(rental, rentalSources);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const trashed = archivedIds(rental);
+  assert.deepEqual(trashed, ['id-9-9', 'id-LH-old', 'id-LH-r1']);
+  const patched = statusPatches(rental).map((call) => call.path.replace('/pages/', ''));
+  for (const id of trashed) assert.ok(!patched.includes(id), id);
+  // 남은 저장 행은 고친다(상태 열이 비어 있던 행).
+  assert.ok(patched.includes('id-sale'), patched.join(','));
+
+  const lh = lhWorld();
+  const h2 = harness(lh, lhSources);
+  assert.equal(await run({ env: h2.env, deps: h2.deps }), 0);
+  const lhTrashed = archivedIds(lh);
+  assert.deepEqual(lhTrashed, ['id-LH-busan', 'id-LH-goyang']);
+  const lhPatched = statusPatches(lh).map((call) => call.path.replace('/pages/', ''));
+  for (const id of lhTrashed) assert.ok(!lhPatched.includes(id), id);
+  assert.ok(lhPatched.length > 0);
+});
+
+test('stored LH rows without stage dates only ever get 마감', async () => {
+  const lhPage = (key, start, end, extra = {}) => statusPage(key, start, end, null, { 소스: { select: { name: 'LH' } }, ...extra });
+  const fake = notionFake({
+    pages: [
+      lhPage('LH-ended', '2026-10-01', '2026-10-20'),
+      lhPage('LH-open-window', '2026-10-01', '2026-12-20'),
+      lhPage('LH-detail', '2026-10-01', '2026-12-20', { '1순위 접수일': { date: { start: '2026-11-02' } } }),
+    ],
+  });
+  const h = harness(fake);
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  assert.deepEqual(statusPatches(fake).map((call) => [call.path, call.body.properties[STATUS_COLUMN].select.name]), [
+    ['/pages/id-LH-ended', '마감'],
+    ['/pages/id-LH-detail', '접수 중'],
+  ]);
 });

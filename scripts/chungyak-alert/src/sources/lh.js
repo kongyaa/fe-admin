@@ -60,7 +60,7 @@ export function normalizeLh(row, excludeKeywords, keepKeywords = []) {
   if (!panId) return null;
   const start = normalizeDate(row.PAN_NT_ST_DT ?? row.PAN_DT);
   const end = normalizeDate(row.CLSG_DT);
-  return withOverall({
+  const notice = withOverall({
     key: `LH-${panId}`,
     source: 'LH',
     kind: 'lh',
@@ -77,6 +77,8 @@ export function normalizeLh(row, excludeKeywords, keepKeywords = []) {
     // 날짜가 없으면 단계를 만들지 않아 알림 대상에서 빠진다.
     stages: start && end ? [{ name: '공고~마감', start, end }] : [],
   });
+  // 목록의 공고일~마감일은 접수 시작일이 아니라 공고일이 시작이다. 상세 일정을 읽으면 applyLhDetail이 이 표시를 지운다.
+  return notice.stages.length > 0 ? { ...notice, windowFromList: true } : notice;
 }
 
 // onRow는 거르기 전의 원본 행마다 불린다. 유형 값 건수 로그(lh_types)에 쓴다.

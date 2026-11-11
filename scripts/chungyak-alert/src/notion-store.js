@@ -1,3 +1,4 @@
+import { statusFor } from './reception.js';
 import { AppError, defaultSleep, fetchWithRetry, firstStageDate, safeHttpUrl } from './util.js';
 
 const API = 'https://api.notion.com/v1';
@@ -19,6 +20,10 @@ const P = {
   winner: '당첨자발표일',
   topPrice: '최고 분양가',
   averagePrice: '평균 분양가',
+  minPrice: '최저 분양가',
+  modelPrices: '주택형별 분양가',
+  judgedArea: '판단 주택형(㎡)',
+  receptionStatus: '접수 상태',
   estimate: '추정 시세',
   margin: '안전 마진',
   marginRate: '마진율',
@@ -37,9 +42,9 @@ const P = {
 
 // 이전 실행까지 쓰던 속성 이름. 값이 유지되도록 삭제하지 않고 이름만 바꾼다.
 const LEGACY = { margin: '예상 차익', marginRate: '차익률' };
-const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence, averagePrice: P.averagePrice, recommendTrack: P.recommendTrack, recommendDate: P.recommendDate };
-// 스키마를 읽지 못해 이번 실행의 이름을 모를 때 쓴다. 이 세 속성만 빼서 다른 값의 저장을 막지 않는다.
-const NO_COLUMNS = { margin: null, marginRate: null, confidence: null, averagePrice: null, recommendTrack: null, recommendDate: null };
+const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence, averagePrice: P.averagePrice, recommendTrack: P.recommendTrack, recommendDate: P.recommendDate, minPrice: P.minPrice, modelPrices: P.modelPrices, judgedArea: P.judgedArea, receptionStatus: P.receptionStatus };
+// 스키마를 읽지 못해 이번 실행의 이름을 모를 때 쓴다. 이 속성들만 빼서 다른 값의 저장을 막지 않는다.
+const NO_COLUMNS = { margin: null, marginRate: null, confidence: null, averagePrice: null, recommendTrack: null, recommendDate: null, minPrice: null, modelPrices: null, judgedArea: null, receptionStatus: null };
 
 const DB_SCHEMA = {
   [P.name]: { title: {} },
@@ -55,6 +60,10 @@ const DB_SCHEMA = {
   [P.winner]: { date: {} },
   [P.topPrice]: { number: { format: 'number' } },
   [P.averagePrice]: { number: { format: 'number' } },
+  [P.minPrice]: { number: { format: 'number' } },
+  [P.modelPrices]: { rich_text: {} },
+  [P.judgedArea]: { number: { format: 'number' } },
+  [P.receptionStatus]: { select: { options: [{ name: '접수 전' }, { name: '접수 중' }, { name: '마감' }] } },
   [P.estimate]: { number: { format: 'number' } },
   [P.margin]: { number: { format: 'number' } },
   [P.marginRate]: { number: { format: 'percent' } },
@@ -81,9 +90,15 @@ const numberProp = (value) => (Number.isFinite(value) ? { number: value } : unde
 const selectProp = (value) => (value ? { select: { name: String(value).replace(/,/g, ' ').slice(0, 100) } } : undefined);
 const textProp = (value) => (value ? { rich_text: text(value) } : undefined);
 
+// 이번 판정에 마진이 없고(추정 실패, 조회 실패 등) 추정 값을 지우지도 않는데 저장된 행에 판단 주택형이나 마진이 있으면,
+// 최고 분양가는 그 주택형의 값이라 모든 주택형의 최고 분양가로 덮지 않는다. 마진과 판단 주택형을 함께 지우는 것보다 덜 건드리는 쪽이다.
+const keepsJudgment = (evaluation, existing) => Boolean(evaluation) && !evaluation.clearMarket && !Number.isFinite(evaluation.margin)
+  && (Number.isFinite(existing?.judgedArea) || Number.isFinite(existing?.margin));
+
 // 값이 없는 속성은 보내지 않아 기존 값을 지우지 않는다. 긴급 알림 발송일과 사용자가 입력하는 관심, 역 도보(분)은 여기서 쓰지 않는다.
 // 제한 유형은 clearMarket으로 저장된 추정 값을 명시적으로 지운다.
-export function buildProperties(notice, evaluation, today, columns = DEFAULT_COLUMNS) {
+// existing은 저장된 행이다. 공고에 날짜가 없으면 저장된 날짜로 접수 상태를 계산한다(날짜 열도 값이 없으면 저장된 값을 둔다).
+export function buildProperties(notice, evaluation, today, columns = DEFAULT_COLUMNS, existing = null) {
   const url = safeHttpUrl(notice.url);
   const properties = {
     [P.name]: { title: text(notice.name || notice.key) },
@@ -97,7 +112,7 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
     [P.rank1]: dateProp(firstStageDate(notice.stages, '1순위')),
     [P.rank2]: dateProp(firstStageDate(notice.stages, '2순위')),
     [P.winner]: dateProp(notice.winnerDate),
-    [P.topPrice]: numberProp(evaluation?.topPrice),
+    [P.topPrice]: keepsJudgment(evaluation, existing) ? undefined : numberProp(evaluation?.topPrice),
     [P.estimate]: evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.estimate),
     [P.lotto]: selectProp(evaluation?.status),
     [P.reason]: textProp(evaluation?.reason),
@@ -110,6 +125,13 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
   if (columns.confidence) properties[columns.confidence] = evaluation?.clearMarket ? { select: null } : selectProp(evaluation?.confidence);
   // 공고의 사실이라 제한 유형에서도 지우지 않는다. 값이 없으면 보내지 않아 저장된 값을 둔다.
   if (columns.averagePrice) properties[columns.averagePrice] = numberProp(evaluation?.averagePrice);
+  // 최저 분양가와 주택형별 분양가도 공고의 사실이라 제한 유형에서 지우지 않는다. 값이 없으면 보내지 않는다.
+  if (columns.minPrice) properties[columns.minPrice] = numberProp(evaluation?.minPrice);
+  if (columns.modelPrices) properties[columns.modelPrices] = textProp(evaluation?.modelPrices);
+  // 판단 주택형은 안전 마진과 함께 정해지므로 제한 유형처럼 추정 값을 지울 때 같이 지운다.
+  if (columns.judgedArea) properties[columns.judgedArea] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.judgedArea);
+  // 접수 상태는 공고 날짜로 계산한다. 계산할 수 없으면 보내지 않아 저장된 값을 둔다.
+  if (columns.receptionStatus) properties[columns.receptionStatus] = selectProp(statusFor(notice, existing, today));
   // 추천은 프로필이 있을 때만 판정에 들어 있다. 없으면(undefined) 건드리지 않고, 추천이 없으면(null) 지운다.
   if (evaluation && evaluation.recommendation !== undefined) {
     const recommendation = evaluation.recommendation;
@@ -122,6 +144,8 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
   }
   return Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
 }
+
+const finiteNumber = (value) => (Number.isFinite(value) ? value : null);
 
 export function parseExistingPage(page) {
   const props = page.properties ?? {};
@@ -144,6 +168,16 @@ export function parseExistingPage(page) {
     source: props[P.source]?.select?.name ?? null,
     link: props[P.link]?.url ?? null,
     walkMinutes: Number.isFinite(walk) && walk >= 0 ? walk : null,
+    // 같은 이름의 다른 타입 속성은 빈 값으로 본다.
+    receptionStatus: props[P.receptionStatus]?.select?.name ?? null,
+    // 이미 채운 분양가 사실이 있으면 청약홈 주택형을 다시 조회하지 않는다.
+    modelPrices: (props[P.modelPrices]?.rich_text ?? []).map((part) => part.plain_text).join('') || null,
+    judgedArea: finiteNumber(props[P.judgedArea]?.number),
+    margin: finiteNumber(props[P.margin]?.number ?? props[LEGACY.margin]?.number),
+    // LH 행의 접수 시작일을 믿을 수 있는지 가르는 데 쓴다(src/reception.js).
+    special: props[P.special]?.date?.start?.slice(0, 10) ?? null,
+    rank1: props[P.rank1]?.date?.start?.slice(0, 10) ?? null,
+    rank2: props[P.rank2]?.date?.start?.slice(0, 10) ?? null,
     recommendTrack: props[P.recommendTrack]?.select?.name ?? null,
     recommendDate: props[P.recommendDate]?.date?.start?.slice(0, 10) ?? null,
     recommendEnd: props[P.recommendDate]?.date?.end?.slice(0, 10) ?? null,
@@ -162,7 +196,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
   let columns = DEFAULT_COLUMNS;
   const schemaIssues = [];
 
-  async function request(method, path, body, { idempotent = true } = {}) {
+  async function request(method, path, body, { idempotent = true, retries = 5 } = {}) {
     if (outage) throw outage;
     const wait = lastCall + minIntervalMs - Date.now();
     if (wait > 0) await sleep(wait);
@@ -180,7 +214,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
           },
           body: body ? JSON.stringify(body) : undefined,
         },
-        { kind: 'notion', retries: 5, idempotent, sleep },
+        { kind: 'notion', retries, idempotent, sleep },
       );
       return await response.json();
     } catch (error) {
@@ -297,6 +331,11 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       averagePrice: await ensureAveragePriceColumn(properties),
       recommendTrack: await ensureTypedColumn(properties, P.recommendTrack, 'select'),
       recommendDate: await ensureTypedColumn(properties, P.recommendDate, 'date'),
+      // 분양가 사실과 접수 상태 열. 없을 때만 추가하고, 같은 이름의 다른 타입 속성은 건드리지 않고 쓰지도 않는다.
+      minPrice: await ensureTypedColumn(properties, P.minPrice, 'number'),
+      modelPrices: await ensureTypedColumn(properties, P.modelPrices, 'rich_text'),
+      judgedArea: await ensureTypedColumn(properties, P.judgedArea, 'number'),
+      receptionStatus: await ensureTypedColumn(properties, P.receptionStatus, 'select'),
     };
     await ensureWalkProperty(properties);
     await ensureInterestProperty(properties);
@@ -356,7 +395,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     },
 
     async upsert(notice, evaluation, existing, today) {
-      const properties = buildProperties(notice, evaluation, today, columns);
+      const properties = buildProperties(notice, evaluation, today, columns, existing);
       if (existing) {
         await request('PATCH', `/pages/${existing.id}`, { properties });
         return existing.id;
@@ -368,6 +407,15 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
         { idempotent: false },
       );
       return created.id;
+    },
+
+    // 다시 판정하지 않는 저장된 행의 접수 상태만 고친다. 다른 열은 보내지 않는다.
+    // 이번 실행에서 쓸 수 있는 열이 없으면(없고 추가도 못 함, 다른 타입) 호출하지 않고 false를 돌려준다.
+    async setReceptionStatus(pageId, status) {
+      if (!columns.receptionStatus) return false;
+      // 표시용 갱신이라 재시도를 한 번만 한다. 5xx나 429가 이어져도 잡 제한 시간을 쓰지 않게 한다.
+      await request('PATCH', `/pages/${pageId}`, { properties: { [columns.receptionStatus]: { select: { name: status } } } }, { retries: 1 });
+      return true;
     },
 
     // Notion 휴지통으로 옮긴다. 영구 삭제가 아니다.

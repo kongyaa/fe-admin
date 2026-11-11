@@ -937,7 +937,8 @@ const CONFIDENCE_PROP = { '시세 신뢰도': { type: 'select', select: {} } };
 const WALK = { '역 도보(분)': { type: 'number', number: {} } };
 const AVERAGE = { '평균 분양가': { type: 'number', number: {} } };
 const RECOMMEND = { '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
-const OTHERS = { ...WALK, ...AVERAGE, ...RECOMMEND, 관심: { type: 'checkbox', checkbox: {} } };
+const PRICE_FACTS = { '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} } };
+const OTHERS = { ...WALK, ...AVERAGE, ...PRICE_FACTS, ...RECOMMEND, 관심: { type: 'checkbox', checkbox: {} } };
 
 const notice = (extra = {}) => ({ key: '1-1', name: '테스트', region: '서울', typeLabel: 'APT', source: '청약홈', url: 'https://www.applyhome.co.kr/a', stages: [], ...extra });
 
@@ -1136,7 +1137,7 @@ test('a new name of another type is left alone, and the old column keeps receivi
 
 test('역 도보(분) is added only if missing, read from the row and never written', async () => {
   const { 관심 } = OTHERS;
-  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, ...RECOMMEND, 관심 };
+  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, ...PRICE_FACTS, ...RECOMMEND, 관심 };
   const missing = schemaFake(others);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '역 도보(분)': { number: { format: 'number' } } }]);
@@ -1174,7 +1175,7 @@ test('역 도보(분) is added only if missing, read from the row and never writ
 
 test('평균 분양가 is added only if missing, created with new databases, and a wrong type is left alone and not written', async () => {
   const { 관심 } = OTHERS;
-  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...RECOMMEND, 관심 };
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...PRICE_FACTS, ...RECOMMEND, 관심 };
   const missing = schemaFake(base);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '평균 분양가': { number: { format: 'number' } } }]);
@@ -1224,7 +1225,7 @@ test('a full run stores the supply-weighted 평균 분양가 from the model rows
 
 test('추천 전형 and 추천 접수일 are added only if missing, and other types are left alone', async () => {
   const { 관심 } = OTHERS;
-  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...AVERAGE, 관심 };
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...AVERAGE, ...PRICE_FACTS, 관심 };
   const missing = schemaFake(base);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '추천 전형': { select: {} } }, { '추천 접수일': { date: {} } }]);

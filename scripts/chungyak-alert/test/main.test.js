@@ -10,7 +10,7 @@ import { buildKakaoText, sendKakaoMemo } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 
 const THU = '2026-11-05';
-const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
 const notice = (extra = {}) => ({
   key: '1-1',
   name: '테스트',
@@ -205,7 +205,7 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
       '접수 종료일': { date: null },
     },
   });
-  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, interest: false, name: '', typeLabel: null, region: null, source: null, link: null, walkMinutes: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
+  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, interest: false, name: '', typeLabel: null, region: null, source: null, link: null, walkMinutes: null, receptionStatus: null, modelPrices: null, judgedArea: null, margin: null, special: null, rank1: null, rank2: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
 });
 
 function notionFake(children = []) {

@@ -8,6 +8,8 @@ import { createAptInfoClient } from './sources/apt-info.js';
 import { createMolitClient, createPresaleClient } from './sources/molit.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
 import { restrictedType } from './market-estimate.js';
+import { createFactLookup } from './price-facts.js';
+import { selectStatusUpdates } from './reception.js';
 import { createNotionStore } from './notion-store.js';
 import { buildErrorMail, buildUrgentMail, buildWeeklyMail, createGmailSender } from './notify-gmail.js';
 import { buildKakaoText, linkFor, sendKakaoMemo } from './notify-kakao.js';
@@ -204,6 +206,10 @@ function carriedStatus(notice, previous, config) {
   return previous?.lotto ?? null;
 }
 
+// 접수 상태 갱신의 기본 상한(config market.statusUpdateMax)과 멈추는 연속 실패 횟수.
+const STATUS_UPDATE_MAX = 150;
+const STATUS_FAIL_STREAK = 3;
+
 const tagCounts = (stats) => Object.entries(stats).filter(([, value]) => typeof value === 'number').map(([name, value]) => `${name}=${value}`).join(' ');
 
 // 국토부 법정동 이름의 형식별 행 수. 읍·면이 앞에 붙은 형식(umd_town)인지, 리만 있는 형식(umd_village)인지 실실행에서 확인한다.
@@ -265,16 +271,18 @@ function splitEndedPages(pages, today) {
 async function archivePages(store, pages, onFailure = () => {}) {
   let archived = 0;
   let failed = 0;
+  const done = [];
   for (const page of pages) {
     try {
       await store.archivePage(page.id);
       archived += 1;
+      done.push(page.id);
     } catch (error) {
       failed += 1;
       onFailure(error);
     }
   }
-  return { archived, failed };
+  return { archived, failed, done };
 }
 
 // 수동 전용 정리 모드.
@@ -488,7 +496,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     lhDetailCounts = enriched.counts;
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, check_needed: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0 };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, check_needed: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0, status_updated: 0, status_deferred: 0 };
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
@@ -502,8 +510,28 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   const marketCounts = { complexOutliers: 0, stationUsed: 0, stationNoInput: 0, stationNoData: 0, 상: 0, 중: 0, 하: 0 };
   const stationCountNames = { used: 'stationUsed', noInput: 'stationNoInput', noData: 'stationNoData' };
   const getModels = createModelLookup({ fetch: fetchFn, key: dataKey, sleep });
+  // 판정하지 않는 공고(대상 외 경로)의 분양가 조회. 판정용 getModels와 조회기를 따로 둔다. 추천 계산에 쓰이는 주택형이 달라지지 않게 하고,
+  // 이 조회의 시간 초과나 네트워크 장애가 판정용 조회의 장애 상태(첫 장애 뒤 호출 중단)를 건드리지 않게 하려는 것이다.
+  // 짧은 시간 제한(market.priceLookupTimeoutMs)에 재시도 없이 부르고, 실행당 market.priceLookupBudget건과 market.priceLookupBudgetMs까지만 부른다.
+  // 넘으면 실행당 한 번만 건수로 남긴다. 저장된 행에 주택형별 분양가가 이미 있으면 부르지 않는다.
+  const storedRow = (key) => existing.get(key) ?? dryRunRows?.get(key);
+  const getFactModels = createFactLookup({
+    getModels: createModelLookup({ fetch: fetchFn, key: dataKey, sleep, fetchOptions: { retries: 0, timeoutMs: config.market.priceLookupTimeoutMs ?? 5000 } }),
+    budget: config.market.priceLookupBudget,
+    budgetMs: config.market.priceLookupBudgetMs,
+    now: () => now(),
+    skip: (notice) => Boolean(storedRow(notice.key)?.modelPrices),
+    onExceeded: () => addSoftErrorOnce('price_lookup_budget_exceeded'),
+    onTimeExceeded: () => addSoftErrorOnce('price_lookup_time_exceeded'),
+  });
+  // 이번 실행에서 upsert한(dry-run이면 할) 공고의 키. 접수 상태는 buildProperties가 같이 쓰므로 따로 고치지 않는다.
+  const upsertedKeys = new Set();
   const interestRows = new Map(dryRunRows ?? existing);
-  for (const notice of scopedNotices) {
+  // 주택형별 분양가가 아직 없는 공고를 먼저 돌아, 한도가 적은 뒤쪽 종류(임의공급, 오피스텔·도시형)가 굶지 않게 한다.
+  // 기록(알림 순서)은 수집한 순서로 되돌린다.
+  const collectedOrder = new Map(scopedNotices.map((notice, index) => [notice.key, index]));
+  const factsFirst = [...scopedNotices].sort((a, b) => Number(Boolean(storedRow(a.key)?.modelPrices)) - Number(Boolean(storedRow(b.key)?.modelPrices)));
+  for (const notice of factsFirst) {
     // 저장 대상 행은 원본의 최신 값으로 판단한다. 저장이 실패해도 같다. 로또 알림과 같은 기준이고, 옮겨진 날짜로 잘못 보내거나 놓치지 않는다.
     // 접수가 끝나 갱신하지 않는 행은 읽은 그대로 둔다. 이번 실행에 새로 만든 행은 아직 체크될 수 없어 넣지 않는다.
     const row = interestRows.get(notice.key);
@@ -525,6 +553,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
           config,
           today,
           getModels,
+          getFactModels,
+          // 관심을 체크한 행은 신청할 수 없는 공고여도 저장하므로 분양가 사실도 조회한다.
+          interest: Boolean((previous ?? dryRunRows?.get(notice.key))?.interest),
           getTrades: (code, months) => molit.getTrades(code, months),
           getPresale: (code, months) => presale.getTrades(code, months),
           aptInfo,
@@ -588,6 +619,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       // 관심 체크로 남긴 신청할 수 없는 공고. --print 표시에만 쓴다.
       unapplicable,
     };
+    upsertedKeys.add(notice.key);
     if (store) {
       try {
         record.pageId = await store.upsert(notice, evaluation, previous, today);
@@ -600,8 +632,12 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
     records.push(record);
   }
+  records.sort((a, b) => collectedOrder.get(a.notice.key) - collectedOrder.get(b.notice.key));
   // 방어용이다. 접수 종료일이 지난 행은 판별 전에 건너뛰어 지금은 주간 정리 대상과 겹치지 않지만, 겹치더라도 두 번 옮기지 않게 뺀다.
-  for (const row of unapplicableRows) existing.delete(row.key);
+  for (const row of unapplicableRows) {
+    existing.delete(row.key);
+    dryRunRows?.delete(row.key);
+  }
 
   // 주간 메일은 발송 기록이 필요해 Notion이 정상일 때만 보낸다.
   let weeklyDone = false;
@@ -634,14 +670,17 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
+  // 이번 실행에서 휴지통으로 옮긴 행의 id. 접수 상태를 고치지 않는다.
+  const archivedIds = new Set();
   // 주간 메일과 발송 기록이 끝난 실행에서만 정리한다. 긴급 알림 뒤에 두어 발송과 기록을 막지 않는다.
   if (weeklyDone) {
     const { ended } = splitEndedPages([...existing.values()], today);
-    const { archived, failed } = await archivePages(store, ended, (error) => {
+    const { archived, failed, done } = await archivePages(store, ended, (error) => {
       addError('cleanup_failed');
       addError(safeError(error));
     });
     counts.archived = archived;
+    done.forEach((id) => archivedIds.add(id));
     if (failed > 0) notionFailed = true;
   }
 
@@ -689,6 +728,42 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
   }
 
+  // 이번 실행에서 다시 판정하지 않은 저장된 행(접수가 끝나 건너뛴 행, 이번에 수집되지 않은 행)은 접수 상태만 고친다.
+  // 저장된 날짜로 계산해 값이 다를 때만 그 속성 하나를 보낸다. 다른 열(로또 여부, 분양가, 마진)은 건드리지 않는다.
+  // 알림 뒤에 하고, 실패해도 오류 메일 없이 건수만 남긴다. dry-run은 쓰지 않고 후보 수만 센다.
+  // 이번 실행에 수집한 공고의 날짜가 저장된 날짜보다 최신이므로 그 공고는 수집한 날짜로 계산한다(정정으로 일정이 바뀐 공고를 마감으로 적지 않게).
+  // 연속 3번 실패하면 멈추고, 실행당 market.statusUpdateMax(기본 150)건까지만 고친다. 나머지는 다음 실행에서 이어 간다.
+  const collectedByKey = new Map(scopedNotices.map((notice) => [notice.key, notice]));
+  const statusUpdates = selectStatusUpdates(
+    [...(dryRunRows ?? existing).values()].filter((row) => !upsertedKeys.has(row.key) && !archivedIds.has(row.id)),
+    today,
+    (key) => collectedByKey.get(key) ?? null,
+  );
+  if (store) {
+    const maxUpdates = Number.isInteger(config.market.statusUpdateMax) && config.market.statusUpdateMax >= 0 ? config.market.statusUpdateMax : STATUS_UPDATE_MAX;
+    let attempts = 0;
+    let streak = 0;
+    for (const [index, { row, status }] of statusUpdates.entries()) {
+      if (attempts >= maxUpdates || streak >= STATUS_FAIL_STREAK) {
+        counts.status_deferred = statusUpdates.length - index;
+        if (streak >= STATUS_FAIL_STREAK) addSoftErrorOnce('reception_status_breaker');
+        break;
+      }
+      try {
+        const written = await store.setReceptionStatus(row.id, status);
+        if (written) {
+          counts.status_updated += 1;
+          attempts += 1;
+        }
+        streak = 0;
+      } catch {
+        addSoftError('reception_status_failed');
+        attempts += 1;
+        streak += 1;
+      }
+    }
+  }
+
   if (flags.dryRun) {
     const lotto = records.filter((record) => record.status === STATUS.LOTTO).length;
     const checkNeeded = records.filter((record) => record.status === STATUS.CHECK).length;
@@ -704,6 +779,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     if (dryRunRows) log(`dry-run unapplicable_archive_candidates=${unapplicableRows.length}`);
     // 휴지통으로 옮길 LH 범위 밖 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run lh_out_of_scope_archive_candidates=${lhScope.archiveRows.length}`);
+    // 접수 상태를 고칠 저장된 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
+    if (dryRunRows) log(`dry-run status_update_candidates=${statusUpdates.length}`);
   }
   if (flags.print) {
     // 로컬 조회 전용이다(Actions에서는 꺼진다). 신청할 수 없는 공고도 표시를 붙여 보여 준다.
