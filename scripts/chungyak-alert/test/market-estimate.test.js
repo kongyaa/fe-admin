@@ -411,20 +411,25 @@ test('읍·면 subjects look in the same 리, then the same 읍·면, before the
   const village = pick([...dasan, ...oNamVillage], namyangju('오남읍', '양지리'));
   assert.equal(village.scope, '리');
   assert.equal(village.townWide, false);
+  assert.equal(village.widened, false);
   assert.ok(village.picked.every((item) => item.umd.startsWith('오남읍')));
 
   const oNamTown = [...rows(3, 700, { aptName: '오남가', umd: '오남읍 오남리', jibun: 'o1', buildYear: 2016 }), ...rows(3, 720, { aptName: '오남나', umd: '오남읍 신정리', jibun: 'o2', buildYear: 2018 })];
   const town = pick([...dasan, ...oNamTown], namyangju('오남읍', '양지리'));
   assert.equal(town.scope, '읍·면');
   assert.equal(town.townWide, false);
+  // 리를 먼저 보고 읍·면으로 넓혔다.
+  assert.equal(town.widened, true);
 
   const none = pick(dasan, namyangju('오남읍', '양지리'));
   assert.equal(none.scope, '시군구');
   assert.equal(none.townWide, true);
+  assert.equal(none.widened, true);
   // 동 주소는 예전처럼 법정동, 시군구 순이고 시군구여도 하로 묶지 않는다.
   const dong = pick(dasan, namyangju('별내동', null));
   assert.equal(dong.scope, '시군구');
   assert.equal(dong.townWide, false);
+  assert.equal(dong.widened, true);
 });
 
 test('a 읍·면 subject valued from the whole 시군구 is 하 and its reason says so', () => {

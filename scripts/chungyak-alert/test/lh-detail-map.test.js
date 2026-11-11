@@ -296,10 +296,10 @@ test('an LH sale notice with models and an address is priced with the priceCap t
   assert.equal(none.averagePrice, 100000);
   // 이전 로또는 유지된다.
   assert.equal(keepPreviousLotto(none, STATUS.LOTTO).status, STATUS.LOTTO);
-  // 신뢰도 하 추정은 다른 조건형 공고처럼 로또다(놓치지 않게).
+  // 신뢰도 하 추정은 다른 조건형 공고처럼 양수 마진이어도 로또가 아니라 확인 필요다.
   const weak = await evaluateLh(notice, trades(2200).slice(0, 5));
   assert.equal(weak.confidence, '하');
-  assert.equal(weak.status, STATUS.LOTTO);
+  assert.equal(weak.status, STATUS.CHECK);
 });
 
 test('a failed or capped LH lookup is 판별 불가, missing data stays 대상 외', async () => {
@@ -757,4 +757,16 @@ test('a full run drops a stored 로또 when a 하 estimate is clearly negative',
   assert.equal(await run({ env: off.env, deps: off.deps }), 0);
   assert.equal(off.state.upserts[0].evaluation.status, STATUS.LOTTO);
   assert.ok(summaryOf(off).includes(' lotto_demoted=0 '), summaryOf(off));
+});
+
+test('an LH notice that evaluates to 확인 필요 is counted in lh_evaluated and sends no alert', async () => {
+  // 비교 단지 1곳(신뢰도 하)의 양수 마진
+  const h = runHarness({ unit: 2200, jibuns: ['a1'] });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ evaluation, properties }] = h.state.upserts;
+  assert.equal(evaluation.status, STATUS.CHECK);
+  assert.equal(properties['로또 여부'].select.name, STATUS.CHECK);
+  assert.equal(h.kakao.length, 0);
+  assert.ok(summaryOf(h).includes(' lh_evaluated=1 '), summaryOf(h));
+  assert.ok(summaryOf(h).includes(' check_needed=1 '), summaryOf(h));
 });

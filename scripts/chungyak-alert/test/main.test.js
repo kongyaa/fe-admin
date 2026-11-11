@@ -1175,3 +1175,98 @@ test('invalid mode exits 1 before doing anything', async () => {
   assert.equal(await run({ env: { CHUNGYAK_MODE: 'nope' }, deps: h.deps }), 1);
   assert.equal(h.kakao.length, 0);
 });
+
+// ---- 확인 필요(시세 근거 약함): 긴급 알림 없음, 주간 메일의 별도 구역 ----
+
+test('urgent selection never includes 확인 필요', () => {
+  const base = { notice: notice(), urgentDate: null, pageId: 'p' };
+  assert.equal(selectUrgent([{ ...base, status: '확인 필요' }], THU, regions).length, 0);
+  assert.equal(selectUrgent([{ ...base, status: '로또' }, { ...base, status: '확인 필요' }], THU, regions).length, 1);
+});
+
+test('weekly selection carries the status, margin rate, confidence and note of a 확인 필요 notice', () => {
+  const record = {
+    notice: notice({ stages: [{ name: '접수', start: THU, end: THU }] }),
+    status: '확인 필요',
+    marginRate: 0.007,
+    confidence: '중',
+    checkNote: '사유',
+  };
+  const [item] = selectWeekly([record], '2026-11-02', '2026-11-08', regions);
+  assert.equal(item.status, '확인 필요');
+  assert.equal(item.marginRate, 0.007);
+  assert.equal(item.confidence, '중');
+  assert.equal(item.checkNote, '사유');
+  // 판정하지 않은 공고는 값이 없다.
+  const [bare] = selectWeekly([{ notice: record.notice, status: null }], '2026-11-02', '2026-11-08', regions);
+  assert.deepEqual([bare.marginRate, bare.confidence, bare.checkNote], [null, null, null]);
+});
+
+test('weekly mail lists 확인 필요 in its own section apart from 로또, and omits the section when none', () => {
+  const week = [{ name: '접수', start: THU, end: THU }];
+  const mail = buildWeeklyMail({
+    items: [
+      { notice: notice({ key: 'a', name: '합성로또단지' }), status: '로또', weekStages: week },
+      {
+        notice: notice({ key: 'b', name: '합성<확인>단지', region: '경기' }),
+        status: '확인 필요',
+        weekStages: week,
+        marginRate: 0.275,
+        confidence: '하',
+        checkNote: '무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))',
+      },
+      { notice: notice({ key: 'c', name: '합성일반단지' }), status: '아님', weekStages: week },
+    ],
+    monday: '2026-11-02',
+    sunday: '2026-11-08',
+  });
+  // 별도 구역에 이름, 마진율, 신뢰도, 사유가 있다. HTML은 이스케이프한다.
+  assert.ok(mail.html.includes('<h3>확인 필요(시세 근거 약함)</h3>'), mail.html);
+  assert.ok(mail.html.includes('<li>합성&lt;확인&gt;단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))</li>'), mail.html);
+  assert.ok(!mail.html.includes('<확인>'));
+  // 구역은 목록 뒤, 면책 문구 앞이다. 로또와 섞이지 않는다.
+  assert.ok(mail.html.indexOf('</table>') < mail.html.indexOf('확인 필요(시세 근거 약함)'));
+  assert.ok(mail.html.indexOf('확인 필요(시세 근거 약함)') < mail.html.indexOf('추정치'));
+  assert.equal(mail.html.match(/<strong>\[로또\]<\/strong>/g).length, 1);
+  assert.ok(mail.html.includes('[확인 필요] 합성'));
+  const section = mail.html.slice(mail.html.indexOf('<h3>'));
+  assert.ok(!section.includes('합성로또단지') && !section.includes('합성일반단지'));
+  // 텍스트판
+  assert.ok(mail.text.includes('[로또] 합성로또단지'));
+  assert.ok(mail.text.includes('[확인 필요] 합성<확인>단지'));
+  assert.ok(mail.text.includes('확인 필요(시세 근거 약함)\n'));
+  assert.ok(mail.text.includes('- 합성<확인>단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))'));
+  assert.ok(!mail.text.includes('- 합성로또단지'));
+  assert.equal(mail.subject, '[청약] 금주 일정 2026-11-02 ~ 2026-11-08 (3건)');
+
+  // 없으면 구역이 없다. 값이 비어도 깨지지 않는다.
+  const none = buildWeeklyMail({
+    items: [{ notice: notice(), status: '로또', weekStages: week }, { notice: notice({ key: 'z' }), status: '아님', weekStages: week }],
+    monday: '2026-11-02',
+    sunday: '2026-11-08',
+  });
+  assert.ok(!none.html.includes('확인 필요') && !none.text.includes('확인 필요'));
+  // 이번 실행에서 판정하지 않고 저장된 상태만 가져온 행(checkNote 없음)은 구역에 넣지 않는다. 목록의 표시는 그대로다.
+  const carried = buildWeeklyMail({ items: [{ notice: notice({ name: '합성이월' }), status: '확인 필요', weekStages: week, marginRate: null, confidence: null, checkNote: null }], monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(!carried.html.includes('<h3>') && !carried.html.includes('마진율 없음'), carried.html);
+  assert.ok(!carried.text.includes('마진율 없음') && !carried.text.includes('확인 필요(시세 근거 약함)'), carried.text);
+  assert.ok(carried.html.includes('[확인 필요] 합성이월'));
+  // 마진율과 신뢰도는 한 번만 적는다.
+  const once = buildWeeklyMail({ items: [{ notice: notice({ name: '합성일회' }), status: '확인 필요', weekStages: week, marginRate: 0.007, confidence: '중', checkNote: '사유' }], monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(once.html.includes('<li>합성일회 (서울): 마진율 0.7%, 신뢰도 중, 사유</li>'), once.html);
+  const empty = buildWeeklyMail({ items: [], monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(!empty.html.includes('확인 필요') && empty.html.includes('금주 수도권 접수 일정이 없습니다.'));
+});
+
+test('Notion writes the 확인 필요 status as a select option and reads it back, and a new database offers it', async () => {
+  const props = buildProperties(notice(), { status: '확인 필요', reason: '사유' }, THU);
+  assert.deepEqual(props['로또 여부'], { select: { name: '확인 필요' } });
+  const parsed = parseExistingPage({ id: 'p', properties: { '로또 여부': { select: { name: '확인 필요' } } } });
+  assert.equal(parsed.lotto, '확인 필요');
+
+  const fresh = notionFake();
+  const store = createNotionStore({ key: 'k', parentPageId: 'parent', config: notionConfig, sources: ['a'], fetch: fresh.fetch, minIntervalMs: 0 });
+  await store.init();
+  const created = fresh.calls.find((call) => call.path === '/databases');
+  assert.deepEqual(created.body.properties['로또 여부'].select.options.map((option) => option.name), ['로또', '아님', '판별 불가', '대상 외', '확인 필요']);
+});

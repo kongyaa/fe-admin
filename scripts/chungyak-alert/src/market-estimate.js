@@ -472,7 +472,10 @@ export function selectComparables(complexes, subject, { market, lotto }) {
       // 가장 좁은 범위에 거래가 충분했는데 연식 때문에 넓혔으면 한 단계 내린다.
       const scopePenalty = scope !== scopes[0][0] && total(firstPool) >= lotto.minSamples;
       const townWide = Boolean(place.town) && scope === '시군구';
-      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge, scopePenalty, townWide };
+      // widened는 가장 좁은 범위가 아니라 넓힌 범위에서 비교 단지를 골랐다는 뜻이다. 연식 때문이든 거래가 모자라서든 같다.
+      // 가장 좁은 범위를 실제로 볼 수 있었을 때만 넓힌 것이다. 법정동을 읽지 못한 동 주소는 처음부터 시군구라 넓힌 것이 아니다.
+      const widened = scope !== scopes[0][0] && Boolean(place.town || place.dong);
+      return { scope, picked, ageStep, lastAgeStep: steps.length - 1, maxAge, scopePenalty, townWide, widened };
     }
   }
   return null;
@@ -494,6 +497,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
   const scoped = selectComparables(groupComplexes(rows, model.area, context), subject, context);
   if (!scoped) return null;
   const picked = scoped.picked.map((complex) => ({ ...complex, ...inputs.stations.get(complex.key) }));
+  const stationLookupFailed = Boolean(inputs.stationLookupFailed);
   const { adjustment } = market;
   const coverage = picked.filter(hasWalk).length / picked.length;
   // 값이 있는 단지만 보정하고 나머지는 그대로 두면 섞이므로, 값이 적으면 전체에서 역 보정을 뺀다.
@@ -525,31 +529,41 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
   const samples = adjusted.reduce((sum, complex) => sum + complex.samples, 0);
   const middle = weightedQuantile(equal, 0.5);
   const totals = candidateTotals(model, market, middle, middle * (1 - safe.discount));
+  const confidenceInputs = {
+    samples,
+    comparables: adjusted.length,
+    spread,
+    looError,
+    stationState,
+    presaleOk: inputs.presaleOk,
+    ageStep: scoped.ageStep,
+    lastAgeStep: scoped.lastAgeStep,
+    scopePenalty: scoped.scopePenalty,
+    lastStepMinComplexes: market.safeValue.minComplexesForLoo,
+    discountExceeded: safe.exceeded,
+    forceLow: scoped.townWide,
+  };
+  const confidence = comparableConfidence(confidenceInputs, market.confidence);
+  // 분양권·역 정보 조회 실패만 없었을 때의 신뢰도. 달라지면 조회 실패로 내려간 것이다.
+  // 비교 단지가 적거나 퍼짐이 크거나 범위를 넓힌 것 같은 자료 문제는 그대로 둔다.
+  const lookupFailed = !inputs.presaleOk || (stationLookupFailed && stationState === STATION.NO_DATA);
+  const withoutFailure = lookupFailed
+    ? comparableConfidence({ ...confidenceInputs, presaleOk: true, stationState: stationLookupFailed && stationState === STATION.NO_DATA ? STATION.USED : stationState }, market.confidence)
+    : confidence;
   return {
     ...totals,
+    confidenceBeforeLookupFailure: withoutFailure !== confidence ? withoutFailure : null,
     discount: safe.discount,
     discountMeasured: safe.measured,
     discountExceeded: safe.exceeded,
     outliers,
-    confidence: comparableConfidence({
-      samples,
-      comparables: adjusted.length,
-      spread,
-      looError,
-      stationState,
-      presaleOk: inputs.presaleOk,
-      ageStep: scoped.ageStep,
-      lastAgeStep: scoped.lastAgeStep,
-      scopePenalty: scoped.scopePenalty,
-      lastStepMinComplexes: market.safeValue.minComplexesForLoo,
-      discountExceeded: safe.exceeded,
-      forceLow: scoped.townWide,
-    }, market.confidence),
+    confidence,
     basis: {
       kind: 'comparables',
       scope: scoped.scope,
       maxAge: scoped.maxAge,
       townWide: scoped.townWide,
+      widened: scoped.widened,
       // 근거의 금액은 공고 주택형 면적 기준이다. 작은 주택형의 ㎡당 가격을 84㎡로 늘리면 실제보다 비싸 보인다.
       area: model.area,
       outliers,
@@ -648,12 +662,23 @@ const betterRate = (candidate, current) => {
   return candidate.margin > current.margin;
 };
 
+// triggerMinMarginRate가 0 이상의 유한한 수일 때만 최소 마진율 규칙을 쓴다. 없거나 null이면 끈다.
+export const triggerMinRateOf = (lotto) => {
+  const rate = lotto.triggerMinMarginRate;
+  return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? rate : null;
+};
+
+// 분양권·역 정보 조회 실패로 신뢰도가 내려갔으면 내려가기 전 값으로 본다. 조회 한 번 실패로 판정이 바뀌지 않게 하려는 것이다.
+export const effectiveConfidence = (candidate) => candidate.confidenceBeforeLookupFailure ?? candidate.confidence;
+
 export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, preferConfident = false, lotto, market, today }) {
   const context = { market, lotto, today };
   const inputs = { stations, stationLookupFailed, presaleOk };
   let best = null;
   let bestConfident = null;
+  let bestFirm = null;
   let bestQualifying = null;
+  const minRate = triggerMinRateOf(lotto);
   let bestLowMeeting = null;
   let bestLowRate = null;
   for (const model of models) {
@@ -663,8 +688,13 @@ export function estimateBestMargin({ models, rows, subject, stations = new Map()
       ?? estimateFromComparables(model, rows, subject, inputs, context);
     if (!candidate) continue;
     if (!best || candidate.margin > best.margin) best = candidate;
-    if (candidate.confidence !== CONFIDENCE.LOW && (!bestConfident || candidate.margin > bestConfident.margin)) {
-      bestConfident = candidate;
+    if (effectiveConfidence(candidate) !== CONFIDENCE.LOW) {
+      if (!bestConfident || candidate.margin > bestConfident.margin) bestConfident = candidate;
+      // 최소 마진율(3%)을 넘는 주택형이 있으면 마진 금액이 더 큰 주택형이 근소한 마진율로 가리지 않게 먼저 본다.
+      if (minRate !== null && Number.isFinite(candidate.marginRate) && candidate.marginRate >= minRate
+        && (!bestFirm || candidate.margin > bestFirm.margin)) {
+        bestFirm = candidate;
+      }
     }
     if (qualifiesByPrice(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) {
       bestQualifying = candidate;
@@ -676,5 +706,5 @@ export function estimateBestMargin({ models, rows, subject, stations = new Map()
   }
   if (bestQualifying) return bestQualifying;
   if (!preferConfident) return best;
-  return bestConfident ?? bestLowMeeting ?? bestLowRate ?? best;
+  return bestFirm ?? bestConfident ?? bestLowMeeting ?? bestLowRate ?? best;
 }
