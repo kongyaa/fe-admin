@@ -371,6 +371,21 @@ test('restricted types keep prices and competition but skip the 시세 lookups',
   assert.equal(restrictedReason('신혼희망'), '신혼희망타운은 수익공유·전매 조건이 달라 시세 차익을 그대로 갖지 못해 주변 시세와 비교하지 않습니다');
 });
 
+test('blockPerformance reads every 구 code for a 부천 address without a 구 and merges the trades', async () => {
+  const asked = [];
+  const presaleAsked = [];
+  const { deps } = fakeDeps({
+    molit: { getTrades: async (code) => { asked.push(code); return []; } },
+    presale: { getTrades: async (code) => { presaleAsked.push(code); return { rows: [], ok: true }; } },
+  });
+  const perf = await blockPerformance({ id: 'x', district: '부천시', notice: apt({ name: '부천대장 합성', address: '경기도 부천시 대장동 일원' }), history: null }, deps);
+  // 구 없는 시 코드(41190)는 부르지 않는다. 시점(공고일, 지금)마다 구 코드 셋을 6개월씩 본다.
+  assert.deepEqual([...new Set(asked)], ['41192', '41194', '41196']);
+  assert.deepEqual([...new Set(presaleAsked)], ['41192', '41194', '41196']);
+  assert.equal(perf.market.now.estimate, null);
+  assert.notEqual(perf.marketReason, REASONS.unmapped);
+});
+
 test('blockPerformance hides a market point without enough comparables and reports each reason', async () => {
   const { calls, deps } = fakeDeps();
   const perf = await blockPerformance({ id: 'x', district: '하남시', notice: apt(), history: { competition: reported } }, deps);

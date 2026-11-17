@@ -642,47 +642,28 @@ export function buildSubject({ name, builder, umd, village = null, jibun, walkMi
   };
 }
 
-// 마진이 3억 원 이상이거나, 마진율(분양가 대비)이 20% 이상이면 가격 기준을 넘는다. 마진율이 없으면 금액만 본다.
-export const meetsPriceRule = (candidate, lotto) => candidate.margin >= lotto.minMarginManwon
-  || (Number.isFinite(candidate.marginRate) && candidate.marginRate >= lotto.minMarginRate);
-
-// 가격 기준으로 로또가 되려면 신뢰도가 중 이상이어야 한다. 주택형을 고를 때도 같은 조건을 써서
-// 신뢰도 하인 주택형의 큰 마진이 기준을 넘는 다른 주택형을 가리지 않게 한다.
-export const qualifiesByPrice = (candidate, lotto) => meetsPriceRule(candidate, lotto) && candidate.confidence !== CONFIDENCE.LOW;
-
-// 신뢰도 중 이상이면서 기준을 넘는 주택형 중 마진이 가장 큰 것을, 없으면 전체에서 마진이 가장 큰 것을 돌려준다.
-// preferConfident(가격을 확인하는 조건형 로또 후보)이면 그 사이에 신뢰도 중 이상 주택형 중 마진이 가장 큰 것을 둔다.
-// 신뢰도 하인 주택형의 마진이 더 커도 중 이상 주택형을 가리지 않게 한다. 조건 없는 공고는 예전 순서라
-// 신뢰도 하인 큰 마진이 남아 keepPreviousLotto의 보호를 받는다.
-// preferConfident인데 주택형이 모두 신뢰도 하이면, 가격 기준을 넘는 주택형 중 마진이 가장 큰 것, 없으면 마진율이
-// 가장 높은 것을 고른다. 마진 금액으로 고르면 싼 주택형의 나쁜 마진율이 비싼 주택형의 조금 음수인 마진율을 가려
-// 신뢰도 하 마진율 하한(lotto.lowConfidenceMinMarginRate)에 걸리기 때문이다. 마진율이 없으면 마진 금액으로 비교한다.
-const betterRate = (candidate, current) => {
-  if (Number.isFinite(candidate.marginRate) && Number.isFinite(current.marginRate) && candidate.marginRate !== current.marginRate) {
-    return candidate.marginRate > current.marginRate;
-  }
-  return candidate.margin > current.margin;
-};
-
-// triggerMinMarginRate가 0 이상의 유한한 수일 때만 최소 마진율 규칙을 쓴다. 없거나 null이면 끈다.
-export const triggerMinRateOf = (lotto) => {
-  const rate = lotto.triggerMinMarginRate;
-  return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? rate : null;
-};
+// 로또 마진 기준. 안전 마진이 lotto.minMarginManwon(1억 원) 이상이고 마진율(분양가 대비)이 lotto.minMarginRate(10%) 이상이어야 한다(AND).
+// 마진율을 알 수 없거나 기준이 숫자가 아니면 기준을 넘지 못한 것으로 본다(설정 오류로 로또가 쏟아지지 않게 한다).
+export const meetsMarginRule = (candidate, lotto) => Number.isFinite(lotto.minMarginManwon) && Number.isFinite(lotto.minMarginRate)
+  && candidate.margin >= lotto.minMarginManwon
+  && Number.isFinite(candidate.marginRate) && candidate.marginRate >= lotto.minMarginRate;
 
 // 분양권·역 정보 조회 실패로 신뢰도가 내려갔으면 내려가기 전 값으로 본다. 조회 한 번 실패로 판정이 바뀌지 않게 하려는 것이다.
 export const effectiveConfidence = (candidate) => candidate.confidenceBeforeLookupFailure ?? candidate.confidence;
 
+// 로또 조건 전체: 신뢰도(조회 실패로 내려간 값은 되돌려 본다)가 중 이상이고 마진 기준을 넘는다.
+// 주택형을 고를 때도 같은 조건을 써서 신뢰도 하인 주택형의 큰 마진이 기준을 넘는 다른 주택형을 가리지 않게 한다.
+export const qualifiesAsLotto = (candidate, lotto) => effectiveConfidence(candidate) !== CONFIDENCE.LOW && meetsMarginRule(candidate, lotto);
+
+// 신뢰도 중 이상이면서 로또 조건을 모두 넘는 주택형 중 마진이 가장 큰 것을 돌려준다. 없으면 전체에서 마진이 가장 큰 것이다.
+// preferConfident이면 그 사이에 신뢰도 중 이상 주택형 중 마진이 가장 큰 것을 둔다. 신뢰도 하인 주택형의 마진이 더 커도
+// 근거가 더 단단한 중 이상 주택형을 가리지 않게 한다.
 export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, preferConfident = false, lotto, market, today }) {
   const context = { market, lotto, today };
   const inputs = { stations, stationLookupFailed, presaleOk };
   let best = null;
   let bestConfident = null;
-  let bestFirm = null;
   let bestQualifying = null;
-  const minRate = triggerMinRateOf(lotto);
-  let bestLowMeeting = null;
-  let bestLowRate = null;
   for (const model of models) {
     if (!(model.area > 0) || !(model.price > 0)) continue;
     const same = sameComplexRows(rows, subject, model.area, context);
@@ -690,23 +671,34 @@ export function estimateBestMargin({ models, rows, subject, stations = new Map()
       ?? estimateFromComparables(model, rows, subject, inputs, context);
     if (!candidate) continue;
     if (!best || candidate.margin > best.margin) best = candidate;
-    if (effectiveConfidence(candidate) !== CONFIDENCE.LOW) {
-      if (!bestConfident || candidate.margin > bestConfident.margin) bestConfident = candidate;
-      // 최소 마진율(3%)을 넘는 주택형이 있으면 마진 금액이 더 큰 주택형이 근소한 마진율로 가리지 않게 먼저 본다.
-      if (minRate !== null && Number.isFinite(candidate.marginRate) && candidate.marginRate >= minRate
-        && (!bestFirm || candidate.margin > bestFirm.margin)) {
-        bestFirm = candidate;
-      }
-    }
-    if (qualifiesByPrice(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) {
-      bestQualifying = candidate;
-    }
-    if (candidate.confidence === CONFIDENCE.LOW) {
-      if (meetsPriceRule(candidate, lotto) && (!bestLowMeeting || candidate.margin > bestLowMeeting.margin)) bestLowMeeting = candidate;
-      if (!bestLowRate || betterRate(candidate, bestLowRate)) bestLowRate = candidate;
-    }
+    if (effectiveConfidence(candidate) !== CONFIDENCE.LOW && (!bestConfident || candidate.margin > bestConfident.margin)) bestConfident = candidate;
+    if (qualifiesAsLotto(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) bestQualifying = candidate;
   }
   if (bestQualifying) return bestQualifying;
-  if (!preferConfident) return best;
-  return bestFirm ?? bestConfident ?? bestLowMeeting ?? bestLowRate ?? best;
+  return preferConfident ? bestConfident ?? best : best;
+}
+
+// 구로 나뉜 시의 주소에 구가 없으면 시군구 코드가 여럿이다(src/sgg-codes.js의 resolveAddress). 코드마다 조회해 거래를 합친다.
+// 한 코드라도 실패하면 예외를 그대로 올려 호출한 쪽의 조회 실패 처리로 넘긴다.
+export async function readTradesByCodes(getTrades, codes, months) {
+  const rows = [];
+  for (const code of codes) rows.push(...(await getTrades(code, months)));
+  return rows;
+}
+
+// 분양권 전매 거래도 같다. 한 코드라도 읽지 못하면 ok가 false다(신뢰도만 낮춘다).
+export async function readPresaleByCodes(getPresale, codes, months) {
+  if (!getPresale) return { rows: [], ok: true };
+  const rows = [];
+  let ok = true;
+  for (const code of codes) {
+    try {
+      const result = await getPresale(code, months);
+      rows.push(...result.rows);
+      ok = ok && result.ok;
+    } catch {
+      ok = false;
+    }
+  }
+  return { rows, ok };
 }

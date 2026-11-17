@@ -30,6 +30,33 @@ test('urgent selection needs lotto, alert region and a stage starting today', ()
   assert.equal(selectUrgent([base], '2026-11-06', regions).length, 0);
 });
 
+test('with a profile loaded an urgent alert also needs a recommended track, and the 로또 status is untouched', () => {
+  const track = { track: '특별(생애최초)', date: THU, end: THU };
+  const base = { notice: notice(), status: '로또', urgentDate: null, pageId: 'p' };
+  const options = { requireTrack: true };
+  // 추천 전형이 있으면 알림 대상이다.
+  assert.equal(selectUrgent([{ ...base, recommendation: track }], THU, regions, options).length, 1);
+  // 추천 전형이 없으면(null) 로또여도 알림 대상이 아니다.
+  assert.equal(selectUrgent([{ ...base, recommendation: null }], THU, regions, options).length, 0);
+  // 아직 모르는 값(undefined: 조회 실패로 이전 추천 유지, 판정 안 함)은 막지 않는다.
+  assert.equal(selectUrgent([base], THU, regions, options).length, 1);
+  // 다른 조건은 그대로다. 로또가 아니거나 지역 밖이거나 오늘 시작이 아니거나 이미 보낸 공고는 추천 전형이 있어도 뺀다.
+  assert.equal(selectUrgent([{ ...base, status: '확인 필요', recommendation: track }], THU, regions, options).length, 0);
+  assert.equal(selectUrgent([{ ...base, notice: notice({ region: '부산' }), recommendation: track }], THU, regions, options).length, 0);
+  assert.equal(selectUrgent([{ ...base, recommendation: track }], '2026-11-06', regions, options).length, 0);
+  assert.equal(selectUrgent([{ ...base, urgentDate: THU, recommendation: track }], THU, regions, options).length, 0);
+  // 프로필이 없으면(requireTrack을 주지 않으면) 추천 전형을 보지 않는다. 예전과 같다.
+  assert.equal(selectUrgent([{ ...base, recommendation: null }], THU, regions).length, 1);
+  assert.equal(selectUrgent([{ ...base, recommendation: null }], THU, regions, { requireTrack: false }).length, 1);
+  // 고른 기록에는 오늘 시작하는 단계가 붙고, 입력은 바뀌지 않는다.
+  const records = [{ ...base, recommendation: track }, { ...base, notice: notice({ key: '2-2' }), recommendation: null }];
+  const [picked] = selectUrgent(records, THU, regions, options);
+  assert.equal(picked.stage.start, THU);
+  assert.equal(picked.notice.key, '1-1');
+  assert.equal(records.length, 2);
+  assert.equal(records[0].stage, undefined);
+});
+
 test('urgent selection skips a notice already sent today', () => {
   const base = { notice: notice(), status: '로또', pageId: 'p' };
   assert.equal(selectUrgent([{ ...base, urgentDate: THU }], THU, regions).length, 0);
@@ -319,13 +346,13 @@ test('Notion outage state belongs to one store, and a stalled response body trip
   assert.equal(calls, 2);
 });
 
-// run() 통합 테스트용 가짜
+// run() 통합 테스트용 가짜. 기본 공고는 불법행위 재공급(HOUSE_SECD 06)이다. 시세를 보지 않는 조건이라 시세 자료 없이도 로또로 정해진다.
 const SECRET = 'SECRET-DATA-KEY';
 const remainderRow = (start, extra = {}) => ({
   HOUSE_MANAGE_NO: '7',
   PBLANC_NO: '7',
   HOUSE_NM: '무순위 단지',
-  HOUSE_SECD: '04',
+  HOUSE_SECD: '06',
   SUBSCRPT_AREA_CODE_NM: '서울',
   HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
   RCRIT_PBLANC_DE: '2026-11-01',

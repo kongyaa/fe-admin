@@ -736,8 +736,8 @@ test('malformed values in all four parsers only add lh_parse_failed soft kinds',
   assert.equal(evaluation.reason, 'LH 공급 정보 없음 (공고중)');
 });
 
-test('a full run drops a stored 로또 when a 하 estimate is clearly negative', async () => {
-  // 비교 단지 1곳(신뢰도 하), 마진율이 lotto.lowConfidenceMinMarginRate(-5%)보다 낮다.
+test('a full run drops a stored 로또 when a 하 estimate has a negative margin, mild or clear', async () => {
+  // 비교 단지 1곳(신뢰도 하), 마진율이 -5%보다 낮다.
   const existing = () => new Map([['LH-m1', { id: 'page-LH-m1', key: 'LH-m1', lotto: STATUS.LOTTO, urgentDate: null, end: '2026-11-20', name: '마곡 공공분양주택 입주자모집공고' }]]);
   const h = runHarness({ unit: 1100, jibuns: ['a1'], existing: existing() });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
@@ -745,18 +745,19 @@ test('a full run drops a stored 로또 when a 하 estimate is clearly negative',
   assert.equal(evaluation.confidence, '하');
   assert.ok(evaluation.marginRate <= -0.05, String(evaluation.marginRate));
   assert.equal(evaluation.status, STATUS.NOT);
-  assert.equal(evaluation.lowConfidenceNegative, true);
-  assert.ok(evaluation.reason.startsWith('LH 공공분양(분양가상한제) 해당이나 시세 대비 이점 없음(신뢰도 하, 마진율 ≤ -5%); '), evaluation.reason);
+  assert.ok(evaluation.reason.startsWith('LH 공공분양(분양가상한제) 해당이나 시세 대비 이점 없음; '), evaluation.reason);
   assert.equal(properties['로또 여부'].select.name, STATUS.NOT);
   assert.equal(h.kakao.length, 0);
   assert.ok(summaryOf(h).includes(' lotto_demoted=1 '), summaryOf(h));
   assert.ok(lineOf(h, 'market').endsWith(' soft=none'), lineOf(h, 'market'));
 
-  // 규칙을 끄면(null) 예전처럼 놓치지 않게 로또다.
-  const off = runHarness({ unit: 1100, jibuns: ['a1'], existing: existing(), runConfig: { ...config, lotto: { ...config.lotto, lowConfidenceMinMarginRate: null } } });
-  assert.equal(await run({ env: off.env, deps: off.deps }), 0);
-  assert.equal(off.state.upserts[0].evaluation.status, STATUS.LOTTO);
-  assert.ok(summaryOf(off).includes(' lotto_demoted=0 '), summaryOf(off));
+  // 마진율 -4%의 하 추정도 같다. 예전의 -5%~0 완충(놓치지 않게 로또로 유지)은 없다.
+  const mild = runHarness({ unit: 1200, jibuns: ['a1'], existing: existing() });
+  assert.equal(await run({ env: mild.env, deps: mild.deps }), 0);
+  assert.equal(mild.state.upserts[0].evaluation.confidence, '하');
+  assert.equal(mild.state.upserts[0].evaluation.status, STATUS.NOT);
+  assert.equal(mild.kakao.length, 0);
+  assert.ok(summaryOf(mild).includes(' lotto_demoted=1 '), summaryOf(mild));
 });
 
 test('an LH notice that evaluates to 확인 필요 is counted in lh_evaluated and sends no alert', async () => {

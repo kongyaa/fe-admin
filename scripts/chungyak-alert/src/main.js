@@ -121,10 +121,15 @@ export function splitLhScope(notices, rows, config) {
   return { notices: kept, archiveRows, counts, saleRegions, claimedKeys };
 }
 
-export function selectUrgent(records, today, alertRegions) {
+// 오늘 접수가 시작되는 로또 공고. 프로필을 읽었으면(requireTrack) 신청할 수 있는 추천 전형도 있어야 한다.
+// recommendation이 null이면 이 신청자가 낼 수 있는 전형이 없다는 뜻이라 로또여도 긴급 알림을 보내지 않는다. 로또 상태는 바꾸지 않는다.
+// recommendation이 undefined이면(조회 실패로 이전 추천을 유지했거나 이번에 판정하지 않음) 아직 모르는 것이라 막지 않는다.
+// 프로필이 없으면 예전처럼 상태와 지역과 접수 시작일만 본다.
+export function selectUrgent(records, today, alertRegions, { requireTrack = false } = {}) {
   const selected = [];
   for (const record of records) {
     if (record.status !== STATUS.LOTTO) continue;
+    if (requireTrack && record.recommendation === null) continue;
     if (!alertRegions.includes(record.notice.region)) continue;
     if (record.urgentDate === today) continue;
     const stage = record.notice.stages.find((item) => item.start === today);
@@ -659,6 +664,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       marginRate: evaluation?.marginRate ?? null,
       confidence: evaluation?.confidence ?? null,
       checkNote: evaluation?.checkNote ?? null,
+      // 추천 전형. 프로필이 없으면 undefined다. selectUrgent가 신청할 수 있는 전형이 있는지 본다.
+      recommendation: evaluation?.recommendation,
       // 관심 체크로 남긴 신청할 수 없는 공고. --print 표시에만 쓴다.
       unapplicable,
     };
@@ -700,7 +707,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       markNotionFailed: () => { notionFailed = true; },
     };
     // 긴급 알림은 놓치는 쪽이 더 나쁘므로 기록할 곳이 없어도 보낸다. 다음 실행과 중복될 수 있다.
-    const urgent = selectUrgent(records, today, config.alertRegions);
+    const urgent = selectUrgent(records, today, config.alertRegions, { requireTrack: Boolean(profile) });
     for (const record of urgent) {
       const text = buildKakaoText({ notice: record.notice, stage: record.stage, reason: record.shortReason ?? record.reason });
       await deliverAlert(record, text, 'urgent', alertContext);
@@ -829,7 +836,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
   if (flags.dryRun) {
     const lotto = records.filter((record) => record.status === STATUS.LOTTO).length;
     const checkNeeded = records.filter((record) => record.status === STATUS.CHECK).length;
-    const urgent = selectUrgent(records, today, config.alertRegions);
+    const urgent = selectUrgent(records, today, config.alertRegions, { requireTrack: Boolean(profile) });
     // Notion을 읽지 못한 dry-run은 후보를 알 수 없어 건수를 남기지 않는다.
     const interest = dryRunRows
       ? ` interest_candidates=${selectInterest([...interestRows.values()], today, new Set(urgent.map((record) => record.notice.key))).length}`

@@ -14,11 +14,12 @@ const SECRET = 'SECRET-DATA-KEY';
 const FALLBACK_LINK = 'https://www.applyhome.co.kr';
 const LINK = 'https://www.applyhome.co.kr/interest';
 
+// HOUSE_SECD 06(불법행위 재공급)은 시세를 보지 않는 조건이라 시세 자료 없이도 로또다. 무순위(04)는 추정이 없으면 확인 필요다.
 const collected = (extra = {}) => ({
   HOUSE_MANAGE_NO: '7',
   PBLANC_NO: '7',
   HOUSE_NM: '무순위 단지',
-  HOUSE_SECD: '04',
+  HOUSE_SECD: '06',
   SUBSCRPT_AREA_CODE_NM: '서울',
   HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
   RCRIT_PBLANC_DE: '2026-11-01',

@@ -9,10 +9,11 @@ import {
   lookupCandidates,
   marginRateOf,
   matchApartment,
-  meetsPriceRule,
+  qualifiesAsLotto,
+  readPresaleByCodes,
+  readTradesByCodes,
   restrictedType,
   sharedGainOf,
-  triggerMinRateOf,
 } from './market-estimate.js';
 import { hasLhModels } from './lh-detail-map.js';
 import { lhTypeClass } from './lh-scope.js';
@@ -154,13 +155,15 @@ function subjectJibun(address, umd, village) {
 
 // 공고 단지 입력이 있을 때만 비교 단지의 역 정보를 조회한다. 조회 실패는 클라이언트가 한 번만 로그에 남긴다.
 // 코드 오류는 조회 실패로 숨기지 않고 호출한 쪽의 오류 처리로 올린다.
-async function resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft }) {
+async function resolveStations({ aptInfo, codes, subject, models, rows, lotto, market, today, onSoft }) {
   const stations = new Map();
   if (!aptInfo || !Number.isFinite(subject.walkMinutes)) return { stations, failed: false };
   const candidates = lookupCandidates({ models, rows, subject, lotto, market, today });
   if (candidates.length === 0) return { stations, failed: false };
   try {
-    const directory = await aptInfo.getDirectory(code);
+    // 구가 없는 주소의 시는 구 코드마다 단지 목록을 받아 합친다.
+    const directory = [];
+    for (const code of codes) directory.push(...(await aptInfo.getDirectory(code)));
     for (const complex of candidates) {
       const apartment = matchApartment(complex, directory, market);
       if (!apartment) {
@@ -174,15 +177,6 @@ async function resolveStations({ aptInfo, code, subject, models, rows, lotto, ma
   } catch (error) {
     if (!(error instanceof AppError)) throw error;
     return { stations: new Map(), failed: true };
-  }
-}
-
-async function readPresale(getPresale, code, months) {
-  if (!getPresale) return { rows: [], ok: true };
-  try {
-    return await getPresale(code, months);
-  } catch {
-    return { rows: [], ok: false };
   }
 }
 
@@ -249,29 +243,22 @@ const priceCheckOn = (lotto, key) => isPlainObject(lotto.triggerPriceCheck) && l
 // remainderMaxRound가 양의 정수일 때만 반복 공급 규칙을 쓴다. null이면 끈다.
 const maxRoundOf = (lotto) => (Number.isInteger(lotto.remainderMaxRound) && lotto.remainderMaxRound > 0 ? lotto.remainderMaxRound : null);
 
-// lowConfidenceMinMarginRate가 0 이하의 유한한 수일 때만 신뢰도 하 음수 마진 규칙을 쓴다. 없거나 null이면 끈다.
-const lowMinRateOf = (lotto) => {
-  const rate = lotto.lowConfidenceMinMarginRate;
-  return typeof rate === 'number' && Number.isFinite(rate) && rate <= 0 ? rate : null;
-};
-
-// 판별 근거용 비율 표기. -0.05 → "-5%", -0.025 → "-2.5%".
+// 판별 근거용 비율 표기. 0.1 → "10%", -0.025 → "-2.5%".
 const ratePercent = (rate) => `${Math.round(rate * 1000) / 10}%`;
 
-// 기준 미만임을 보이는 비율 표기. 소수 첫째 자리까지 내림해 2.96%가 "3% < 3%"로 찍히지 않게 한다.
+// 기준 미만임을 보이는 비율 표기. 소수 첫째 자리까지 내림해 9.96%가 "10% < 10%"로 찍히지 않게 한다.
 const floorPercent = (rate) => `${Math.floor(rate * 1000 + 1e-9) / 10}%`;
 
 // 있는데 형식이 틀린 조건형 설정. 예전 동작으로 돌아가므로 로그의 soft=bad_trigger_config로 알린다.
 export function badTriggerConfig(lotto) {
   const checks = lotto.triggerPriceCheck;
   const maxRound = lotto.remainderMaxRound;
-  const lowMinRate = lotto.lowConfidenceMinMarginRate;
-  const triggerMinRate = lotto.triggerMinMarginRate;
   return (checks !== undefined && !isPlainObject(checks))
-    || (maxRound !== undefined && maxRound !== null && maxRoundOf(lotto) === null)
-    || (lowMinRate !== undefined && lowMinRate !== null && lowMinRateOf(lotto) === null)
-    || (triggerMinRate !== undefined && triggerMinRate !== null && triggerMinRateOf(lotto) === null);
+    || (maxRound !== undefined && maxRound !== null && maxRoundOf(lotto) === null);
 }
+
+// 로또 마진 기준(lotto.minMarginManwon, lotto.minMarginRate)이 유한한 수가 아니면 어떤 공고도 로또가 될 수 없다. 로그의 soft=bad_margin_config로 알린다.
+export const badMarginConfig = (lotto) => !Number.isFinite(lotto.minMarginManwon) || !Number.isFinite(lotto.minMarginRate);
 
 // 비교 범위를 넓혀 쓴 추정이면 판별 근거에 덧붙일 말. 읍·면 주소가 같은 읍·면 단지를 못 찾아 시군구로 넓힌 경우가 가장 위험하다.
 // 더 좁은 범위를 실제로 볼 수 있었을 때만 적는다(basis.widened).
@@ -280,18 +267,58 @@ function scopeNote(basis) {
   return basis.townWide ? '비교 범위 확대(같은 읍·면 단지 없어 시군구)' : `비교 범위 확대(${basis.scope})`;
 }
 
-// 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다.
-// 시세 근거가 로또라고 말하기에 약하면 아님이 아니라 확인 필요다(STATUS.CHECK). 긴급 알림은 보내지 않는다.
-// 1) 신뢰도 중 이상 추정: 마진이 음수면 아님. 마진율이 triggerMinMarginRate(3%) 미만이면 추정 오차 안이라 확인 필요, 이상이면 로또다.
-// 2) 신뢰도 하 추정: 마진율이 lowConfidenceMinMarginRate(-5%) 이하로 뚜렷한 음수면 아님(lowConfidenceNegative).
-//    마진이 양수면 가격 기준과 상관없이 확인 필요다. 신뢰도 하 추정은 비교 범위가 넓어 과대 추정일 수 있어
-//    양수 마진만으로 로또라 하면 안 된다. 마진율이 -5%와 0 사이면 놓치지 않게 로또로 둔다.
-// 3) 추정이 없으면 놓치지 않게 로또로 둔다.
-// 4) 무순위가 remainderMaxRound차 이상이면 확인 필요가 될 공고도, 추정이 없거나 약한 공고도 아님이다(repeatedRound).
-//    신뢰도 중 이상에서 마진율이 기준을 넘는 로또만 차수와 상관없이 로또로 둔다.
+// 시세 추정의 등급. 마진이 0 이하면 아님, 로또 조건(신뢰도 중 이상, 안전 마진, 마진율)을 모두 넘으면 로또,
+// 마진은 양수인데 하나라도 못 넘으면 확인 필요다.
+const gradeOf = (best, lotto) => {
+  if (!(best.margin > 0)) return 'not';
+  return qualifiesAsLotto(best, lotto) ? 'lotto' : 'check';
+};
+
+// 로또 조건 중 넘지 못한 마진 기준. 근거에는 실제 값을, 주간 메일용 사유에는 기준만 적는다. 마진율을 모르면 마진율 기준도 못 넘은 것이다.
+function missedMargins(best, lotto) {
+  const missed = [];
+  if (!(best.margin >= lotto.minMarginManwon)) {
+    // 실제 값은 만 원 단위로 적는다. 억 단위로 줄이면 9,999만 원이 "1.0억 < 1.0억"으로 읽힌다.
+    missed.push({ actual: `안전 마진 ${best.margin}만 원 < ${lotto.minMarginManwon}만 원`, bound: `안전 마진 ${eok(lotto.minMarginManwon)} 미만` });
+  }
+  if (!(Number.isFinite(best.marginRate) && best.marginRate >= lotto.minMarginRate)) {
+    const actual = Number.isFinite(best.marginRate) ? `마진율 ${floorPercent(best.marginRate)} < ${ratePercent(lotto.minMarginRate)}` : '마진율 없음';
+    missed.push({ actual, bound: `마진율 ${ratePercent(lotto.minMarginRate)} 미만` });
+  }
+  return missed;
+}
+
+// 확인 필요인 까닭. 신뢰도가 하(조회 실패로만 내려간 값은 되돌려 본다)이면 시세 근거가 약하다는 것을, 아니면 넘지 못한 마진 기준을 적는다.
+// note는 주간 메일의 확인 필요 항목에 쓰는 짧은 사유다. 마진과 신뢰도는 메일에서 따로 적는다.
+function checkCause(best, lotto) {
+  if (effectiveConfidence(best) === CONFIDENCE.LOW) {
+    const scope = scopeNote(best.basis);
+    return { reason: `시세 근거가 약함(신뢰도 하${scope ? `, ${scope}` : ''})`, note: `시세 근거가 약함${scope ? `(${scope})` : ''}` };
+  }
+  const missed = missedMargins(best, lotto);
+  return {
+    reason: `마진이 기준에 못 미침(${missed.map((item) => item.actual).join(', ')})`,
+    note: `마진이 기준에 못 미침(${missed.map((item) => item.bound).join(' 또는 ')})`,
+  };
+}
+
+// 조회 실패로 낮아진 신뢰도를 되돌려 판정했으면 판별 근거 끝에 밝힐 말.
+function lookupNoteOf(best) {
+  const level = effectiveConfidence(best);
+  return level !== best.confidence ? `; 분양권·역 정보 조회 실패로 신뢰도를 ${best.confidence}로 낮췄으나 ${level} 기준으로 판정` : '';
+}
+
+// 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다. 끈 조건(불법행위 재공급)은 늘 로또다.
+// 시세를 보는 조건은 일반 공고와 같은 기준(gradeOf)으로 가른다.
+// 1) 추정이 있고 안전 마진이 0 이하면 신뢰도와 상관없이 아님.
+// 2) 신뢰도 중 이상이고 안전 마진 lotto.minMarginManwon 이상, 마진율 lotto.minMarginRate 이상이면 로또.
+// 3) 마진은 양수인데 신뢰도가 하이거나 마진 기준 중 하나라도 못 넘으면 확인 필요(STATUS.CHECK). 긴급 알림은 보내지 않는다.
+// 4) 추정이 없으면 확인 필요다. 시세를 모르는 채로 로또라고 알리지 않는다.
+// 5) 무순위가 remainderMaxRound차 이상이면 확인 필요가 될 공고도, 추정이 없는 공고도 아님이다(repeatedRound).
+//    로또 조건을 모두 넘는 공고만 차수와 상관없이 로또로 둔다.
 // 신뢰도는 분양권·역 정보 조회 실패로만 내려갔으면 내려가기 전 값으로 본다(effectiveConfidence). 조회 한 번 실패로
 // 중 신뢰도의 로또가 확인 필요가 되어 알림이 사라지지 않게 한다. 표시하는 신뢰도는 하 그대로다.
-function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
+function decideTrigger(trigger, { notice, best, undetermined, lookupFailed = false, lotto }) {
   const { key, label } = trigger;
   const candidate = {
     status: STATUS.LOTTO,
@@ -312,69 +339,56 @@ function decideTrigger(trigger, { notice, best, undetermined, lotto }) {
     };
   };
   // 반복 공급이면 확인 필요 대신 아님이다. 같은 공고가 계속 나오는 무순위를 근거가 약한 채로 알리지 않는다.
-  // checkNote는 주간 메일의 확인 필요 항목에 쓰는 짧은 사유다. 마진과 신뢰도는 메일에서 따로 적는다.
-  const checkResult = (head, note) => (repeated ? repeatedResult() : {
+  const checkResult = (head, note, lookupNote = '') => (repeated ? repeatedResult() : {
     status: STATUS.CHECK,
-    reason: `${head}; ${priceText(best)}`,
-    shortReason: `${head}; ${shortPriceText(best)}`,
+    reason: `${best ? `${head}; ${priceText(best)}` : head}${lookupNote}`,
+    shortReason: best ? `${head}; ${shortPriceText(best)}` : head,
     checkNote: note,
   });
-  const level = best ? effectiveConfidence(best) : null;
-  // 조회 실패로 낮아진 신뢰도를 되돌려 판정했으면 판별 근거 끝에 밝힌다.
-  const lookupNote = best && level !== best.confidence ? `; 분양권·역 정보 조회 실패로 신뢰도를 ${best.confidence}로 낮췄으나 ${level} 기준으로 판정` : '';
-  if (best && level !== CONFIDENCE.LOW) {
-    if (best.margin < 0) {
-      return {
-        status: STATUS.NOT,
-        reason: `${label} 해당이나 시세 대비 이점 없음; ${priceText(best)}${lookupNote}`,
-        shortReason: `${label} 해당이나 시세 이점 없음; ${shortPriceText(best)}`,
-      };
-    }
-    const minRate = triggerMinRateOf(lotto);
-    if (minRate !== null && Number.isFinite(best.marginRate) && best.marginRate < minRate) {
-      const result = checkResult(
-        `${label} 해당이나 마진이 근소함(마진율 ${floorPercent(best.marginRate)} < ${ratePercent(minRate)})`,
-        `${label} 해당이나 마진이 근소함(최소 ${ratePercent(minRate)} 미만)`,
-      );
-      return result.status === STATUS.CHECK ? { ...result, reason: `${result.reason}${lookupNote}` } : result;
-    }
-    return lookupNote ? { ...candidate, reason: `${candidate.reason}${lookupNote}` } : candidate;
+  if (!best) {
+    const head = `${label} 해당이나 시세 추정 없음(${undetermined})`;
+    const result = checkResult(head, head);
+    // 시세 조회 실패로 모르는 것이면 keepPreviousLotto가 저장된 로또를 유지한다.
+    return result.status === STATUS.CHECK && lookupFailed ? { ...result, lookupFailed: true } : result;
   }
-  if (best) {
-    const lowMinRate = lowMinRateOf(lotto);
-    if (lowMinRate !== null && Number.isFinite(best.marginRate) && best.marginRate <= lowMinRate) {
-      const head = `${label} 해당이나 시세 대비 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
-      const shortHead = `${label} 해당이나 시세 이점 없음(신뢰도 하, 마진율 ≤ ${ratePercent(lowMinRate)})`;
-      return {
-        status: STATUS.NOT,
-        reason: `${head}; ${priceText(best)}`,
-        shortReason: `${shortHead}; ${shortPriceText(best)}`,
-        lowConfidenceNegative: true,
-      };
-    }
-    if (best.margin > 0) {
-      const scope = scopeNote(best.basis);
-      return checkResult(
-        `${label} 해당이나 시세 근거가 약함(신뢰도 하${scope ? `, ${scope}` : ''})`,
-        `${label} 해당이나 시세 근거가 약함${scope ? `(${scope})` : ''}`,
-      );
-    }
+  const lookupNote = lookupNoteOf(best);
+  const grade = gradeOf(best, lotto);
+  if (grade === 'not') {
+    return {
+      status: STATUS.NOT,
+      reason: `${label} 해당이나 시세 대비 이점 없음; ${priceText(best)}${lookupNote}`,
+      shortReason: `${label} 해당이나 시세 이점 없음; ${shortPriceText(best)}`,
+    };
   }
-  if (repeated) return repeatedResult();
-  return candidate;
+  if (grade === 'lotto') return lookupNote ? { ...candidate, reason: `${candidate.reason}${lookupNote}` } : candidate;
+  const cause = checkCause(best, lotto);
+  return checkResult(`${label} 해당이나 ${cause.reason}`, `${label} 해당이나 ${cause.note}`, lookupNote);
 }
 
-// 주택형과 실거래로 공고의 가장 나은 주택형 추정을 구한다. 결과는 { best, undetermined, failed, unmapped }다.
+// 조건 없는 APT의 판정. 조건형 공고와 같은 등급 기준(gradeOf)을 쓴다. 추정이 없는 경우는 부르는 쪽이 판별 불가로 정한다.
+function decideByMargin(best, lotto) {
+  const reason = `${priceText(best)}${lookupNoteOf(best)}`;
+  const shortReason = shortPriceText(best);
+  const grade = gradeOf(best, lotto);
+  if (grade === 'lotto') return { status: STATUS.LOTTO, reason, shortReason };
+  if (grade === 'not') return { status: STATUS.NOT, reason, shortReason };
+  const cause = checkCause(best, lotto);
+  return { status: STATUS.CHECK, reason: `${cause.reason}; ${reason}`, shortReason: `${cause.reason}; ${shortReason}`, checkNote: cause.note };
+}
+
 // 추정이 없으면 best가 null이고 undetermined에 까닭이 있다. failed는 실거래 조회가 실패해 이번에는 모르는 경우,
 // unmapped는 단지 주소의 시군구 코드를 찾지 못한 경우다.
 async function estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident, onError, onSoft }) {
   const { lotto, market } = config;
-  const { code, umd, village } = resolveAddress(notice.address, notice.region);
-  if (!code) return { best: null, undetermined: '시군구 코드 미매핑', unmapped: true };
+  const { codes, umd, village } = resolveAddress(notice.address, notice.region);
+  if (codes.length === 0) return { best: null, undetermined: '시군구 코드 미매핑', unmapped: true };
   try {
     const months = completeMonths(today, lotto.tradeMonths);
-    const trades = await getTrades(code, months);
-    const presale = await readPresale(getPresale, code, months);
+    // 구로 나뉜 시의 주소에 구가 없으면 코드가 여럿이라 구마다 조회해 합친다(src/sgg-codes.js).
+    const trades = await readTradesByCodes(getTrades, codes, months);
+    // 지역 안 공고의 실거래가 한 건도 없으면 코드 문제일 수 있다. 판정은 그대로 두고 건수만 센다.
+    if (trades.length === 0) onSoft('trade_lookup_empty');
+    const presale = await readPresaleByCodes(getPresale, codes, months);
     const rows = cleanTrades([...trades, ...presale.rows], { market, lotto, today });
     const subject = buildSubject({
       name: notice.name,
@@ -385,7 +399,7 @@ async function estimateNotice(notice, models, { config, today, getTrades, getPre
       walkMinutes,
       market,
     });
-    const lookup = await resolveStations({ aptInfo, code, subject, models, rows, lotto, market, today, onSoft });
+    const lookup = await resolveStations({ aptInfo, codes, subject, models, rows, lotto, market, today, onSoft });
     const best = estimateBestMargin({
       models,
       rows,
@@ -526,12 +540,13 @@ async function evaluatePrice(notice, { config, today, getModels, getFactModels, 
       if (notice.lhDetailState !== 'ok') return result(STATUS.OUT_OF_SCOPE, `LH 상세 정보 없음${status}`, lhFacts);
       return result(STATUS.OUT_OF_SCOPE, `${notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음'}${status}`, lhFacts);
     }
-    if (!resolveAddress(notice.address, notice.region).code) return result(STATUS.OUT_OF_SCOPE, `LH 단지 주소 미매핑${status}`, lhFacts);
+    if (resolveAddress(notice.address, notice.region).codes.length === 0) return result(STATUS.OUT_OF_SCOPE, `LH 단지 주소 미매핑${status}`, lhFacts);
   }
 
   const trigger = flagTrigger(notice, lotto);
   const usesPrice = notice.kind === 'apt' || Boolean(trigger);
   if (badTriggerConfig(lotto)) onSoftOnce('bad_trigger_config');
+  if (badMarginConfig(lotto)) onSoftOnce('bad_margin_config');
 
   if (!usesPrice) {
     const label = notice.kind === 'remainder' || notice.kind === 'arbitrary' ? '설정에서 제외된 유형' : '판별 대상 유형이 아님';
@@ -548,43 +563,38 @@ async function evaluatePrice(notice, { config, today, getModels, getFactModels, 
 
   let best = null;
   let undetermined = models ? null : '주택형 정보 조회 실패';
+  // 주택형이나 실거래 조회가 실패해 이번에는 추정을 모르는 경우. 자료가 없어서 추정이 없는 경우와 구별한다.
+  let lookupFailed = !models;
   if (models) {
-    // 가격을 확인하는 조건형 후보만 신뢰도 중 이상 주택형을 먼저 본다. 조건 없는 공고는 예전 순서다.
-    const preferConfident = Boolean(trigger) && priceCheckOn(lotto, trigger.key);
-    ({ best, undetermined } = await estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident, onError, onSoft }));
+    // 신뢰도 중 이상 주택형을 먼저 본다. 조건형이든 일반 공고든 같은 기준이다.
+    const estimated = await estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident: true, onError, onSoft });
+    ({ best, undetermined } = estimated);
+    lookupFailed = Boolean(estimated.failed);
   }
 
   const price = { ...(best ? priceFields(best) : { topPrice }), ...priceFacts(models) };
 
-  // LH는 비교 단지가 없는 신도시 블록이 많아, 추정이 없으면 다른 분양가상한제 공고와 달리 로또로 두지 않고 판별 불가다.
-  // 신뢰도 하 추정은 다른 조건형 공고와 같다.
+  // LH는 비교 단지가 없는 신도시 블록이 많아, 추정이 없으면 다른 분양가상한제 공고와 달리 확인 필요가 아니라 판별 불가다.
+  // 추정이 있으면 다른 조건형 공고와 같은 기준이다.
   if (notice.kind === 'lh' && !best) return result(STATUS.UNDETERMINED, `LH 공공분양; 시세 추정 없음(${undetermined})`, price);
   if (trigger) {
-    const { status, reason, ...extra } = decideTrigger(trigger, { notice, best, undetermined, lotto });
+    const { status, reason, ...extra } = decideTrigger(trigger, { notice, best, undetermined, lookupFailed, lotto });
     return result(status, reason, { ...price, ...extra });
   }
   if (!best) return result(STATUS.UNDETERMINED, undetermined, price);
-  // 가격 기준만으로 로또가 되려면 신뢰도가 중 이상이어야 한다. 조건형 로또 후보는 위에서 이미 정해졌다.
-  if (meetsPriceRule(best, lotto) && best.confidence === CONFIDENCE.LOW) {
-    const note = '가격 기준은 넘지만 추정 신뢰도가 하라 로또로 보지 않음';
-    return result(STATUS.NOT, `${note}; ${priceText(best)}`, { ...price, shortReason: `${note}; ${shortPriceText(best)}` });
-  }
-  return result(meetsPriceRule(best, lotto) ? STATUS.LOTTO : STATUS.NOT, priceText(best), { ...price, shortReason: shortPriceText(best) });
+  const { status, reason, ...extra } = decideByMargin(best, lotto);
+  return result(status, reason, { ...price, ...extra });
 }
 
-// 이번 판정이 불가이거나, 신뢰도 하인 추정이 가격 기준만으로 로또를 빼려 하면 이전 로또를 유지한다.
-// 약한 추정 하나로 알림이 조용히 사라지지 않게 하려는 것이다.
-// 신뢰도 중 이상 추정으로 아님이 된 조건형 공고는 그대로 뺀다. 무순위 반복 공급으로 아님이 된 공고도
-// 추정이 아니라 차수로 정한 것이라 유지하지 않는다(추정이 없을 때와 똑같이 뺀다). 확인 필요가 될 반복 공급도 같다.
-// 조건형 공고가 신뢰도 하 추정의 뚜렷한 음수 마진율(lowConfidenceNegative)로 아님이 된 것도 사용자 결정으로
-// 유지하지 않고 뺀다.
-// 확인 필요(STATUS.CHECK)도 시세로 정한 판정이라 유지하지 않는다. 유지하면 근거가 약한 로또가 계속 알림으로 나간다.
+// 이번 판정이 판별 불가이면 이전 로또를 유지한다. 조회 실패 하나로 알림이 조용히 사라지지 않게 하려는 것이다.
+// 시세 조회 실패로 추정을 못 구한 조건형 공고의 확인 필요(lookupFailed)도 같다. 자료가 없어서 추정이 없는 확인 필요는 유지하지 않는다.
+// 시세로 정한 판정은 유지하지 않는다. 신뢰도 하 추정이 만든 아님·확인 필요, 신뢰도 중 이상 추정의 아님·확인 필요,
+// 무순위 반복 공급으로 정한 아님이 모두 그렇다. 약한 추정이 이전 로또를 붙들어 로또가 아닌 공고에 긴급 알림이 가던 것을 없앤다.
 export function keepPreviousLotto(evaluation, previousStatus) {
   if (previousStatus !== STATUS.LOTTO) return evaluation;
-  const weak = evaluation.status === STATUS.NOT && evaluation.confidence === CONFIDENCE.LOW
-    && !evaluation.repeatedRound && !evaluation.lowConfidenceNegative;
-  if (evaluation.status !== STATUS.UNDETERMINED && !weak) return evaluation;
-  const label = weak ? '이전 판별 유지(이번 추정 신뢰도 하)' : '이전 판별 유지';
+  const unknown = evaluation.status === STATUS.UNDETERMINED || (evaluation.status === STATUS.CHECK && evaluation.lookupFailed === true);
+  if (!unknown) return evaluation;
+  const label = '이전 판별 유지';
   return {
     ...evaluation,
     status: STATUS.LOTTO,

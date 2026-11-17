@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import {
-  CONFIDENCE, buildSubject, cleanTrades, estimateBestMargin, restrictedType,
+  CONFIDENCE, buildSubject, cleanTrades, estimateBestMargin, readPresaleByCodes, readTradesByCodes, restrictedType,
 } from '../market-estimate.js';
 import { resolveAddress } from '../sgg-codes.js';
 import { createModelLookup } from '../sources/applyhome.js';
@@ -369,8 +369,8 @@ export async function blockPerformance(target, {
     result.marketReason = restrictedReason(restricted);
     return result;
   }
-  const { code, umd, village } = resolveAddress(notice.address, notice.region);
-  if (!code) {
+  const { codes, umd, village } = resolveAddress(notice.address, notice.region);
+  if (codes.length === 0) {
     result.marketReason = REASONS.unmapped;
     return result;
   }
@@ -383,8 +383,9 @@ export async function blockPerformance(target, {
   const at = async (asOf) => {
     const months = completeMonths(asOf, lotto.tradeMonths);
     try {
-      const trades = await molit.getTrades(code, months);
-      const pre = presale ? await presale.getTrades(code, months) : { rows: [], ok: false };
+      // 구가 없는 주소의 시는 구 코드마다 조회해 합친다(src/sgg-codes.js).
+      const trades = await readTradesByCodes((code, ym) => molit.getTrades(code, ym), codes, months);
+      const pre = presale ? await readPresaleByCodes((code, ym) => presale.getTrades(code, ym), codes, months) : { rows: [], ok: false };
       const rows = cleanTrades([...trades, ...pre.rows], { market, lotto, today: asOf });
       const best = estimateBestMargin({
         models: [model], rows, subject, presaleOk: pre.ok, lotto, market, today: asOf,

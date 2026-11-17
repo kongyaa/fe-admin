@@ -43,6 +43,23 @@ function tokenize(address) {
   return String(address ?? '').replace(/[(),]/g, ' ').trim().split(/\s+/).filter(Boolean);
 }
 
+// 구로 나뉜 시의 구 코드들. 표의 `시 구` 키에서 만든다(예: 부천시 → 원미구, 소사구, 오정구 코드).
+const childCodesOf = (table) => {
+  const groups = new Map();
+  for (const [key, code] of Object.entries(table)) {
+    const [city, ward, ...extra] = key.split(' ');
+    if (!ward || extra.length > 0) continue;
+    groups.set(city, [...(groups.get(city) ?? []), code]);
+  }
+  return groups;
+};
+
+const WARDS = new Map(Object.entries(CODES).map(([name, table]) => [name, childCodesOf(table)]));
+
+// 주소를 시군구 코드로 옮긴다. codes는 조회할 코드 목록이다. 보통 하나이고, 못 찾으면 비어 있다.
+// 구로 나뉜 시(수원, 성남, 안양, 부천, 고양, 용인, 안산, 화성)의 주소에 구가 없으면(예: 부천시 대장동 일원) 그 시의 구 코드를 모두 담는다.
+// 구 없는 시 코드로는 국토부 실거래가 오지 않을 수 있어(부천 41190은 0건) 시 코드는 쓰지 않는다. 호출한 쪽은 코드마다 조회해 합친다.
+// code는 코드가 정확히 하나일 때만 그 값이고, 여럿이거나 없으면 null이다.
 // 공백 단위 토큰이 키와 정확히 같을 때만 매핑한다. 서구가 강서구에 걸리지 않는다.
 export function resolveAddress(address, fallbackRegion = null) {
   const tokens = tokenize(address);
@@ -50,25 +67,29 @@ export function resolveAddress(address, fallbackRegion = null) {
   const region = sido ?? fallbackRegion;
   const rest = sido ? tokens.slice(1) : tokens;
   const table = CODES[region];
-  if (!table || rest.length === 0) return { region, code: null, umd: null, village: null };
+  if (!table || rest.length === 0) return { region, code: null, codes: [], umd: null, village: null };
 
   const twoTokens = `${rest[0]} ${rest[1]}`;
-  let code = null;
+  const wards = WARDS.get(region).get(rest[0]);
+  let codes = [];
   let used = 0;
   if (table[twoTokens]) {
-    code = table[twoTokens];
+    codes = [table[twoTokens]];
     used = 2;
+  } else if (wards && !rest[1]?.endsWith('구')) {
+    // 구가 없으면 구 코드를 모두 본다. 시 아래에 모르는 구가 오면(아래 분기) 시 코드로 뭉개지 않고 미매핑으로 둔다.
+    codes = wards;
+    used = 1;
   } else if (!(rest[0].endsWith('시') && rest[1]?.endsWith('구')) && table[rest[0]]) {
-    // 시 아래에 모르는 구가 오면 시 코드로 뭉개지 않고 미매핑으로 둔다.
-    code = table[rest[0]];
+    codes = [table[rest[0]]];
     used = 1;
   }
-  const tail = code ? rest.slice(used) : [];
+  const tail = codes.length > 0 ? rest.slice(used) : [];
   const umdIndex = tail.findIndex((token) => /^[가-힣0-9]+(동|읍|면|가)$/.test(token));
   const umd = umdIndex >= 0 ? tail[umdIndex] : null;
   // 읍·면 주소는 그 아래 리까지 읽는다. 국토부 자료의 법정동 이름이 리 단위로 오기 때문이다.
   // 리는 읍·면 바로 뒤에 올 때만 받는다. 도로명 주소 뒤의 건물명((오남센트럴밸리) 등)을 리로 읽지 않게 한다.
   const next = umdIndex >= 0 ? tail[umdIndex + 1] ?? '' : '';
   const village = umd && /(읍|면)$/.test(umd) && /^[가-힣0-9]+리$/.test(next) ? next : null;
-  return { region, code, umd, village };
+  return { region, code: codes.length === 1 ? codes[0] : null, codes, umd, village };
 }

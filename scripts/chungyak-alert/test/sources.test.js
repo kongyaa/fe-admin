@@ -445,8 +445,57 @@ test('SGG mapping covers city-with-gu keys and leaves unknown districts unmapped
   assert.equal(yeongtong.code, '41117');
   assert.equal(yeongtong.umd, '망포동');
   assert.equal(resolveAddress('경기도 수원시 없는구 망포동').code, null);
-  assert.equal(resolveAddress('경기도 화성시 봉담읍 1').code, '41590');
   assert.equal(resolveAddress('경기도 화성시 새로운구 1').code, null);
+  assert.deepEqual(resolveAddress('경기도 화성시 새로운구 1').codes, []);
   assert.equal(resolveAddress('강남구 역삼동 1', '서울').code, '11680');
   assert.equal(resolveAddress('부산광역시 해운대구 우동').code, null);
+  assert.deepEqual(resolveAddress('부산광역시 해운대구 우동').codes, []);
+});
+
+// 구로 나뉜 시. 구 없는 시 코드(부천 41190, 화성 41590)는 국토부 실거래가 오지 않을 수 있어 쓰지 않고, 구 코드를 모두 본다.
+const SPLIT_CITIES = {
+  수원시: { wards: ['41111', '41113', '41115', '41117'], dong: '화서동' },
+  성남시: { wards: ['41131', '41133', '41135'], dong: '정자동' },
+  안양시: { wards: ['41171', '41173'], dong: '평촌동' },
+  부천시: { wards: ['41192', '41194', '41196'], dong: '대장동' },
+  안산시: { wards: ['41271', '41273'], dong: '고잔동' },
+  고양시: { wards: ['41281', '41285', '41287'], dong: '창릉동' },
+  용인시: { wards: ['41461', '41463', '41465'], dong: '보정동' },
+  화성시: { wards: ['41591', '41593', '41595', '41597'], dong: '봉담읍' },
+};
+
+test('a split city address without a 구 resolves to every 구 code and never to the parent code (부천 대장동)', () => {
+  const bucheon = resolveAddress('경기도 부천시 대장동 일원');
+  assert.deepEqual(bucheon.codes, ['41192', '41194', '41196']);
+  // 코드가 하나로 정해지지 않았으니 code는 비운다.
+  assert.equal(bucheon.code, null);
+  assert.equal(bucheon.umd, '대장동');
+  assert.equal(bucheon.region, '경기');
+  assert.equal(resolveAddress('경기 부천시 대장동 일원').codes.length, 3);
+  assert.deepEqual(resolveAddress('부천시 대장동 일원', '경기').codes, ['41192', '41194', '41196']);
+  for (const [city, { wards, dong }] of Object.entries(SPLIT_CITIES)) {
+    const resolved = resolveAddress(`경기도 ${city} ${dong} 1`);
+    assert.deepEqual(resolved.codes, wards, city);
+    assert.equal(resolved.code, null, city);
+    assert.equal(resolved.umd, dong, city);
+    assert.ok(!resolved.codes.includes('41190') && !resolved.codes.includes('41590'), city);
+  }
+  // 화성 봉담읍은 예전에 구 없는 시 코드(41590)로 갔다.
+  assert.deepEqual(resolveAddress('경기도 화성시 봉담읍 1').codes, ['41591', '41593', '41595', '41597']);
+});
+
+test('a split city address with a 구 resolves to that 구 only, and other cities stay single-code', () => {
+  assert.deepEqual(resolveAddress('경기도 부천시 원미구 중동 1').codes, ['41192']);
+  assert.equal(resolveAddress('경기도 부천시 오정구 오정동 1').code, '41196');
+  assert.deepEqual(resolveAddress('경기도 수원시 팔달구 인계동 1').codes, ['41115']);
+  assert.deepEqual(resolveAddress('경기도 성남시 분당구 정자동 1').codes, ['41135']);
+  assert.deepEqual(resolveAddress('경기도 고양시 일산서구 대화동 1').codes, ['41287']);
+  // 구가 없는 시, 서울·인천은 코드 하나다. 구 이름이 알려진 구가 아니면 시 코드로 뭉개지 않고 미매핑이다.
+  assert.deepEqual(resolveAddress('경기도 하남시 교산동 1').codes, ['41450']);
+  assert.deepEqual(resolveAddress('서울특별시 강남구 역삼동 1').codes, ['11680']);
+  assert.deepEqual(resolveAddress('인천광역시 서구 청라동 1').codes, ['28260']);
+  assert.deepEqual(resolveAddress('경기도 부천시 없는구 대장동 1').codes, []);
+  assert.deepEqual(resolveAddress('경기도 부천시').codes, ['41192', '41194', '41196']);
+  assert.deepEqual(resolveAddress('').codes, []);
+  assert.deepEqual(resolveAddress(undefined).codes, []);
 });

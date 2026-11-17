@@ -14,13 +14,13 @@ const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTrack
 const DUP_NAME = '가나지구 A-2블록 신혼희망타운(공공분양) 잔여세대 추가입주자모집공고';
 const DUP_NAME_LH = '가나지구 A-2블록 신혼희망타운[공공분양] 잔여세대 추가입주자모집공고';
 
-// 오늘 접수 시작이라 로또 알림이 가는 서울 무순위. 정리 때문에 알림이 막히지 않는지 보려고 둔다.
+// 오늘 접수 시작이라 로또 알림이 가는 서울 불법행위 재공급(06, 시세를 보지 않아 시세 자료 없이도 로또). 정리 때문에 알림이 막히지 않는지 보려고 둔다.
 const alertRow = {
-  HOUSE_MANAGE_NO: '7', PBLANC_NO: '7', HOUSE_NM: '알림단지', HOUSE_SECD: '04', SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
+  HOUSE_MANAGE_NO: '7', PBLANC_NO: '7', HOUSE_NM: '알림단지', HOUSE_SECD: '06', SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
   RCRIT_PBLANC_DE: '2026-11-01', SUBSCRPT_RCEPT_BGNDE: THU, SUBSCRPT_RCEPT_ENDDE: THU, PBLANC_URL: 'https://www.applyhome.co.kr/a',
 };
 const remainder = (no, name, { region = '서울', address, announce = '2026-11-01', start = '2026-11-10', end = '2026-11-12' } = {}) => ({
-  HOUSE_MANAGE_NO: String(no), PBLANC_NO: '1', HOUSE_NM: name, HOUSE_SECD: '04', SUBSCRPT_AREA_CODE_NM: region,
+  HOUSE_MANAGE_NO: String(no), PBLANC_NO: '1', HOUSE_NM: name, HOUSE_SECD: '06', SUBSCRPT_AREA_CODE_NM: region,
   HSSPLY_ADRES: address ?? (region ? `${region} 가나구 가나동 ${no}` : ''), RCRIT_PBLANC_DE: announce, SUBSCRPT_RCEPT_BGNDE: start, SUBSCRPT_RCEPT_ENDDE: end, PBLANC_URL: 'https://www.applyhome.co.kr/x',
 });
 const aptRowOf = (no, name, region) => ({

@@ -37,8 +37,8 @@
     "sourcesPageTitle": "청약 수집 소스"
   },
   "lotto": {
-    "minMarginManwon": 30000,
-    "minMarginRate": 0.2,
+    "minMarginManwon": 10000,
+    "minMarginRate": 0.1,
     "areaToleranceM2": 3,
     "tradeMonths": 6,
     "minSamples": 5,
@@ -48,9 +48,7 @@
     "includePriceCap": true,
     "includePublicDistrict": true,
     "triggerPriceCheck": { "remainder": true, "resupply": false, "arbitrary": true, "priceCap": true, "publicDistrict": true },
-    "remainderMaxRound": 3,
-    "lowConfidenceMinMarginRate": -0.05,
-    "triggerMinMarginRate": 0.03
+    "remainderMaxRound": 3
   },
   "recommendation": {
     "localResidenceYears": 2,
