@@ -11,9 +11,10 @@ import {
   matchApartment,
   qualifiesAsLotto,
   readPresaleByCodes,
-  readTradesByCodes,
+  readTradesFor,
   restrictedType,
   sharedGainOf,
+  validMarginConfig,
 } from './market-estimate.js';
 import { hasLhModels } from './lh-detail-map.js';
 import { lhTypeClass } from './lh-scope.js';
@@ -93,7 +94,8 @@ function basisText(basis) {
     .join(', ');
   const outliers = basis.outliers > 0 ? `, 이상치 ${basis.outliers}곳 제외` : '';
   const scope = basis.townWide ? '시군구, 같은 읍·면 단지를 찾지 못해 신뢰도 하' : basis.scope;
-  return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${scope}, ${ageScope(basis.maxAge)}${outliers}), 보정 후 ${areaText(basis.area)}㎡ 기준: ${names}`;
+  const wards = basis.crossWard ? '; 구 없는 주소라 어느 구에서도 공고 법정동 거래를 찾지 못해 모든 구를 합쳐 신뢰도 한 단계 낮춤' : '';
+  return `${stationText(basis)}; 비교 단지 ${basis.comparables.length}곳 표본 ${basis.samples}건(${scope}, ${ageScope(basis.maxAge)}${outliers}), 보정 후 ${areaText(basis.area)}㎡ 기준${wards}: ${names}`;
 }
 
 function safeText(best) {
@@ -223,9 +225,10 @@ export async function evaluateLotto(notice, options) {
     return { ...evaluation, reason: evaluation.reason ? `${evaluation.reason}\n${kept}` : kept };
   }
   // 추천이 없어도 v2 신청자 정보의 예치금 부족처럼 남길 말이 있으면 판별 근거에 붙인다.
-  const { recommendation, text } = recommendForProfile({ notice, models, profile: options.profile, config: options.config, today: options.today });
-  if (!text) return { ...evaluation, recommendation };
-  return { ...evaluation, recommendation, reason: evaluation.reason ? `${evaluation.reason}\n${text}` : text };
+  // trackUnknown은 추천이 없는 까닭이 확인된 것이 아니라 단계 자료가 없어서일 때다(src/recommend.js). 긴급 알림을 막지 않는 데 쓴다.
+  const { recommendation, text, trackUnknown } = recommendForProfile({ notice, models, profile: options.profile, config: options.config, today: options.today });
+  if (!text) return { ...evaluation, recommendation, ...(trackUnknown ? { trackUnknown } : {}) };
+  return { ...evaluation, recommendation, ...(trackUnknown ? { trackUnknown } : {}), reason: evaluation.reason ? `${evaluation.reason}\n${text}` : text };
 }
 
 // LH 상세·공급 조회 상태별 판별 불가 사유.
@@ -257,14 +260,19 @@ export function badTriggerConfig(lotto) {
     || (maxRound !== undefined && maxRound !== null && maxRoundOf(lotto) === null);
 }
 
-// 로또 마진 기준(lotto.minMarginManwon, lotto.minMarginRate)이 유한한 수가 아니면 어떤 공고도 로또가 될 수 없다. 로그의 soft=bad_margin_config로 알린다.
-export const badMarginConfig = (lotto) => !Number.isFinite(lotto.minMarginManwon) || !Number.isFinite(lotto.minMarginRate);
+// 로또 마진 기준(lotto.minMarginManwon 0 이상, lotto.minMarginRate 0 이상 1 미만)이 틀리면 어떤 공고도 로또가 될 수 없다. 로그의 soft=bad_margin_config로 알린다.
+// 10%를 10으로 적은 것처럼 단위가 틀린 값도 여기에 걸린다.
+export const badMarginConfig = (lotto) => !validMarginConfig(lotto);
 
 // 비교 범위를 넓혀 쓴 추정이면 판별 근거에 덧붙일 말. 읍·면 주소가 같은 읍·면 단지를 못 찾아 시군구로 넓힌 경우가 가장 위험하다.
 // 더 좁은 범위를 실제로 볼 수 있었을 때만 적는다(basis.widened).
+// 구 없는 주소를 구 전체 거래로 쟀으면(basis.crossWard) 그 말도 적는다.
 function scopeNote(basis) {
-  if (basis.kind !== 'comparables' || !basis.widened) return null;
-  return basis.townWide ? '비교 범위 확대(같은 읍·면 단지 없어 시군구)' : `비교 범위 확대(${basis.scope})`;
+  if (basis.kind !== 'comparables') return null;
+  const notes = [];
+  if (basis.widened) notes.push(basis.townWide ? '비교 범위 확대(같은 읍·면 단지 없어 시군구)' : `비교 범위 확대(${basis.scope})`);
+  if (basis.crossWard) notes.push('구 없는 주소라 구 전체 합산');
+  return notes.length > 0 ? notes.join(', ') : null;
 }
 
 // 시세 추정의 등급. 마진이 0 이하면 아님, 로또 조건(신뢰도 중 이상, 안전 마진, 마진율)을 모두 넘으면 로또,
@@ -276,6 +284,8 @@ const gradeOf = (best, lotto) => {
 
 // 로또 조건 중 넘지 못한 마진 기준. 근거에는 실제 값을, 주간 메일용 사유에는 기준만 적는다. 마진율을 모르면 마진율 기준도 못 넘은 것이다.
 function missedMargins(best, lotto) {
+  // 기준 설정이 틀렸으면 값을 찍지 않는다(NaN이 근거에 나오지 않게).
+  if (!validMarginConfig(lotto)) return [{ actual: '로또 기준 설정 오류', bound: '로또 기준 설정 오류' }];
   const missed = [];
   if (!(best.margin >= lotto.minMarginManwon)) {
     // 실제 값은 만 원 단위로 적는다. 억 단위로 줄이면 9,999만 원이 "1.0억 < 1.0억"으로 읽힌다.
@@ -347,9 +357,10 @@ function decideTrigger(trigger, { notice, best, undetermined, lookupFailed = fal
   });
   if (!best) {
     const head = `${label} 해당이나 시세 추정 없음(${undetermined})`;
-    const result = checkResult(head, head);
-    // 시세 조회 실패로 모르는 것이면 keepPreviousLotto가 저장된 로또를 유지한다.
-    return result.status === STATUS.CHECK && lookupFailed ? { ...result, lookupFailed: true } : result;
+    // 시세 조회 실패로 모르는 것이면 반복 공급보다 먼저 확인 필요로 두고, keepPreviousLotto가 저장된 로또를 유지한다.
+    // 일시적인 조회 실패가 3차 이상 무순위의 로또를 아님으로 내리지 않게 한다.
+    if (lookupFailed) return { status: STATUS.CHECK, reason: head, shortReason: head, checkNote: head, lookupFailed: true };
+    return checkResult(head, head);
   }
   const lookupNote = lookupNoteOf(best);
   const grade = gradeOf(best, lotto);
@@ -380,15 +391,17 @@ function decideByMargin(best, lotto) {
 // unmapped는 단지 주소의 시군구 코드를 찾지 못한 경우다.
 async function estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident, onError, onSoft }) {
   const { lotto, market } = config;
-  const { codes, umd, village } = resolveAddress(notice.address, notice.region);
+  const { codes, fallbackCode, umd, village } = resolveAddress(notice.address, notice.region);
   if (codes.length === 0) return { best: null, undetermined: '시군구 코드 미매핑', unmapped: true };
   try {
     const months = completeMonths(today, lotto.tradeMonths);
-    // 구로 나뉜 시의 주소에 구가 없으면 코드가 여럿이라 구마다 조회해 합친다(src/sgg-codes.js).
-    const trades = await readTradesByCodes(getTrades, codes, months);
-    // 지역 안 공고의 실거래가 한 건도 없으면 코드 문제일 수 있다. 판정은 그대로 두고 건수만 센다.
+    // 구로 나뉜 시의 주소에 구가 없으면 코드가 여럿이라 구마다 조회한다(src/sgg-codes.js). 공고 법정동이 나오는 구의 거래만 쓰고,
+    // 구 코드가 모두 비면 구 없는 시 코드로 한 번 더 조회한다(readTradesFor).
+    const read = await readTradesFor(getTrades, { codes, fallbackCode }, months, { umd, village });
+    const trades = read.rows;
+    // 지역 안 공고의 실거래가 한 건도 없으면(대체 코드도 비면) 코드 문제일 수 있다. 판정은 그대로 두고 건수만 센다.
     if (trades.length === 0) onSoft('trade_lookup_empty');
-    const presale = await readPresaleByCodes(getPresale, codes, months);
+    const presale = await readPresaleByCodes(getPresale, read.codes, months);
     const rows = cleanTrades([...trades, ...presale.rows], { market, lotto, today });
     const subject = buildSubject({
       name: notice.name,
@@ -399,7 +412,7 @@ async function estimateNotice(notice, models, { config, today, getTrades, getPre
       walkMinutes,
       market,
     });
-    const lookup = await resolveStations({ aptInfo, codes, subject, models, rows, lotto, market, today, onSoft });
+    const lookup = await resolveStations({ aptInfo, codes: read.codes, subject, models, rows, lotto, market, today, onSoft });
     const best = estimateBestMargin({
       models,
       rows,
@@ -407,6 +420,7 @@ async function estimateNotice(notice, models, { config, today, getTrades, getPre
       stations: lookup.stations,
       stationLookupFailed: lookup.failed,
       presaleOk: presale.ok,
+      crossWard: read.crossWard,
       preferConfident,
       lotto,
       market,
@@ -535,7 +549,8 @@ async function evaluatePrice(notice, { config, today, getModels, getFactModels, 
     const status = notice.noticeStatus ? ` (${notice.noticeStatus})` : '';
     const lhFacts = factFields(notice.models);
     const pending = LH_PENDING_REASONS[notice.lhDetailState];
-    if (pending) return result(STATUS.UNDETERMINED, `${pending}${status}`, lhFacts);
+    // 상세·공급 조회 실패와 상한은 이번에 모르는 것이라 저장된 로또를 유지한다(lookupFailed).
+    if (pending) return result(STATUS.UNDETERMINED, `${pending}${status}`, { ...lhFacts, lookupFailed: true });
     if (!hasLhModels(notice.models)) {
       if (notice.lhDetailState !== 'ok') return result(STATUS.OUT_OF_SCOPE, `LH 상세 정보 없음${status}`, lhFacts);
       return result(STATUS.OUT_OF_SCOPE, `${notice.lhModelsUnattached ? 'LH 단지 주소 미매핑' : 'LH 공급 정보 없음'}${status}`, lhFacts);
@@ -554,17 +569,18 @@ async function evaluatePrice(notice, { config, today, getModels, getFactModels, 
   }
 
   let models = null;
+  // 주택형이나 실거래 조회가 예외로 실패해 이번에는 추정을 모르는 경우. 자료가 없어서 추정이 없는 경우(주택형이 null로 옴, 표본 부족, 미매핑)와 구별한다.
+  let lookupFailed = false;
   try {
     models = await getModels(notice);
   } catch (error) {
+    lookupFailed = true;
     onError(safeError(error));
   }
   const topPrice = topPriceOf(models);
 
   let best = null;
   let undetermined = models ? null : '주택형 정보 조회 실패';
-  // 주택형이나 실거래 조회가 실패해 이번에는 추정을 모르는 경우. 자료가 없어서 추정이 없는 경우와 구별한다.
-  let lookupFailed = !models;
   if (models) {
     // 신뢰도 중 이상 주택형을 먼저 본다. 조건형이든 일반 공고든 같은 기준이다.
     const estimated = await estimateNotice(notice, models, { config, today, getTrades, getPresale, aptInfo, walkMinutes, preferConfident: true, onError, onSoft });
@@ -576,23 +592,24 @@ async function evaluatePrice(notice, { config, today, getModels, getFactModels, 
 
   // LH는 비교 단지가 없는 신도시 블록이 많아, 추정이 없으면 다른 분양가상한제 공고와 달리 확인 필요가 아니라 판별 불가다.
   // 추정이 있으면 다른 조건형 공고와 같은 기준이다.
-  if (notice.kind === 'lh' && !best) return result(STATUS.UNDETERMINED, `LH 공공분양; 시세 추정 없음(${undetermined})`, price);
+  if (notice.kind === 'lh' && !best) return result(STATUS.UNDETERMINED, `LH 공공분양; 시세 추정 없음(${undetermined})`, { ...price, ...(lookupFailed ? { lookupFailed: true } : {}) });
   if (trigger) {
     const { status, reason, ...extra } = decideTrigger(trigger, { notice, best, undetermined, lookupFailed, lotto });
     return result(status, reason, { ...price, ...extra });
   }
-  if (!best) return result(STATUS.UNDETERMINED, undetermined, price);
+  if (!best) return result(STATUS.UNDETERMINED, undetermined, { ...price, ...(lookupFailed ? { lookupFailed: true } : {}) });
   const { status, reason, ...extra } = decideByMargin(best, lotto);
   return result(status, reason, { ...price, ...extra });
 }
 
-// 이번 판정이 판별 불가이면 이전 로또를 유지한다. 조회 실패 하나로 알림이 조용히 사라지지 않게 하려는 것이다.
-// 시세 조회 실패로 추정을 못 구한 조건형 공고의 확인 필요(lookupFailed)도 같다. 자료가 없어서 추정이 없는 확인 필요는 유지하지 않는다.
+// 이번 판정이 조회 실패로 모르는 것(lookupFailed)이면 이전 로또를 유지한다. 조회 실패 하나로 알림이 조용히 사라지지 않게 하려는 것이다.
+// 판별 불가이거나 시세 조회 실패로 추정을 못 구한 조건형 공고의 확인 필요가 여기에 든다. 조건 없는 공고와 LH도 같다.
+// 자료가 없어서 모르는 경우(실거래 표본 부족, 시군구 코드 미매핑, 주택형 없음)는 실패가 아니라 유지하지 않는다. 아니면 로또가 영영 남는다.
 // 시세로 정한 판정은 유지하지 않는다. 신뢰도 하 추정이 만든 아님·확인 필요, 신뢰도 중 이상 추정의 아님·확인 필요,
 // 무순위 반복 공급으로 정한 아님이 모두 그렇다. 약한 추정이 이전 로또를 붙들어 로또가 아닌 공고에 긴급 알림이 가던 것을 없앤다.
 export function keepPreviousLotto(evaluation, previousStatus) {
   if (previousStatus !== STATUS.LOTTO) return evaluation;
-  const unknown = evaluation.status === STATUS.UNDETERMINED || (evaluation.status === STATUS.CHECK && evaluation.lookupFailed === true);
+  const unknown = evaluation.lookupFailed === true && (evaluation.status === STATUS.UNDETERMINED || evaluation.status === STATUS.CHECK);
   if (!unknown) return evaluation;
   const label = '이전 판별 유지';
   return {

@@ -535,10 +535,17 @@ test('estimateBestMargin puts the confident model before the largest margin only
   assert.equal(plain.confidence, '하');
   assert.equal(plain.margin, 56670);
 
+  // 신뢰도 중 주택형의 마진이 0 이하이고 마진이 양수인 하 주택형이 있으면 그쪽이다. 마진이 양수인 하 추정은 아님이 아니라 확인 필요이기 때문이다.
   const preferred = best(richWeakModels, richWeakData, { preferConfident: true });
-  assert.equal(preferred.houseType, '084A');
-  assert.equal(preferred.confidence, '중');
-  assert.equal(preferred.margin, -12400);
+  assert.equal(preferred.houseType, '059A');
+  assert.equal(preferred.confidence, '하');
+  assert.equal(preferred.margin, 56670);
+  // 중 주택형의 마진이 양수이면 하 주택형의 마진이 더 커도 중이 먼저다.
+  const thin = best(mixedModels(50000), mixedData(1300), { preferConfident: true });
+  assert.equal(thin.houseType, '084A');
+  assert.equal(thin.margin, 4400);
+  // 하 주택형의 마진도 0 이하이면 중이 먼저다.
+  assert.equal(best(mixedModels(58000), mixedData(1100), { preferConfident: true }).houseType, '084A');
 
   // 신뢰도 중 이상이면서 로또 조건을 넘는 주택형은 어느 쪽이든 먼저다.
   const qualifying = [...two(5, 2200), ...trades(5, 1500, { area: 59, amount: 88500, jibun: 'b1' })];
@@ -549,12 +556,19 @@ test('estimateBestMargin puts the confident model before the largest margin only
 });
 
 test('a non-trigger APT picks the same type as a trigger, and a weak estimate no longer keeps a stored 로또', async () => {
-  // 신뢰도 중 주택형(마진 -12400)이 신뢰도 하 주택형(마진 56670)보다 먼저다. 조건형 공고와 같은 선택이다.
-  const result = await evaluate(apt(), { models: richWeakModels, data: richWeakData });
-  assert.equal(result.confidence, '중');
-  assert.equal(result.margin, -12400);
-  assert.equal(result.status, STATUS.NOT);
-  assert.equal(keepPreviousLotto(result, STATUS.LOTTO).status, STATUS.NOT);
+  // 신뢰도 중 주택형(마진 -12400)이 손해이고 신뢰도 하 주택형(마진 56670)이 양수면 하 주택형을 본다(마진이 양수인 하는 확인 필요).
+  // 59㎡ 중 -0.7억 + 84㎡ 하 양수 마진 → 확인 필요라는 규칙을 조건형과 조건 없는 공고가 같게 지킨다.
+  for (const notice of [apt(), remainder()]) {
+    const result = await evaluate(notice, { models: richWeakModels, data: richWeakData });
+    assert.equal(result.confidence, '하');
+    assert.equal(result.margin, 56670);
+    assert.equal(result.status, STATUS.CHECK);
+    assert.equal(keepPreviousLotto(result, STATUS.LOTTO).status, STATUS.CHECK);
+  }
+  // 신뢰도 중 주택형의 마진이 양수이면 그쪽이다.
+  const confident = await evaluate(apt(), { models: mixedModels(50000), data: mixedData(1300) });
+  assert.equal(confident.confidence, '중');
+  assert.equal(confident.margin, 4400);
 
   // 신뢰도 하 추정만 있으면 마진이 커도 확인 필요이고, 저장된 로또는 유지하지 않는다.
   const weak = await evaluate(apt(), { data: trades(5, 2200) });
@@ -566,18 +580,22 @@ test('a non-trigger APT picks the same type as a trigger, and a weak estimate no
   assert.equal(keepPreviousLotto(weak, STATUS.LOTTO).status, STATUS.CHECK);
 });
 
-test('a trigger with a 하 type that has a big margin and a 중 type with a loss is 아님', async () => {
+test('a trigger with a 하 type that has a big margin and a 중 type with a loss is 확인 필요, and a 하 type with a loss is 아님', async () => {
   const result = await evaluate(remainder(), { models: richWeakModels, data: richWeakData });
-  assert.equal(result.confidence, '중');
-  assert.equal(result.margin, -12400);
-  assert.equal(result.status, STATUS.NOT);
-  assert.ok(result.reason.startsWith('수도권 무순위·잔여세대 해당이나 시세 대비 이점 없음; '));
-  assert.equal(keepPreviousLotto(result, STATUS.LOTTO).status, STATUS.NOT);
+  assert.equal(result.confidence, '하');
+  assert.equal(result.margin, 56670);
+  assert.equal(result.status, STATUS.CHECK);
+  assert.ok(result.reason.startsWith('수도권 무순위·잔여세대 해당이나 시세 근거가 약함(신뢰도 하'), result.reason);
+  // 하 주택형의 마진도 손해이면 중 주택형의 손해가 그대로 아님이다.
+  const loss = await evaluate(remainder(), { models: mixedModels(58000), data: mixedData(1100) });
+  assert.equal(loss.confidence, '중');
+  assert.equal(loss.status, STATUS.NOT);
+  assert.equal(keepPreviousLotto(loss, STATUS.LOTTO).status, STATUS.NOT);
   // 가격 확인을 끈 조건은 시세와 무관하게 로또다. 주택형 선택은 같다.
   const unchecked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, remainder: false } };
   const off = await evaluate(remainder(), { models: richWeakModels, data: richWeakData, overrides: unchecked });
   assert.equal(off.status, STATUS.LOTTO);
-  assert.equal(off.margin, -12400);
+  assert.equal(off.margin, 56670);
 });
 
 test('bad trigger config falls back to the old behaviour and is reported once', async () => {
@@ -999,12 +1017,36 @@ test('a previous 로또 that becomes 확인 필요 or 아님 is demoted, only �
   // 직접 만든 값으로도 같다.
   assert.equal(keepPreviousLotto({ status: STATUS.CHECK, confidence: '하', reason: 'x' }, STATUS.LOTTO).status, STATUS.CHECK);
 
-  // 판별 불가는 유지한다. 시세 조회 실패로 추정을 모르는 조건형 후보의 확인 필요도 유지한다.
+  // 자료가 없어 모르는 판별 불가(실거래 표본 부족)와 미매핑은 유지하지 않는다. 유지하면 로또가 영영 남아 알림이 간다.
   const undetermined = await evaluate(apt(), { data: [] });
   assert.equal(undetermined.status, STATUS.UNDETERMINED);
-  const keptUndetermined = keepPreviousLotto(undetermined, STATUS.LOTTO);
+  assert.equal(undetermined.lookupFailed, undefined);
+  assert.equal(keepPreviousLotto(undetermined, STATUS.LOTTO).status, STATUS.UNDETERMINED);
+  const unmapped = await evaluate(apt({ address: '서울특별시 서구 어딘가' }), { data: trades(5, 3000) });
+  assert.equal(unmapped.reason, '시군구 코드 미매핑');
+  assert.equal(keepPreviousLotto(unmapped, STATUS.LOTTO).status, STATUS.UNDETERMINED);
+  // 주택형이 null로 와도(예외 없음) 자료가 없는 것이다.
+  const noModels = await evaluateLotto(apt(), { config, today, getModels: async () => null, getTrades: async () => [] });
+  assert.equal(noModels.status, STATUS.UNDETERMINED);
+  assert.equal(noModels.lookupFailed, undefined);
+  assert.equal(keepPreviousLotto(noModels, STATUS.LOTTO).status, STATUS.UNDETERMINED);
+  // 조회가 예외로 실패해 모르는 것이면 조건 없는 공고도 유지한다. 주택형 조회 실패, 실거래 조회 실패 모두다.
+  const failedTrades = await evaluateLotto(apt(), { config, today, getModels: async () => modelAt(100000), getTrades: async () => { throw new Error('x'); }, onError: () => {} });
+  assert.equal(failedTrades.status, STATUS.UNDETERMINED);
+  assert.equal(failedTrades.lookupFailed, true);
+  const keptUndetermined = keepPreviousLotto(failedTrades, STATUS.LOTTO);
   assert.equal(keptUndetermined.status, STATUS.LOTTO);
   assert.ok(keptUndetermined.reason.startsWith('이전 판별 유지 (이번 실행: '), keptUndetermined.reason);
+  const failedModels = await evaluateLotto(apt(), { config, today, getModels: async () => { throw new Error('x'); }, getTrades: async () => [], onError: () => {} });
+  assert.equal(failedModels.lookupFailed, true);
+  assert.equal(keepPreviousLotto(failedModels, STATUS.LOTTO).status, STATUS.LOTTO);
+  // 3차 이상 무순위도 일시적인 조회 실패로는 아님으로 내려가지 않는다(반복 공급 규칙보다 먼저 본다).
+  const failedRoundTrades = await evaluateLotto(remainder('합성단지(14차)'), { config, today, getModels: async () => modelAt(100000), getTrades: async () => { throw new Error('x'); }, onError: () => {} });
+  assert.equal(failedRoundTrades.status, STATUS.CHECK);
+  assert.equal(failedRoundTrades.lookupFailed, true);
+  assert.equal(keepPreviousLotto(failedRoundTrades, STATUS.LOTTO).status, STATUS.LOTTO);
+  // 직접 만든 판별 불가는 lookupFailed가 없으면 유지하지 않는다.
+  assert.equal(keepPreviousLotto({ status: STATUS.UNDETERMINED, reason: 'x' }, STATUS.LOTTO).status, STATUS.UNDETERMINED);
   const failed = await evaluateLotto(remainder(), {
     config,
     today,
@@ -1017,16 +1059,6 @@ test('a previous 로또 that becomes 확인 필요 or 아님 is demoted, only �
   assert.equal(keepPreviousLotto(failed, STATUS.LOTTO).status, STATUS.LOTTO);
   assert.equal(keepPreviousLotto(failed, STATUS.NOT).status, STATUS.CHECK);
   assert.equal(keepPreviousLotto(failed, null).status, STATUS.CHECK);
-  // 반복 공급의 조회 실패는 아님이라 유지하지 않는다.
-  const failedRound = await evaluateLotto(remainder('합성단지(14차)'), {
-    config,
-    today,
-    getModels: async () => modelAt(100000),
-    getTrades: async () => { throw new Error('x'); },
-    onError: () => {},
-  });
-  assert.equal(failedRound.status, STATUS.NOT);
-  assert.equal(keepPreviousLotto(failedRound, STATUS.LOTTO).status, STATUS.NOT);
 });
 
 test('an empty trade lookup is counted softly, and only when the lookup returned no rows', async () => {
@@ -1238,4 +1270,148 @@ test('presale rows and the 단지 목록 of every 구 code are read for a 부천
   });
   assert.equal(down.confidence, '하');
   assert.equal(down.status, STATUS.LOTTO);
+});
+
+// ---- 구 코드가 모두 비면 구 없는 시 코드로 한 번 더 (화성), 구를 알 수 없는 주소의 구 선택 (성남) ----
+
+const hwaseong = (extra = {}) => apt({ region: '경기', address: '경기도 화성시 봉담읍 1', flags: { priceCap: true, publicDistrict: false }, ...extra });
+const withCodes = async (notice, byCode, extra = {}) => {
+  const asked = [];
+  const presaleAsked = [];
+  const soft = [];
+  const result = await evaluateLotto(notice, {
+    config,
+    today,
+    getModels: async () => modelAt(100000),
+    getTrades: async (code) => { asked.push(code); return byCode[code] ?? []; },
+    getPresale: async (code) => { presaleAsked.push(code); return { rows: [], ok: true }; },
+    onSoft: (kind) => soft.push(kind),
+    ...extra,
+  });
+  return { result, asked, presaleAsked, soft };
+};
+
+test('child codes are read first, the parent code only when they are all empty, and never together', async () => {
+  const rows = two(5, 2200, { umd: '봉담읍' });
+  // 구 코드에 거래가 있으면 구 없는 시 코드(41590)는 부르지 않는다.
+  const children = await withCodes(hwaseong(), { 41593: rows });
+  assert.deepEqual([...new Set(children.asked)], ['41591', '41593', '41595', '41597']);
+  assert.equal(children.result.status, STATUS.LOTTO);
+  assert.deepEqual(children.soft, []);
+  assert.deepEqual([...new Set(children.presaleAsked)], ['41593']);
+
+  // 구 코드가 모두 비고 구 없는 시 코드에 거래가 있으면 그것으로 판정한다. 분양권도 그 코드로 읽고, soft도 없다.
+  const parent = await withCodes(hwaseong(), { 41590: rows });
+  assert.deepEqual([...new Set(parent.asked)], ['41591', '41593', '41595', '41597', '41590']);
+  assert.equal(parent.result.estimate, 184800);
+  assert.equal(parent.result.status, STATUS.LOTTO);
+  assert.deepEqual(parent.presaleAsked, ['41590']);
+  assert.deepEqual(parent.soft, []);
+
+  // 부천도 같다. 구 코드가 비면 41190을 한 번 더 본다.
+  const bucheonParent = await withCodes(bucheon(), { 41190: rows.map((row) => ({ ...row, umd: '대장동' })) });
+  assert.equal(bucheonParent.result.status, STATUS.LOTTO);
+  assert.deepEqual(bucheonParent.asked.slice(-2), ['41196', '41190']);
+
+  // 둘 다 비면 그때만 soft로 센다(한 번). 분양권은 구 코드로만 읽는다.
+  const empty = await withCodes(hwaseong(), {});
+  assert.deepEqual(empty.soft, ['trade_lookup_empty']);
+  assert.equal(empty.result.status, STATUS.CHECK);
+  assert.deepEqual(empty.presaleAsked, ['41591', '41593', '41595', '41597']);
+});
+
+test('a 성남 address without a 구 keeps only the 구 whose trades contain its 법정동', async () => {
+  const notice = apt({ region: '경기', address: '경기도 성남시 신흥동 1', flags: { priceCap: true, publicDistrict: false } });
+  const byCode = {
+    // 수정구: 신흥동의 두 단지. 중원구: 다른 동의 싼 단지. 분당구: 다른 동의 비싼 단지.
+    41131: two(5, 2200, { umd: '신흥동' }),
+    41133: trades(5, 500, { umd: '상대원동', jibun: 'c1' }),
+    41135: trades(5, 5000, { umd: '정자동', jibun: 'd1' }),
+  };
+  const { result, presaleAsked } = await withCodes(notice, byCode);
+  // 수정구 거래만 쓴다. 다른 구가 섞이면 추정이 달라진다.
+  assert.equal(result.estimate, 184800);
+  assert.equal(result.confidence, '중');
+  assert.equal(result.status, STATUS.LOTTO);
+  assert.ok(!result.reason.includes('구 없는 주소라'), result.reason);
+  assert.deepEqual([...new Set(presaleAsked)], ['41131']);
+});
+
+test('a 성남 address whose 법정동 is in no 구 uses every 구 but lowers the confidence one level and says so', async () => {
+  const notice = apt({ region: '경기', address: '경기도 성남시 신흥동 1', flags: { priceCap: true, publicDistrict: false } });
+  // 비교 단지가 분당구에만 있다(수정구 주소에 분당구 거래뿐).
+  const onlyBundang = { 41135: two(5, 2200, { umd: '정자동' }) };
+  const { result, presaleAsked } = await withCodes(notice, onlyBundang);
+  // 같은 거래라도 구가 맞지 않아 중이 아니라 하다. 마진이 커도 확인 필요다.
+  assert.equal(result.confidence, '하');
+  assert.equal(result.status, STATUS.CHECK);
+  assert.ok(result.reason.includes('구 없는 주소라 구 전체 합산'), result.reason);
+  assert.ok(result.checkNote.includes('구 없는 주소라 구 전체 합산'), result.checkNote);
+  assert.deepEqual([...new Set(presaleAsked)], ['41131', '41133', '41135']);
+
+  // 같은 거래라도 구가 있는 주소(분당구 정자동)는 낮추지 않는다.
+  const bundangAddress = apt({ region: '경기', address: '경기도 성남시 분당구 정자동 1', flags: { priceCap: true, publicDistrict: false } });
+  const direct = await withCodes(bundangAddress, onlyBundang);
+  assert.equal(direct.result.confidence, '중');
+  assert.equal(direct.result.status, STATUS.LOTTO);
+
+  // 법정동을 읽지 못한 주소(동이 없음)는 위치를 몰라 모든 구를 합치되 낮추지 않는다.
+  const noDong = apt({ region: '경기', address: '경기도 성남시 일원', flags: { priceCap: true, publicDistrict: false } });
+  const flat = await withCodes(noDong, onlyBundang);
+  assert.equal(flat.result.confidence, '중');
+  assert.ok(!flat.result.reason.includes('구 없는 주소라'), flat.result.reason);
+});
+
+test('a 택지지구 name is not a 구: the address fans out to every 구 code', async () => {
+  const asked = [];
+  await evaluateLotto(bucheon({ address: '경기도 부천시 대장지구 일원' }), {
+    config,
+    today,
+    getModels: async () => modelAt(100000),
+    getTrades: async (code) => { asked.push(code); return []; },
+  });
+  assert.deepEqual([...new Set(asked)], ['41192', '41194', '41196', '41190']);
+});
+
+test('the margin thresholds are range-checked, and a wrong-scale value is reported and makes nothing 로또', async () => {
+  const run = async (overrides, data = two(5, 2200)) => {
+    const soft = [];
+    const result = await evaluateLotto(apt(), {
+      config: { ...config, lotto: { ...config.lotto, ...overrides } },
+      today,
+      getModels: async () => modelAt(100000),
+      getTrades: async () => data,
+      onSoftOnce: (kind) => soft.push(kind),
+    });
+    return { result, soft };
+  };
+  // 10%를 10으로 적는 식의 단위 실수와 범위 밖 값.
+  for (const overrides of [{ minMarginRate: 10 }, { minMarginRate: 1 }, { minMarginRate: -0.1 }, { minMarginManwon: -1 }, { minMarginManwon: Number.POSITIVE_INFINITY }]) {
+    const { result, soft } = await run(overrides);
+    assert.deepEqual(soft, ['bad_margin_config'], JSON.stringify(overrides));
+    assert.notEqual(result.status, STATUS.LOTTO, JSON.stringify(overrides));
+  }
+  // 경계값은 쓸 수 있다.
+  assert.deepEqual((await run({ minMarginRate: 0, minMarginManwon: 0 })).soft, []);
+  assert.deepEqual((await run({ minMarginRate: 0.999 })).soft, []);
+  assert.equal(badMarginConfig({ minMarginManwon: 10000, minMarginRate: 10 }), true);
+  assert.equal(badMarginConfig({ minMarginManwon: -1, minMarginRate: 0.1 }), true);
+  assert.equal(badMarginConfig({ minMarginManwon: 0, minMarginRate: 0 }), false);
+  // 설정이 틀리면 근거에 NaN이나 undefined가 나오지 않는다.
+  for (const overrides of [{ minMarginRate: 10 }, { minMarginManwon: undefined }, { minMarginRate: Number.NaN }]) {
+    const { result } = await run(overrides, weakAt(10000));
+    assert.equal(result.status, STATUS.CHECK);
+    assert.ok(!/NaN|undefined/.test(`${result.reason} ${result.shortReason}`), result.reason);
+  }
+  const middle = await run({ minMarginRate: 10 }, confidentAt(5000));
+  assert.equal(middle.result.status, STATUS.CHECK);
+  assert.ok(middle.result.reason.includes('로또 기준 설정 오류'), middle.result.reason);
+  assert.ok(!/NaN|undefined/.test(middle.result.checkNote), middle.result.checkNote);
+});
+
+test('an LH notice with a failed lookup is 판별 불가 and keeps a stored 로또', async () => {
+  const pending = await evaluateLotto(apt({ kind: 'lh', lhDetailState: 'failed', stages: [], flags: { priceCap: true } }), { config, today, getModels: async () => [], getTrades: async () => [] });
+  assert.equal(pending.status, STATUS.UNDETERMINED);
+  assert.equal(pending.lookupFailed, true);
+  assert.equal(keepPreviousLotto(pending, STATUS.LOTTO).status, STATUS.LOTTO);
 });

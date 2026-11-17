@@ -18,7 +18,7 @@ const LINK = 'https://www.applyhome.co.kr/interest';
 const collected = (extra = {}) => ({
   HOUSE_MANAGE_NO: '7',
   PBLANC_NO: '7',
-  HOUSE_NM: '무순위 단지',
+  HOUSE_NM: '재공급 단지',
   HOUSE_SECD: '06',
   SUBSCRPT_AREA_CODE_NM: '서울',
   HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',

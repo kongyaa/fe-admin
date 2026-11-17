@@ -294,8 +294,14 @@ test('an LH sale notice with models and an address is priced with the priceCap t
   assert.equal(none.status, STATUS.UNDETERMINED);
   assert.equal(none.reason, 'LH 공공분양; 시세 추정 없음(실거래 표본 부족)');
   assert.equal(none.averagePrice, 100000);
-  // 이전 로또는 유지된다.
-  assert.equal(keepPreviousLotto(none, STATUS.LOTTO).status, STATUS.LOTTO);
+  // 자료가 없어서 추정이 없는 것이라 이전 로또를 유지하지 않는다(lookupFailed가 아님). 유지하면 로또가 영영 남는다.
+  assert.equal(none.lookupFailed, undefined);
+  assert.equal(keepPreviousLotto(none, STATUS.LOTTO).status, STATUS.UNDETERMINED);
+  // 실거래 조회가 실패해 모르는 것이면 유지한다.
+  const failedTrades = await evaluateLotto(notice, { config, today, getModels: async () => { throw new Error('LH must not call getModels'); }, getTrades: async () => { throw new Error('x'); }, onError: () => {} });
+  assert.equal(failedTrades.status, STATUS.UNDETERMINED);
+  assert.equal(failedTrades.lookupFailed, true);
+  assert.equal(keepPreviousLotto(failedTrades, STATUS.LOTTO).status, STATUS.LOTTO);
   // 신뢰도 하 추정은 다른 조건형 공고처럼 양수 마진이어도 로또가 아니라 확인 필요다.
   const weak = await evaluateLh(notice, trades(2200).slice(0, 5));
   assert.equal(weak.confidence, '하');

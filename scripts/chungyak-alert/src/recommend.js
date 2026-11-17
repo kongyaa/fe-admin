@@ -287,8 +287,9 @@ export function pickSpecialTrack(models, tracks) {
 }
 
 const stageOf = (notice, prefix) => notice.stages.find((stage) => stage.name.startsWith(prefix) && stage.start) ?? null;
-// 무순위·재공급·임의공급의 접수 단계. 상세의 첫 단계다.
-const mainStageOf = (notice) => notice.stages.find((stage) => stage.start) ?? null;
+// 무순위·재공급·임의공급의 접수 단계. 아직 열려 있는 첫 단계다. 첫 단계가 끝났어도 뒤의 일반공급이 열려 있으면 그것을 쓴다.
+// 열린 단계가 없으면 null이다(단계가 모두 끝났거나 날짜가 없다).
+const openMainStageOf = (notice, today) => notice.stages.find((stage) => stage.start && isOpen(stage, today)) ?? null;
 // 무순위·재공급·임의공급의 본 접수 단계(applyhome.js의 '무순위 접수', '재공급 접수', '임의 접수', '접수').
 // 본 접수일 없이 특별공급·일반공급 상세만 있는 공고는 어느 단계가 본 접수인지 알 수 없어 null이다.
 const receiptStageOf = (notice) => notice.stages.find((stage) => stage.name.endsWith('접수') && stage.start) ?? null;
@@ -318,8 +319,8 @@ const CHECKS = '세대주·청약통장 요건 확인';
 function applicantCandidate({ notice, models, applicant, tracks, config, today }) {
   if (!eligibleRegion(notice, applicant)) return null;
   if (notice.kind !== 'apt') {
-    const main = mainStageOf(notice);
-    if (!isOpen(main, today)) return null;
+    const main = openMainStageOf(notice, today);
+    if (!main) return null;
     const name = remainderTrack(notice);
     return { kind: 'remainder', track: REMAINDER_LABELS[name], name, date: main.start, end: main.end ?? null };
   }
@@ -552,26 +553,45 @@ function lhApplicantResult({ notice, applicant, household, config, today, index 
 // LH 추천 문구 끝에 붙일 안내. 소득·자산 기준은 늘 적고, 1순위를 추천하면 납입 인정 금액 순을 적는다.
 const lhNotes = (candidates) => [LH_INCOME_CHECK, ...(candidates.some((candidate) => candidate.kind === 'general') ? [LH_SAVING_NOTE] : [])];
 
-// 공고 하나의 추천. 결과는 { recommendation, text }이다.
+// 신청자에게 후보가 없는 까닭이 확인된 것인지. 지역이 안 맞거나, 아는 단계가 모두 끝났거나, 통장·예치금 때문이면 확인된 것이다.
+// 필요한 단계 자료가 없어서 후보를 못 찾았으면(상세 날짜가 없어 접수 하나뿐인 APT, 날짜가 있는 단계가 없는 무순위, LH 단계 없음) 모르는 것이다.
+function absenceConfirmed({ notice, models, applicant, config, today, lh }) {
+  if (!eligibleRegion(notice, applicant)) return true;
+  const dated = (notice.stages ?? []).filter((stage) => stage.start);
+  // LH와 무순위·재공급·임의공급은 날짜가 있는 단계가 하나라도 있으면 그 단계로 확인한 것이다(모두 끝났거나, 열린 단계 중 신청자 전형이 없다).
+  if (lh || notice.kind !== 'apt') return dated.length > 0;
+  const category = residenceCategory(notice, applicant, config.recommendation);
+  // 일반 1순위 단계가 없으면 이 신청자의 접수가 끝났는지 알 수 없다.
+  if (!stageOf(notice, GENERAL_STAGES[category])) return false;
+  return true;
+}
+
+// trackUnknown은 true일 때만 결과에 넣는다.
+const withUnknown = (result, trackUnknown) => (trackUnknown ? { ...result, trackUnknown: true } : result);
+
+// 공고 하나의 추천. 결과는 { recommendation, text }이고, 추천이 없는 까닭을 모르면 trackUnknown: true가 붙는다.
 // recommendation은 { track, date, end, text } 또는 null이고, text는 판별 근거에 붙일 줄(없으면 null)이다.
+// trackUnknown은 추천이 없는 까닭이 확인된 것이 아니라 단계 자료가 없어서일 때 true다. 긴급 알림이 이때는 막지 않는다(src/main.js의 selectUrgent).
 // v2에서 통장·예치금 때문에 아무도 신청할 수 없으면 recommendation은 null이고 text에 그 까닭을 적는다.
 export function recommendForProfile({ notice, models, profile, config, today }) {
   const none = { recommendation: null, text: null };
   const target = toProfile(profile);
   if (!target) return none;
   const lh = lhRecommendable(notice, config);
-  if (!RECOMMENDED_KINDS.includes(notice.kind) && !lh) return none;
+  // 추천을 계산하는 LH 분양 공고인데 단계 자료가 없으면(상세 조회 상태가 ok가 아니거나 단계가 없음) 추천이 없는 까닭을 모른다.
+  if (!RECOMMENDED_KINDS.includes(notice.kind) && !lh) return isLhSale(notice, config) ? { ...none, trackUnknown: true } : none;
   if (!lh && restrictedType(notice, config.market)) return none;
   const at = noticeBaseDate(notice, today);
   const resultOf = lh ? lhApplicantResult : applicantResult;
-  const results = target.applicants
-    .map((applicant, index) => resultOf({ notice, models, applicant, household: target.household, config, today, index }))
-    .filter(Boolean);
+  const perApplicant = target.applicants.map((applicant, index) => resultOf({ notice, models, applicant, household: target.household, config, today, index }));
+  const results = perApplicant.filter(Boolean);
   const able = results.filter((result) => result.candidate);
   const chosen = chooseApplicant(able);
+  // 추천이 없을 때, 후보가 없는 신청자가 확인된 까닭(통장·예치금 때문에 결과가 있거나 absenceConfirmed)이 아니면 모르는 것이다.
+  const trackUnknown = !chosen && target.applicants.some((applicant, index) => !perApplicant[index] && !absenceConfirmed({ notice, models, applicant, config, today, lh }));
 
   if (target.version === 1) {
-    if (!chosen) return none;
+    if (!chosen) return withUnknown(none, trackUnknown);
     // LH는 v2와 같은 조각에 LH 안내를 붙인다. 청약홈 공고는 예전과 글자까지 같다.
     const text = lh ? [`추천: ${segmentText(chosen.candidate, null)}`, ...lhNotes([chosen.candidate])].join('; ') : v1Text(chosen.candidate);
     return { recommendation: { track: chosen.candidate.track, date: chosen.candidate.date, end: chosen.candidate.end, text }, text };
@@ -586,14 +606,14 @@ export function recommendForProfile({ notice, models, profile, config, today }) 
   const checks = able
     .filter((result) => result.checks.length > 0)
     .map((result) => `${result.applicant.label} ${result.checks.join('·')}`);
-  if (!chosen && remarks.length === 0) return none;
+  if (!chosen && remarks.length === 0) return withUnknown(none, trackUnknown);
   const parts = [chosen ? `추천: ${joinSegments(segments)}` : '추천 없음', ...remarks];
   if (checks.length > 0) parts.push(`확인: ${checks.join(', ')}`);
   if (chosen && notice.kind === 'apt') parts.push(CHECKS);
   if (chosen && lh) parts.push(...lhNotes(able.map((result) => result.candidate)));
   if (segments.some((item) => item.points)) parts.push('가점은 추정');
   const text = parts.join('; ');
-  if (!chosen) return { recommendation: null, text };
+  if (!chosen) return withUnknown({ recommendation: null, text }, trackUnknown);
   return {
     recommendation: { track: recommendLabel(chosen.applicant.label, chosen.candidate.track), date: chosen.candidate.date, end: chosen.candidate.end, text },
     text,

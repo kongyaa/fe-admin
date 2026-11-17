@@ -122,8 +122,8 @@ export function splitLhScope(notices, rows, config) {
 }
 
 // 오늘 접수가 시작되는 로또 공고. 프로필을 읽었으면(requireTrack) 신청할 수 있는 추천 전형도 있어야 한다.
-// recommendation이 null이면 이 신청자가 낼 수 있는 전형이 없다는 뜻이라 로또여도 긴급 알림을 보내지 않는다. 로또 상태는 바꾸지 않는다.
-// recommendation이 undefined이면(조회 실패로 이전 추천을 유지했거나 이번에 판정하지 않음) 아직 모르는 것이라 막지 않는다.
+// recommendation이 null이면 신청할 수 없다고 확인된 것(지역이 안 맞음, 아는 단계가 모두 끝남, 통장·예치금 부족)이라 로또여도 긴급 알림을 보내지 않는다. 로또 상태는 바꾸지 않는다.
+// recommendation이 undefined이면(조회 실패로 이전 추천을 유지했거나, 단계 자료가 없어 모르거나, 이번에 판정하지 않음) 막지 않는다.
 // 프로필이 없으면 예전처럼 상태와 지역과 접수 시작일만 본다.
 export function selectUrgent(records, today, alertRegions, { requireTrack = false } = {}) {
   const selected = [];
@@ -616,7 +616,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
         });
       } catch (error) {
         addError(safeError(error));
-        evaluation = { status: STATUS.UNDETERMINED, reason: '판별 실패' };
+        evaluation = { status: STATUS.UNDETERMINED, reason: '판별 실패', lookupFailed: true };
       }
       // 시세로 로또·아님을 정한 LH 공고 수. 대상 외와 판별 불가(조회 실패, 추정 없음)는 세지 않는다. 이전 판별 유지 전 값으로 센다.
       if (isLhItem(notice) && [STATUS.LOTTO, STATUS.CHECK, STATUS.NOT].includes(evaluation.status)) counts.lh_evaluated += 1;
@@ -637,7 +637,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       marketCounts.complexOutliers += evaluation.complexOutliers ?? 0;
       // 계산 방식이 바뀌어 로또에서 빠진 공고가 몇 건인지 건수만 남긴다. dry-run은 읽어 둔 행으로 센다.
       const stored = previous ?? dryRunRows?.get(notice.key);
-      if (stored?.lotto === STATUS.LOTTO && [STATUS.NOT, STATUS.CHECK, STATUS.OUT_OF_SCOPE].includes(evaluation.status)) counts.lotto_demoted += 1;
+      if (stored?.lotto === STATUS.LOTTO && [STATUS.NOT, STATUS.CHECK, STATUS.UNDETERMINED, STATUS.OUT_OF_SCOPE].includes(evaluation.status)) counts.lotto_demoted += 1;
     }
     // 신청할 수 없는 공고(src/recommend.js의 unapplicableReason)는 저장하지 않고 로또·주간 알림에서도 뺀다. 건수와 사유 종류만 남긴다.
     // 관심을 체크한 행은 보통 공고처럼 갱신하고 로또·주간 알림도 그대로 둔다. 접수가 끝나면 주간 정리가 옮긴다.
@@ -665,7 +665,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       confidence: evaluation?.confidence ?? null,
       checkNote: evaluation?.checkNote ?? null,
       // 추천 전형. 프로필이 없으면 undefined다. selectUrgent가 신청할 수 있는 전형이 있는지 본다.
-      recommendation: evaluation?.recommendation,
+      // 추천이 없는 까닭이 확인된 것이 아니라 단계 자료가 없어서면(trackUnknown) 모르는 값(undefined)으로 두어 알림을 막지 않는다.
+      recommendation: evaluation?.trackUnknown ? undefined : evaluation?.recommendation,
       // 관심 체크로 남긴 신청할 수 없는 공고. --print 표시에만 쓴다.
       unapplicable,
     };

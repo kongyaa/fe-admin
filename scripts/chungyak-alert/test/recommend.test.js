@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { evaluateLotto } from '../src/lotto.js';
 import { buildProperties, parseExistingPage } from '../src/notion-store.js';
 import { ENDPOINTS, normalizeDetail } from '../src/sources/applyhome.js';
-import { SPECIAL_TRACKS, parseProfile, pickSpecialTrack, recommendTrack, residenceCategory, unapplicableReason } from '../src/recommend.js';
+import { SPECIAL_TRACKS, parseProfile, pickSpecialTrack, recommendForProfile, recommendTrack, residenceCategory, unapplicableReason } from '../src/recommend.js';
 
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
 const today = '2026-11-05';
@@ -408,4 +408,42 @@ test('evaluation carries the unapplicable reason only with a profile, and a fail
   assert.equal((await evaluate(lateSpecial, PROFILE)).unapplicable, 'ended');
   assert.equal((await evaluate(lateSpecial, PROFILE, async () => { throw new Error('down'); })).unapplicable, null);
   assert.equal((await evaluate(lateSpecial, PROFILE, async () => null)).unapplicable, null);
+});
+
+// ---- 추천이 없는 까닭: 확인된 것(null)과 단계 자료가 없어 모르는 것(trackUnknown) ----
+
+const detailed = (notice, models, profile = PROFILE, on = today) => recommendForProfile({ notice, models, profile, config, today: on });
+const remainderOf = (stageList, extra = {}) => ({ key: '2-2', kind: 'remainder', houseSecd: '04', region: '인천', name: '공고단지', stages: stageList, flags: {}, ...extra });
+
+test('no recommendation is confirmed (no trackUnknown) when the region does not fit or every known stage has ended', () => {
+  // 수도권 밖 거주자의 인천 공고는 지역이 맞지 않는다.
+  assert.deepEqual(detailed(apt(), [model({ 신혼부부: 10 })], { ...PROFILE, residenceSido: '부산' }), { recommendation: null, text: null });
+  // 아는 단계(특별공급, 1순위 해당·경기·기타)가 모두 끝났다.
+  assert.deepEqual(detailed(apt(), [model({ 신혼부부: 10 })], PROFILE, '2026-11-20'), { recommendation: null, text: null });
+  // 무순위는 날짜가 있는 단계가 모두 끝났다.
+  assert.deepEqual(detailed(remainderOf([{ name: '무순위 접수', start: '2026-11-02', end: '2026-11-03' }]), []), { recommendation: null, text: null });
+});
+
+test('no recommendation is unknown (trackUnknown) when the needed stage data is missing', () => {
+  const unknown = { recommendation: null, text: null, trackUnknown: true };
+  // 상세 날짜를 읽지 못해 접수 하나로만 나온 APT는 특별공급과 1순위 단계가 없어 알 수 없다.
+  assert.deepEqual(detailed(apt({ stages: [{ name: '접수', start: '2026-11-09', end: '2026-11-09' }] }), [model({ 신혼부부: 10 })]), unknown);
+  assert.deepEqual(detailed(apt({ stages: [] }), [model({ 신혼부부: 10 })]), unknown);
+  // 날짜가 있는 단계가 없는 무순위도 같다.
+  assert.deepEqual(detailed(remainderOf([]), []), unknown);
+  assert.deepEqual(detailed(remainderOf([{ name: '무순위 접수', start: null, end: null }]), []), unknown);
+});
+
+test('a remainder notice uses its first open stage, so a finished first stage does not hide a later open one', () => {
+  const notice = remainderOf([
+    { name: '무순위 접수', start: '2026-11-02', end: '2026-11-03' },
+    { name: '일반공급', start: today, end: '2026-11-06' },
+  ]);
+  const result = detailed(notice, []);
+  assert.equal(result.recommendation.date, today);
+  assert.equal(result.recommendation.track, '무순위');
+  assert.equal(result.trackUnknown, undefined);
+  // 첫 단계가 열려 있으면 예전처럼 첫 단계다.
+  const first = detailed(remainderOf([{ name: '무순위 접수', start: '2026-11-06', end: '2026-11-07' }, { name: '일반공급', start: '2026-11-08', end: '2026-11-09' }]), []);
+  assert.equal(first.recommendation.date, '2026-11-06');
 });

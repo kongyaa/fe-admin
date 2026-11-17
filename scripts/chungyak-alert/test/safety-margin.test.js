@@ -772,10 +772,10 @@ test('the market line counts how MOLIT writes 법정동 names, without the names
 });
 
 test('읍·면 addresses keep their 리 for the subject and its lot number', () => {
-  assert.deepEqual(resolveAddress('경기 남양주시 화도읍 마석우리 295-32', '경기'), { region: '경기', code: '41360', codes: ['41360'], umd: '화도읍', village: '마석우리' });
-  assert.deepEqual(resolveAddress('경기도 가평군 청평면 청평리 1', '경기'), { region: '경기', code: '41820', codes: ['41820'], umd: '청평면', village: '청평리' });
-  assert.deepEqual(resolveAddress('경기도 남양주시 오남읍 양지로 12', '경기'), { region: '경기', code: '41360', codes: ['41360'], umd: '오남읍', village: null });
-  assert.deepEqual(resolveAddress('서울특별시 강남구 역삼동 1'), { region: '서울', code: '11680', codes: ['11680'], umd: '역삼동', village: null });
+  assert.deepEqual(resolveAddress('경기 남양주시 화도읍 마석우리 295-32', '경기'), { region: '경기', code: '41360', codes: ['41360'], fallbackCode: null, umd: '화도읍', village: '마석우리' });
+  assert.deepEqual(resolveAddress('경기도 가평군 청평면 청평리 1', '경기'), { region: '경기', code: '41820', codes: ['41820'], fallbackCode: null, umd: '청평면', village: '청평리' });
+  assert.deepEqual(resolveAddress('경기도 남양주시 오남읍 양지로 12', '경기'), { region: '경기', code: '41360', codes: ['41360'], fallbackCode: null, umd: '오남읍', village: null });
+  assert.deepEqual(resolveAddress('서울특별시 강남구 역삼동 1'), { region: '서울', code: '11680', codes: ['11680'], fallbackCode: null, umd: '역삼동', village: null });
 });
 
 test('a same-lot presale row in the same 리 counts as the same complex even under another name', async () => {
@@ -1310,7 +1310,9 @@ function worldFetch({ rows = [aptRow()], apt: aptHandler, presale, models = [{ H
     }
     if (text.includes('RTMSDataSvcAptTrade')) {
       calls.molit.push(text);
-      return new Response(xml(parsed.searchParams.get('DEAL_YMD') === '202610' ? Array(5).fill(trades).flat() : []));
+      // trades가 함수면 시군구 코드(LAWD_CD)별로 다른 거래를 준다.
+      const rowsOfCode = typeof trades === 'function' ? trades(parsed.searchParams.get('LAWD_CD')) : trades;
+      return new Response(xml(parsed.searchParams.get('DEAL_YMD') === '202610' ? Array(5).fill(rowsOfCode).flat() : []));
     }
     if (text.includes('getAPTLttotPblancDetail')) return Response.json({ totalCount: rows.length, data: rows });
     if (text.includes('getAPTLttotPblancMdl')) return Response.json({ totalCount: models.length, data: models });
@@ -1472,9 +1474,11 @@ test('lotto_demoted counts rows that were 로또 and now compute 아님 or 대�
   const highPrice = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, jibun: String(100 + index), amount: '300,000' }));
   const weakHigh = [tradeTags({ name: '가단지', jibun: '100', amount: '300,000' })];
   const weakLow = [tradeTags({ name: '가단지', jibun: '100', amount: '84,000' })];
-  const count = async ({ store, trades, rows, kakaoSent = 0, argv }) => {
+  const count = async ({ store, trades, rows, kakaoSent = 0, argv, molitDown = false }) => {
     const world = worldFetch({ trades, rows });
-    const h = harness({ store, fetch: world.fetch });
+    // 실거래 API가 실패하는 실행. 예외로 모르는 것이라 판별 불가로 저장된 로또를 유지한다.
+    const fetch = molitDown ? async (url, init) => (String(url).includes('RTMSDataSvcAptTrade') ? new Response('down', { status: 500 }) : world.fetch(url, init)) : world.fetch;
+    const h = harness({ store, fetch });
     await run({ argv, env: h.env, deps: h.deps });
     assert.equal(h.kakao.length, kakaoSent);
     assert.ok(!h.logs.join('\n').includes('비밀공고단지'));
@@ -1488,8 +1492,10 @@ test('lotto_demoted counts rows that were 로또 and now compute 아님 or 대�
   assert.ok((await count({ store: fakeStore(wasLotto()), trades: weakLow })).includes('lotto_demoted=1'));
   assert.ok((await count({ store: fakeStore(wasLotto({ lotto: '아님' })), trades: lowPrice })).includes('lotto_demoted=0'));
   assert.ok((await count({ store: fakeStore(), trades: lowPrice })).includes('lotto_demoted=0'));
-  // 판별 불가로 이전 로또를 유지한 공고는 빠진 것이 아니다.
-  assert.ok((await count({ store: fakeStore(wasLotto()), trades: [], kakaoSent: 1 })).includes('lotto_demoted=0'));
+  // 자료가 없어 판별 불가(실거래 없음)가 된 로또는 유지하지 않고 빠진 것으로 센다. 알림도 없다.
+  assert.ok((await count({ store: fakeStore(wasLotto()), trades: [] })).includes('lotto_demoted=1'));
+  // 실거래 조회 실패로 판별 불가가 된 로또는 이전 판별을 유지해 빠진 것이 아니다.
+  assert.ok((await count({ store: fakeStore(wasLotto()), trades: [], molitDown: true, kakaoSent: 1 })).includes('lotto_demoted=0'));
   // dry-run은 저장 없이 읽어 둔 행으로 센다.
   assert.ok((await count({ store: fakeStore(wasLotto()), trades: lowPrice, argv: ['--dry-run'] })).includes('lotto_demoted=1'));
 });
@@ -1609,12 +1615,13 @@ test('a weak estimate does not create a 로또 for a new row in a full run, it i
   assert.equal(h.kakao.length, 0);
 });
 
-test('dry-run applies the same 판별 불가 protection as a normal run', async () => {
-  // 실거래가 없는 일반 공고는 판별 불가라 저장된 로또를 유지한다. 신뢰도 하 추정은 더 이상 유지하지 않는다(위의 demoted 테스트).
+test('dry-run applies the same lookup-failure protection as a normal run', async () => {
+  // 실거래 조회가 실패한 일반 공고는 판별 불가라 저장된 로또를 유지한다. 자료가 없는 판별 불가와 신뢰도 하 추정은 유지하지 않는다(위의 demoted 테스트).
   const oneComplex = [];
+  const molitDown = (base) => async (url, init) => (String(url).includes('RTMSDataSvcAptTrade') ? new Response('down', { status: 500 }) : base(url, init));
   const stored = { id: 'stored', properties: { '고유 키': { rich_text: [{ plain_text: '7-7' }] }, '로또 여부': { select: { name: '로또' } }, '접수 종료일': { date: { start: THU } } } };
   const fake = schemaFake({ ...NEW, ...CONFIDENCE_PROP, ...OTHERS });
-  const base = worldFetch({ trades: oneComplex });
+  const base = { fetch: molitDown(worldFetch({ trades: oneComplex }).fetch) };
   const fetch = async (url, init = {}) => {
     if (!String(url).includes('api.notion.com')) return base.fetch(url);
     if (String(url).endsWith('/query')) return Response.json({ has_more: false, results: [stored] });
@@ -1626,7 +1633,7 @@ test('dry-run applies the same 판별 불가 protection as a normal run', async 
   assert.ok(dry.logs.some((line) => line.startsWith('dry-run lotto=1 ')), dry.logs.join(' | '));
   assert.ok(summaryLine(dry).includes('lotto_demoted=0'));
 
-  const normal = harness({ store: fakeStore(new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]])), fetch: worldFetch({ trades: oneComplex }).fetch });
+  const normal = harness({ store: fakeStore(new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]])), fetch: molitDown(worldFetch({ trades: oneComplex }).fetch) });
   await run({ env: normal.env, deps: normal.deps });
   assert.equal(normal.store.state.upserts[0].evaluation.status, '로또');
   assert.ok(summaryLine(normal).includes('lotto_demoted=0'));
@@ -2364,12 +2371,21 @@ test('with a profile a 로또 notice without a recommended track stays 로또 bu
   assert.equal(withTrack.kakao.length, 1);
   assert.ok(summaryOf(withTrack).includes(' urgent=1 '), summaryOf(withTrack));
 
-  // 같은 로또인데 이 신청자가 낼 전형이 없으면(특별공급 세대 정보 없음, 일반 1순위 접수 없음) 알림만 없다. 상태와 저장은 그대로다.
-  const noTrack = harness({ fetch: worldFetch().fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  // 단계 자료가 없어(상세 날짜 없이 접수 하나뿐인 공고) 추천이 없는 까닭을 모르면 막지 않는다. 추천 열은 비우되 알림은 간다.
+  const unknownTrack = harness({ fetch: worldFetch().fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
+  assert.equal(await run({ env: unknownTrack.env, deps: unknownTrack.deps }), 0);
+  assert.equal(unknownTrack.store.state.upserts[0].evaluation.recommendation, null);
+  assert.equal(unknownTrack.store.state.upserts[0].evaluation.trackUnknown, true);
+  assert.equal(unknownTrack.kakao.length, 1);
+
+  // 아는 단계(1순위 기타지역)가 모두 끝나 신청할 수 있는 전형이 없다고 확인되면 알림만 없다. 상태와 저장은 그대로다.
+  const endedGeneral = aptRow({ GNRL_RNK1_ETC_AREA_RCPTDE: '2026-11-02', GNRL_RNK1_ETC_AREA_ENDDE: '2026-11-03' });
+  const noTrack = harness({ fetch: worldFetch({ rows: [endedGeneral] }).fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON } });
   assert.equal(await run({ env: noTrack.env, deps: noTrack.deps }), 0);
   const [{ evaluation, properties }] = noTrack.store.state.upserts;
   assert.equal(evaluation.status, '로또');
   assert.equal(evaluation.recommendation, null);
+  assert.equal(evaluation.trackUnknown, undefined);
   assert.deepEqual(properties['로또 여부'], { select: { name: '로또' } });
   assert.equal(noTrack.kakao.length, 0);
   assert.deepEqual(noTrack.store.state.stamps, []);
@@ -2384,7 +2400,7 @@ test('with a profile a 로또 notice without a recommended track stays 로또 bu
   assert.equal(noProfile.kakao.length, 1);
 
   // dry-run의 알림 후보 수도 같은 기준이다.
-  const dry = harness({ fetch: worldFetch().fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON }, argv: ['--dry-run'] });
+  const dry = harness({ fetch: worldFetch({ rows: [endedGeneral] }).fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON }, argv: ['--dry-run'] });
   assert.equal(await run({ argv: dry.argv, env: dry.env, deps: dry.deps }), 0);
   assert.ok(dry.logs.some((line) => line.startsWith('dry-run lotto=1 check_needed=0 urgent_candidates=0')), dry.logs.join('|'));
   assert.equal(dry.kakao.length, 0);
@@ -2400,6 +2416,7 @@ test('a 부천 notice without a 구 asks MOLIT for the three 구 codes, never th
   const world = worldFetch({ rows: [bucheonRow()], trades });
   const h = harness({ fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // 구 코드에 거래가 있으니 구 없는 시 코드(41190)는 부르지 않는다.
   assert.deepEqual(lawdCodes(world), ['41192', '41194', '41196']);
   const [{ evaluation }] = h.store.state.upserts;
   assert.equal(evaluation.status, '로또');
@@ -2408,11 +2425,49 @@ test('a 부천 notice without a 구 asks MOLIT for the three 구 codes, never th
   assert.ok(marketLine(h).endsWith('soft=none'), marketLine(h));
 });
 
+test('a 부천 notice uses different trades from each 구 code: only the 구 with the 법정동 count, and one 구 alone would not decide', async () => {
+  // 원미구에는 대장동 단지 하나, 소사구에는 대장동의 다른 단지 하나(각각 표본 5건), 오정구에는 다른 동의 아주 싼 단지가 있다.
+  // 코드 하나의 거래만 쓰면 표본이 5건(단지 1곳, 신뢰도 하)이라 확인 필요이고, 오정구를 섞으면 이상치가 된다. 두 구를 합치면 단지 2곳(중)이라 로또다.
+  const byCode = {
+    41192: [tradeTags({ name: '원미대장단지', umd: '대장동', jibun: '1', amount: '210,000' })],
+    41194: [tradeTags({ name: '소사대장단지', umd: '대장동', jibun: '2', amount: '210,000' })],
+    41196: [tradeTags({ name: '오정다른동단지', umd: '오정동', jibun: '3', amount: '30,000' })],
+  };
+  const world = worldFetch({ rows: [bucheonRow()], trades: (code) => byCode[code] ?? [] });
+  const h = harness({ fetch: world.fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ evaluation }] = h.store.state.upserts;
+  assert.equal(evaluation.confidence, '중');
+  assert.equal(evaluation.status, '로또');
+  assert.ok(evaluation.reason.includes('원미대장단지') && evaluation.reason.includes('소사대장단지'), evaluation.reason);
+  assert.ok(!evaluation.reason.includes('오정다른동단지'), evaluation.reason);
+  assert.ok(!evaluation.reason.includes('구 없는 주소라'), evaluation.reason);
+
+  // 한 구의 거래만 있으면(원미구만) 같은 공고가 신뢰도 하라 확인 필요다. 합쳐서 판단하는 것이 결과를 바꾼다는 증거다.
+  const single = worldFetch({ rows: [bucheonRow()], trades: (code) => (code === '41192' ? byCode[41192] : []) });
+  const alone = harness({ fetch: single.fetch });
+  assert.equal(await run({ env: alone.env, deps: alone.deps }), 0);
+  assert.equal(alone.store.state.upserts[0].evaluation.confidence, '하');
+  assert.equal(alone.store.state.upserts[0].evaluation.status, '확인 필요');
+});
+
+test('when every 구 code is empty the parent code is tried once, and it is not counted as empty if it has trades', async () => {
+  const parentTrades = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, umd: '대장동', jibun: String(100 + index), amount: '210,000' }));
+  const world = worldFetch({ rows: [bucheonRow()], trades: (code) => (code === '41190' ? parentTrades : []) });
+  const h = harness({ fetch: world.fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  // 구 코드를 먼저 읽고 모두 비어서 구 없는 시 코드를 읽는다.
+  assert.deepEqual(lawdCodes(world), ['41190', '41192', '41194', '41196']);
+  assert.equal(h.store.state.upserts[0].evaluation.status, '로또');
+  assert.ok(marketLine(h).endsWith('soft=none'), marketLine(h));
+});
+
 test('an in-region notice whose trade lookup returns no rows is counted softly, with counts only', async () => {
   const world = worldFetch({ rows: [bucheonRow({ HOUSE_NM: '비밀부천단지' })], trades: [] });
   const h = harness({ fetch: world.fetch });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
-  assert.deepEqual(lawdCodes(world), ['41192', '41194', '41196']);
+  // 구 코드와 구 없는 시 코드(41190) 모두 비었다. 그때만 센다.
+  assert.deepEqual(lawdCodes(world), ['41190', '41192', '41194', '41196']);
   const [{ evaluation }] = h.store.state.upserts;
   // 분양가상한제 공고인데 추정이 없어 로또가 아니라 확인 필요다. 긴급 알림은 없다.
   assert.equal(evaluation.status, '확인 필요');
@@ -2435,4 +2490,37 @@ test('two notices with empty lookups are counted twice, and notices outside the 
   h.deps.config = { ...config, tableRegions: undefined };
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.ok(marketLine(h).endsWith('soft=trade_lookup_empty:2'), marketLine(h));
+});
+
+// ---- 무순위(04) 조건형의 run 단위 경로: 시세가 있으면 로또 알림, 근거가 약하면 확인 필요 ----
+
+function remainderWorld({ name = '합성무순위단지', trades }) {
+  const row = aptRow({ HOUSE_SECD: '04', HOUSE_NM: name, SUBSCRPT_RCEPT_BGNDE: THU, SUBSCRPT_RCEPT_ENDDE: THU });
+  const world = worldFetch({ rows: [], trades });
+  return async (url) => {
+    const text = String(url);
+    if (text.includes('getRemndrLttotPblancDetail')) return Response.json({ totalCount: 1, data: [row] });
+    if (text.includes('getRemndrLttotPblancMdl')) return Response.json({ totalCount: 1, data: [{ HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: '100,000' }] });
+    return world.fetch(url);
+  };
+}
+
+test('a 무순위 notice with a firm estimate alerts as 로또, with a thin one it is 확인 필요, with a loss 아님', async () => {
+  // 비교 단지 4곳이 같은 가격이라 신뢰도 중이다. 분양가 10억 기준 마진 = amount - 104800.
+  const firm = harness({ fetch: remainderWorld({ trades: confidentTrades('125,000') }) });
+  assert.equal(await run({ env: firm.env, deps: firm.deps }), 0);
+  assert.equal(firm.store.state.upserts[0].evaluation.status, '로또');
+  assert.equal(firm.kakao.length, 1);
+  assert.ok(firm.store.state.upserts[0].evaluation.reason.startsWith('수도권 무순위·잔여세대; 안전 마진'), firm.store.state.upserts[0].evaluation.reason);
+
+  const thin = harness({ fetch: remainderWorld({ trades: confidentTrades('105,500') }) });
+  assert.equal(await run({ env: thin.env, deps: thin.deps }), 0);
+  assert.equal(thin.store.state.upserts[0].evaluation.status, '확인 필요');
+  assert.equal(thin.kakao.length, 0);
+  assert.ok(summaryLine(thin).includes(' check_needed=1 '), summaryLine(thin));
+
+  const loss = harness({ fetch: remainderWorld({ trades: confidentTrades('90,000') }) });
+  assert.equal(await run({ env: loss.env, deps: loss.deps }), 0);
+  assert.equal(loss.store.state.upserts[0].evaluation.status, '아님');
+  assert.equal(loss.kakao.length, 0);
 });

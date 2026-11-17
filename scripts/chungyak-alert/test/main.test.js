@@ -348,10 +348,10 @@ test('Notion outage state belongs to one store, and a stalled response body trip
 
 // run() 통합 테스트용 가짜. 기본 공고는 불법행위 재공급(HOUSE_SECD 06)이다. 시세를 보지 않는 조건이라 시세 자료 없이도 로또로 정해진다.
 const SECRET = 'SECRET-DATA-KEY';
-const remainderRow = (start, extra = {}) => ({
+const resupplyRow = (start, extra = {}) => ({
   HOUSE_MANAGE_NO: '7',
   PBLANC_NO: '7',
-  HOUSE_NM: '무순위 단지',
+  HOUSE_NM: '재공급 단지',
   HOUSE_SECD: '06',
   SUBSCRPT_AREA_CODE_NM: '서울',
   HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
@@ -362,7 +362,7 @@ const remainderRow = (start, extra = {}) => ({
   ...extra,
 });
 
-function apiFetch({ rows = [remainderRow(THU)], fail = false } = {}) {
+function apiFetch({ rows = [resupplyRow(THU)], fail = false } = {}) {
   return async (url) => {
     const text = String(url);
     if (fail) return new Response(`denied ${text}`, { status: 500 });
@@ -430,7 +430,7 @@ test('Kakao failure falls back to mail with the same content and still stamps', 
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const urgent = h.mails.find((mail) => mail.subject.startsWith('[청약 긴급]'));
   assert.ok(urgent);
-  assert.ok(urgent.text.includes('무순위 단지'));
+  assert.ok(urgent.text.includes('재공급 단지'));
   assert.equal(h.store.state.stamps.length, 1);
   const summary = h.mails.find((mail) => mail.subject.includes('배치 오류'));
   assert.ok(summary.text.includes('unexpected_error'));
@@ -454,8 +454,8 @@ test('no stamp when both channels fail, and the job fails', async () => {
 
 test('a stalled MOLIT API costs one retry cycle and flag notices still alert as 로또', async () => {
   const rows = [
-    remainderRow(THU),
-    remainderRow(THU, { HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 서초구 반포동 1' }),
+    resupplyRow(THU),
+    resupplyRow(THU, { HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 서초구 반포동 1' }),
   ];
   const base = apiFetch({ rows });
   let molitCalls = 0;
@@ -480,8 +480,8 @@ test('a stalled MOLIT API costs one retry cycle and flag notices still alert as 
 
 test('a stalled model endpoint costs one retry cycle and flag notices still alert as 로또', async () => {
   const rows = [
-    remainderRow(THU),
-    remainderRow(THU, { HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 서초구 반포동 1' }),
+    resupplyRow(THU),
+    resupplyRow(THU, { HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 서초구 반포동 1' }),
   ];
   const base = apiFetch({ rows });
   let modelCalls = 0;
@@ -512,7 +512,7 @@ test('Applyhome failing fully exits 1 even when LH succeeds', async () => {
 
 test('weekly mail is sent on Monday and stamped, then skipped once stamped', async () => {
   const monday = '2026-11-01T22:30:00Z';
-  const rows = [remainderRow('2026-11-05')];
+  const rows = [resupplyRow('2026-11-05')];
   const h = harness({ nowIso: monday, fetch: apiFetch({ rows }) });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const weekly = h.mails.filter((mail) => mail.subject.includes('금주 일정'));
@@ -561,8 +561,8 @@ test('a single source failure does not block the others or fail the job', async 
 });
 
 const stalledNotionRows = [
-  remainderRow(THU),
-  remainderRow(THU, { HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 서초구 반포동 1' }),
+  resupplyRow(THU),
+  resupplyRow(THU, { HOUSE_MANAGE_NO: '8', HSSPLY_ADRES: '서울특별시 서초구 반포동 1' }),
 ];
 
 // 실제 createNotionStore를 쓰고 Notion 호출만 가짜로 돌린다. stall이 true를 돌려주는 호출부터 멈춘다.
@@ -634,7 +634,7 @@ test('Notion timeouts trip the guard the same way', async () => {
 });
 
 test('a Notion stall during upserts blocks the weekly mail and its stamp', async () => {
-  const rows = [remainderRow('2026-11-02')];
+  const rows = [resupplyRow('2026-11-02')];
   const h = stalledNotionHarness({
     rows,
     nowIso: '2026-11-01T22:30:00Z',
@@ -687,7 +687,7 @@ test('Notion read failure uses the mail fallback when Kakao fails', async () => 
 
 test('Notion read failure does not send the weekly mail', async () => {
   const store = brokenNotionStore();
-  const h = harness({ store, nowIso: '2026-11-01T22:30:00Z', fetch: apiFetch({ rows: [remainderRow('2026-11-05')] }) });
+  const h = harness({ store, nowIso: '2026-11-01T22:30:00Z', fetch: apiFetch({ rows: [resupplyRow('2026-11-05')] }) });
   assert.equal(await run({ env: h.env, deps: h.deps }), 1);
   assert.equal(h.mails.filter((mail) => mail.subject.includes('금주 일정')).length, 0);
   assert.equal(store.state.weekly, null);
@@ -732,29 +732,29 @@ test('a missing Kakao token is reported and the urgent alert goes by mail', asyn
 });
 
 test('a new notice whose application has ended is skipped entirely', async () => {
-  const h = harness({ fetch: apiFetch({ rows: [remainderRow('2026-11-01')] }), nowIso: '2026-11-01T22:30:00Z' });
+  const h = harness({ fetch: apiFetch({ rows: [resupplyRow('2026-11-01')] }), nowIso: '2026-11-01T22:30:00Z' });
   await run({ argv: ['--force-weekly'], env: h.env, deps: h.deps });
   // 2026-11-02 KST 기준으로 11-01은 지났다.
   assert.equal(h.store.state.upserts.length, 0);
   assert.equal(h.kakao.length, 0);
   assert.ok(h.logs.some((line) => line.includes('skipped=1')));
   const weekly = h.mails.find((mail) => mail.subject.includes('금주 일정'));
-  assert.ok(!weekly.text.includes('무순위 단지'));
+  assert.ok(!weekly.text.includes('재공급 단지'));
 });
 
 test('the end date is compared in KST and the last day is still stored', async () => {
   // 22:30 UTC는 KST로 다음 날이다.
-  const ended = harness({ fetch: apiFetch({ rows: [remainderRow('2026-11-04')] }) });
+  const ended = harness({ fetch: apiFetch({ rows: [resupplyRow('2026-11-04')] }) });
   await run({ env: ended.env, deps: ended.deps });
   assert.equal(ended.store.state.upserts.length, 0);
 
-  const lastDay = harness({ fetch: apiFetch({ rows: [remainderRow(THU)] }) });
+  const lastDay = harness({ fetch: apiFetch({ rows: [resupplyRow(THU)] }) });
   await run({ env: lastDay.env, deps: lastDay.deps });
   assert.equal(lastDay.store.state.upserts.length, 1);
 });
 
 test('a notice with no dates and no closed status is still stored', async () => {
-  const rows = [remainderRow(null, { SUBSCRPT_RCEPT_BGNDE: '', SUBSCRPT_RCEPT_ENDDE: '' })];
+  const rows = [resupplyRow(null, { SUBSCRPT_RCEPT_BGNDE: '', SUBSCRPT_RCEPT_ENDDE: '' })];
   const h = harness({ fetch: apiFetch({ rows }) });
   await run({ env: h.env, deps: h.deps });
   assert.equal(h.store.state.upserts.length, 1);
@@ -798,7 +798,7 @@ test('LH dates take priority over the status text', async () => {
 });
 
 test('existing pages keep their behaviour when the notice has ended', async () => {
-  const rows = [remainderRow('2026-11-01')];
+  const rows = [resupplyRow('2026-11-01')];
   const stored = new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: '2026-11-01' }]]);
   const old = harness({ fetch: apiFetch({ rows }), store: fakeStore(stored) });
   await run({ env: old.env, deps: old.deps });
@@ -818,7 +818,7 @@ test('existing pages keep their behaviour when the notice has ended', async () =
 });
 
 test('undetermined evaluation keeps an existing 로또 and alerts', async () => {
-  const row = remainderRow(THU, { HOUSE_SECD: '01', SPSPLY_RCEPT_BGNDE: THU, SPSPLY_RCEPT_ENDDE: THU });
+  const row = resupplyRow(THU, { HOUSE_SECD: '01', SPSPLY_RCEPT_BGNDE: THU, SPSPLY_RCEPT_ENDDE: THU });
   const fetchApt = async (url) => {
     const text = String(url);
     if (text.includes('getAPTLttotPblancDetail')) return Response.json({ totalCount: 1, data: [row] });
@@ -843,13 +843,13 @@ test('dry-run writes and sends nothing and needs only the data key', async () =>
   assert.equal(h.mails.length, 0);
   assert.equal(h.kakao.length, 0);
   assert.ok(h.logs.some((line) => line.includes('urgent_candidates=1')));
-  assert.ok(!h.logs.some((line) => line.includes('무순위 단지')));
+  assert.ok(!h.logs.some((line) => line.includes('재공급 단지')));
 });
 
 test('--print lists notices without writing', async () => {
   const h = harness();
   await run({ argv: ['--print'], env: { DATA_GO_KR_KEY: SECRET }, deps: h.deps });
-  assert.ok(h.logs.some((line) => line.includes('무순위 단지')));
+  assert.ok(h.logs.some((line) => line.includes('재공급 단지')));
   assert.equal(h.store.state.upserts.length, 0);
 });
 
@@ -1037,7 +1037,7 @@ test('the order is mail, weekly state, then archive, with urgent stamps before t
   const h = harness({
     store,
     nowIso: MON_NOW,
-    fetch: apiFetch({ rows: [remainderRow(MON)] }),
+    fetch: apiFetch({ rows: [resupplyRow(MON)] }),
     sendMail: async () => { events.push('mail'); },
     sendKakao: async () => { events.push('kakao'); },
   });
@@ -1135,7 +1135,7 @@ test('urgent alerts go out and stamp normally on a run that archives', async () 
   // 저장된 종료일이 지났지만 오늘 다시 접수가 시작된 공고도 알림과 기록이 먼저 끝난다.
   pages.set('8-7', { id: 'p8', key: '8-7', lotto: '로또', urgentDate: null, end: '2026-11-01' });
   const store = fakeStore(pages);
-  const rows = [remainderRow(MON), remainderRow(MON, { HOUSE_MANAGE_NO: '8' })];
+  const rows = [resupplyRow(MON), resupplyRow(MON, { HOUSE_MANAGE_NO: '8' })];
   const h = harness({ store, nowIso: MON_NOW, fetch: apiFetch({ rows }) });
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(h.kakao.length, 2);
@@ -1170,7 +1170,7 @@ test('a Notion stall that starts during archiving stops after one retry cycle an
 test('a Notion stall on urgent stamps keeps the alert sent and skips archive calls', async () => {
   const ended = endedNotionPage;
   const h = stalledNotionHarness({
-    rows: [remainderRow(MON)],
+    rows: [resupplyRow(MON)],
     nowIso: MON_NOW,
     pages: [ended('a'), ended('b')],
     stall: (method, path) => method === 'PATCH' && path.startsWith('/pages/'),

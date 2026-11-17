@@ -540,7 +540,8 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
     presaleOk: inputs.presaleOk,
     ageStep: scoped.ageStep,
     lastAgeStep: scoped.lastAgeStep,
-    scopePenalty: scoped.scopePenalty,
+    // 구 없는 주소의 시에서 공고 동이 있는 구를 찾지 못해 구 전체를 합친 경우도 위치가 다른 만큼 한 단계 내린다.
+    scopePenalty: scoped.scopePenalty || Boolean(inputs.crossWard),
     lastStepMinComplexes: market.safeValue.minComplexesForLoo,
     discountExceeded: safe.exceeded,
     forceLow: scoped.townWide,
@@ -566,6 +567,7 @@ function estimateFromComparables(model, rows, subject, inputs, context) {
       maxAge: scoped.maxAge,
       townWide: scoped.townWide,
       widened: scoped.widened,
+      crossWard: Boolean(inputs.crossWard),
       // 근거의 금액은 공고 주택형 면적 기준이다. 작은 주택형의 ㎡당 가격을 84㎡로 늘리면 실제보다 비싸 보인다.
       area: model.area,
       outliers,
@@ -643,10 +645,15 @@ export function buildSubject({ name, builder, umd, village = null, jibun, walkMi
 }
 
 // 로또 마진 기준. 안전 마진이 lotto.minMarginManwon(1억 원) 이상이고 마진율(분양가 대비)이 lotto.minMarginRate(10%) 이상이어야 한다(AND).
-// 마진율을 알 수 없거나 기준이 숫자가 아니면 기준을 넘지 못한 것으로 본다(설정 오류로 로또가 쏟아지지 않게 한다).
-export const meetsMarginRule = (candidate, lotto) => Number.isFinite(lotto.minMarginManwon) && Number.isFinite(lotto.minMarginRate)
+// 마진율을 알 수 없거나 기준 설정이 틀렸으면(validMarginConfig) 기준을 넘지 못한 것으로 본다(설정 오류로 로또가 쏟아지지 않게 한다).
+export const meetsMarginRule = (candidate, lotto) => validMarginConfig(lotto)
   && candidate.margin >= lotto.minMarginManwon
   && Number.isFinite(candidate.marginRate) && candidate.marginRate >= lotto.minMarginRate;
+
+// 마진 기준 설정이 맞는지. 둘 다 유한한 수이고 minMarginManwon은 0 이상, minMarginRate는 0 이상 1 미만(비율)이어야 한다.
+// 10처럼 단위가 틀린 값(10%를 10으로 적음)이 모든 공고를 아님으로 만들지 않고 설정 오류로 드러나게 한다.
+export const validMarginConfig = (lotto) => Number.isFinite(lotto.minMarginManwon) && lotto.minMarginManwon >= 0
+  && Number.isFinite(lotto.minMarginRate) && lotto.minMarginRate >= 0 && lotto.minMarginRate < 1;
 
 // 분양권·역 정보 조회 실패로 신뢰도가 내려갔으면 내려가기 전 값으로 본다. 조회 한 번 실패로 판정이 바뀌지 않게 하려는 것이다.
 export const effectiveConfidence = (candidate) => candidate.confidenceBeforeLookupFailure ?? candidate.confidence;
@@ -658,9 +665,9 @@ export const qualifiesAsLotto = (candidate, lotto) => effectiveConfidence(candid
 // 신뢰도 중 이상이면서 로또 조건을 모두 넘는 주택형 중 마진이 가장 큰 것을 돌려준다. 없으면 전체에서 마진이 가장 큰 것이다.
 // preferConfident이면 그 사이에 신뢰도 중 이상 주택형 중 마진이 가장 큰 것을 둔다. 신뢰도 하인 주택형의 마진이 더 커도
 // 근거가 더 단단한 중 이상 주택형을 가리지 않게 한다.
-export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, preferConfident = false, lotto, market, today }) {
+export function estimateBestMargin({ models, rows, subject, stations = new Map(), stationLookupFailed = false, presaleOk = true, crossWard = false, preferConfident = false, lotto, market, today }) {
   const context = { market, lotto, today };
-  const inputs = { stations, stationLookupFailed, presaleOk };
+  const inputs = { stations, stationLookupFailed, presaleOk, crossWard };
   let best = null;
   let bestConfident = null;
   let bestQualifying = null;
@@ -675,7 +682,10 @@ export function estimateBestMargin({ models, rows, subject, stations = new Map()
     if (qualifiesAsLotto(candidate, lotto) && (!bestQualifying || candidate.margin > bestQualifying.margin)) bestQualifying = candidate;
   }
   if (bestQualifying) return bestQualifying;
-  return preferConfident ? bestConfident ?? best : best;
+  if (!preferConfident) return best;
+  // 신뢰도 중 이상 주택형의 마진이 0 이하인데 다른(신뢰도 하) 주택형의 마진이 양수면 그쪽을 본다. 마진이 양수인 하 추정은 아님이 아니라 확인 필요다.
+  if (bestConfident && (bestConfident.margin > 0 || !(best.margin > 0))) return bestConfident;
+  return best;
 }
 
 // 구로 나뉜 시의 주소에 구가 없으면 시군구 코드가 여럿이다(src/sgg-codes.js의 resolveAddress). 코드마다 조회해 거래를 합친다.
@@ -701,4 +711,36 @@ export async function readPresaleByCodes(getPresale, codes, months) {
     }
   }
   return { rows, ok };
+}
+
+// 공고 동(또는 읍·면)이 이 거래 행들에 있는지. 공고에 위치가 없으면 알 수 없어 undefined다.
+function rowsHaveSubjectPlace(rows, subject) {
+  const place = subjectLocality(subject);
+  if (!place.dong && !place.town) return undefined;
+  return rows.some((row) => {
+    const other = parseLocality(row.umd);
+    return place.dong ? other.dong === place.dong : other.town === place.town;
+  });
+}
+
+// 시군구 코드 목록(resolveAddress의 codes, fallbackCode)으로 거래를 읽는다. 결과는 { rows, codes, crossWard }이고 codes는 실제로 쓴 코드다.
+// - 코드가 하나면 그대로 읽는다.
+// - 구 코드가 여럿(구 없는 주소의 시)이면 구마다 읽고, 공고 법정동이 나오는 구의 거래만 쓴다. 어느 구에도 없으면(구를 알 수 없음)
+//   모든 구를 합치고 crossWard를 켜 신뢰도를 한 단계 낮추게 한다. 공고에 위치가 없으면 합치되 낮추지 않는다.
+// - 구 코드가 모두 비었고 구 없는 시 코드(fallbackCode)가 있으면 그 코드를 대신 읽는다. 구 코드와 함께 쓰지 않는다.
+export async function readTradesFor(getTrades, { codes, fallbackCode = null }, months, subject = {}) {
+  const byCode = [];
+  for (const code of codes) byCode.push({ code, rows: await getTrades(code, months) });
+  const all = byCode.flatMap((item) => item.rows);
+  if (all.length === 0) {
+    if (fallbackCode) {
+      const rows = await getTrades(fallbackCode, months);
+      if (rows.length > 0) return { rows, codes: [fallbackCode], crossWard: false };
+    }
+    return { rows: [], codes, crossWard: false };
+  }
+  if (codes.length === 1) return { rows: all, codes, crossWard: false };
+  const matching = byCode.filter((item) => rowsHaveSubjectPlace(item.rows, subject) === true);
+  if (matching.length > 0) return { rows: matching.flatMap((item) => item.rows), codes: matching.map((item) => item.code), crossWard: false };
+  return { rows: all, codes, crossWard: rowsHaveSubjectPlace(all, subject) === false };
 }

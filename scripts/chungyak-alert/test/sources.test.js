@@ -499,3 +499,32 @@ test('a split city address with a 구 resolves to that 구 only, and other citie
   assert.deepEqual(resolveAddress('').codes, []);
   assert.deepEqual(resolveAddress(undefined).codes, []);
 });
+
+test('a 택지지구 name is not a 구: it fans out like an address without a 구, and a real unknown 구 stays unmapped', () => {
+  for (const address of ['경기도 부천시 대장지구 일원', '경기도 부천시 대장동 대장지구', '경기도 화성시 동탄2지구 일원']) {
+    const resolved = resolveAddress(address);
+    assert.ok(resolved.codes.length > 1, address);
+    assert.equal(resolved.code, null, address);
+  }
+  assert.deepEqual(resolveAddress('경기도 부천시 대장지구 일원').codes, ['41192', '41194', '41196']);
+  assert.equal(resolveAddress('경기도 부천시 대장지구 일원').fallbackCode, '41190');
+  assert.deepEqual(resolveAddress('경기도 화성시 동탄2지구 일원').codes, ['41591', '41593', '41595', '41597']);
+  assert.equal(resolveAddress('경기도 화성시 동탄2지구 일원').fallbackCode, '41590');
+  // 구가 없는 시의 지구는 그 시 코드 하나다(예전에는 지구가 구로 읽혀 미매핑이 되었다).
+  assert.deepEqual(resolveAddress('경기도 하남시 교산지구 일원').codes, ['41450']);
+  assert.equal(resolveAddress('경기도 하남시 교산지구 일원').code, '41450');
+  assert.equal(resolveAddress('경기도 하남시 교산지구 일원').fallbackCode, null);
+  // 실제 구 이름 모양이면(한글만, 구로 끝남, 지구가 아님) 아는 구만 받고 모르는 구는 시 코드로 뭉개지 않는다.
+  assert.deepEqual(resolveAddress('경기도 부천시 새로운구 대장동').codes, []);
+  assert.deepEqual(resolveAddress('경기도 하남시 새로운구 교산동').codes, []);
+});
+
+test('the parent code is only offered as a fallback when the 구 codes were fanned out', () => {
+  assert.equal(resolveAddress('경기도 부천시 대장동 일원').fallbackCode, '41190');
+  assert.equal(resolveAddress('경기도 화성시 봉담읍 1').fallbackCode, '41590');
+  // 구가 있는 주소, 구 없는 시, 서울·인천, 구 없는 시 코드가 표에 없는 수원은 대체 코드가 없다.
+  for (const address of ['경기도 부천시 원미구 중동 1', '경기도 하남시 교산동 1', '서울특별시 강남구 역삼동 1', '인천광역시 서구 청라동 1', '경기도 수원시 화서동 1']) {
+    assert.equal(resolveAddress(address).fallbackCode, null, address);
+  }
+  assert.equal(resolveAddress('어딘가').fallbackCode, null);
+});
