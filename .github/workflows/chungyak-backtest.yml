@@ -1,0 +1,56 @@
+name: chungyak-backtest
+
+# 일회성 백테스트(버리는 브랜치). 보내거나 저장하는 것이 없다. 프로필, Notion, 카카오, Gmail 비밀값은 넘기지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      asOf:
+        description: 기준일 YYYY-MM-DD (배치의 today)
+        required: true
+        type: string
+      nameContains:
+        description: 공고명에 들어 있는 글자
+        required: true
+        type: string
+      lookbackDays:
+        description: 수집 기간(일). 비우면 config 기본값
+        required: false
+        type: string
+      listOnly:
+        description: 목록만 출력(판별 안 함)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: scripts/chungyak-alert
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Backtest
+        run: node backtest.js
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+          BACKTEST_AS_OF: ${{ inputs.asOf }}
+          BACKTEST_NAME: ${{ inputs.nameContains }}
+          BACKTEST_LOOKBACK: ${{ inputs.lookbackDays }}
+          BACKTEST_LIST_ONLY: ${{ inputs.listOnly && '1' || '0' }}
