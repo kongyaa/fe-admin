@@ -318,13 +318,13 @@ function lookupNoteOf(best) {
   return level !== best.confidence ? `; 분양권·역 정보 조회 실패로 신뢰도를 ${best.confidence}로 낮췄으나 ${level} 기준으로 판정` : '';
 }
 
-// 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다. 끈 조건(불법행위 재공급)은 늘 로또다.
+// 조건형 로또 후보의 최종 판정. lotto.triggerPriceCheck에서 켠 조건만 시세를 본다. 기본 설정은 불법행위 재공급을 포함해 모두 켜 예외가 없다. 설정으로 끈 조건만 늘 로또다.
 // 시세를 보는 조건은 일반 공고와 같은 기준(gradeOf)으로 가른다.
 // 1) 추정이 있고 안전 마진이 0 이하면 신뢰도와 상관없이 아님.
 // 2) 신뢰도 중 이상이고 안전 마진 lotto.minMarginManwon 이상, 마진율 lotto.minMarginRate 이상이면 로또.
 // 3) 마진은 양수인데 신뢰도가 하이거나 마진 기준 중 하나라도 못 넘으면 확인 필요(STATUS.CHECK). 긴급 알림은 보내지 않는다.
 // 4) 추정이 없으면 확인 필요다. 시세를 모르는 채로 로또라고 알리지 않는다.
-// 5) 무순위가 remainderMaxRound차 이상이면 확인 필요가 될 공고도, 추정이 없는 공고도 아님이다(repeatedRound).
+// 5) 무순위(재공급에는 차수가 없다)가 remainderMaxRound차 이상이면 확인 필요가 될 공고도, 추정이 없는 공고도 아님이다(repeatedRound).
 //    로또 조건을 모두 넘는 공고만 차수와 상관없이 로또로 둔다.
 // 신뢰도는 분양권·역 정보 조회 실패로만 내려갔으면 내려가기 전 값으로 본다(effectiveConfidence). 조회 한 번 실패로
 // 중 신뢰도의 로또가 확인 필요가 되어 알림이 사라지지 않게 한다. 표시하는 신뢰도는 하 그대로다.

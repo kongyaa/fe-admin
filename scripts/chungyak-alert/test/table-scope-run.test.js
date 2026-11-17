@@ -6,7 +6,11 @@ import { run } from '../src/main.js';
 // run() 통합 시험. 공고 이름과 번호는 모두 만든 값이다. 설정은 배포하는 config.json을 쓴다.
 const THU_NOW = '2026-11-04T22:30:00Z';
 const THU = '2026-11-05';
-const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+// 이 파일의 run 테스트는 기본 공고가 불법행위 재공급(HOUSE_SECD 06)이다. 배포 설정은 재공급도 시세를 보므로(추정이 없으면 확인 필요)
+// 알림, 기록, 정리 순서를 보려는 이 테스트들은 재공급의 가격 확인만 끈다(triggerPriceCheck.resupply: false). 재공급의 기본 설정 동작은
+// test/lotto.test.js와 test/safety-margin.test.js가 따로 본다.
+const withoutResupplyCheck = (value) => ({ ...value, lotto: { ...value.lotto, triggerPriceCheck: { ...value.lotto.triggerPriceCheck, resupply: false } } });
+const fileConfig = withoutResupplyCheck(JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8')));
 // 작은 표로 시험하므로 옮길 비율 상한은 풀고(1), 상한 시험만 따로 건다.
 const loose = { ...fileConfig, cleanupMaxShare: 1 };
 const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTracks":["생애최초"]}';

@@ -348,6 +348,11 @@ test('Notion outage state belongs to one store, and a stalled response body trip
 
 // run() 통합 테스트용 가짜. 기본 공고는 불법행위 재공급(HOUSE_SECD 06)이다. 시세를 보지 않는 조건이라 시세 자료 없이도 로또로 정해진다.
 const SECRET = 'SECRET-DATA-KEY';
+// 이 파일의 run 테스트는 기본 공고가 불법행위 재공급(HOUSE_SECD 06)이다. 배포 설정은 재공급도 시세를 보므로(추정이 없으면 확인 필요)
+// 알림, 기록, 정리 순서를 보려는 이 테스트들은 재공급의 가격 확인만 끈다(triggerPriceCheck.resupply: false). 재공급의 기본 설정 동작은
+// test/lotto.test.js와 test/safety-margin.test.js가 따로 본다.
+const withoutResupplyCheck = (value) => ({ ...value, lotto: { ...value.lotto, triggerPriceCheck: { ...value.lotto.triggerPriceCheck, resupply: false } } });
+const runConfig = withoutResupplyCheck(JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8')));
 const resupplyRow = (start, extra = {}) => ({
   HOUSE_MANAGE_NO: '7',
   PBLANC_NO: '7',
@@ -406,6 +411,7 @@ function harness({ store = fakeStore(), fetch = apiFetch(), sendKakao, sendMail,
     write: () => {},
     sendMail: sendMail ?? (async (mail) => { mails.push(mail); }),
     sendKakao: sendKakao ?? (async (message) => { kakao.push(message); }),
+    config: runConfig,
   };
   const fullEnv = { DATA_GO_KR_KEY: SECRET, NOTION_KEY: 'n', CHUNGYAK_NOTION_PAGE_ID: 'p', ...env };
   return { deps, env: fullEnv, mails, kakao, logs, store };

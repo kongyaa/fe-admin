@@ -95,10 +95,11 @@ test('unmapped district is 판별 불가 and regions outside the alert list are 
   assert.equal(called, false);
 });
 
-test('a flag trigger without a price check makes 로또 even when price says no, and records the price', async () => {
-  // 불법행위 재공급(06)은 가격 확인을 끈 조건이다(lotto.triggerPriceCheck.resupply).
+test('a flag trigger whose price check is turned off makes 로또 even when price says no, and records the price', async () => {
+  // 가격 확인을 끈 조건은 시세와 무관하게 로또다. 기본 설정은 불법행위 재공급도 시세를 보므로(resupply: true) 설정으로 끈 경우를 시험한다.
   const resupply = apt({ kind: 'remainder', houseSecd: '06' });
-  const low = await evaluate(resupply, { data: trades(5, 1200) });
+  const off = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, resupply: false } };
+  const low = await evaluate(resupply, { data: trades(5, 1200), overrides: off });
   assert.equal(low.status, STATUS.LOTTO);
   assert.equal(low.estimate, 100800);
   assert.ok(low.reason.includes('재공급'));
@@ -106,21 +107,21 @@ test('a flag trigger without a price check makes 로또 even when price says no,
   assert.equal(low.margin, -4000);
   assert.ok(low.reason.includes('안전 마진 -0.4억'));
 
-  // 시세를 보는 무순위는 같은 추정이 아님이다.
-  const checked = await evaluate(apt({ kind: 'remainder', houseSecd: '04' }), { data: trades(5, 1200) });
+  // 기본 설정에서는 재공급도 같은 추정이 아님이다.
+  const checked = await evaluate(resupply, { data: trades(5, 1200) });
   assert.equal(checked.status, STATUS.NOT);
 
-  const noData = await evaluate(apt({ kind: 'remainder', houseSecd: '06' }), { data: [] });
+  const noData = await evaluate(apt({ kind: 'remainder', houseSecd: '06' }), { data: [], overrides: off });
   assert.equal(noData.status, STATUS.LOTTO);
   assert.equal(noData.estimate, null);
   assert.equal(noData.topPrice, 100000);
 });
 
-test('a data failure keeps an unchecked trigger 로또, and makes a price-checked trigger 확인 필요', async () => {
-  const run = async (houseSecd) => {
+test('a data failure keeps an unchecked trigger 로또, and makes a price-checked trigger (무순위 and 재공급) 확인 필요', async () => {
+  const run = async (houseSecd, resupplyCheck = true) => {
     const errors = [];
     const result = await evaluateLotto(apt({ kind: 'remainder', houseSecd }), {
-      config,
+      config: { ...config, lotto: { ...config.lotto, triggerPriceCheck: { ...config.lotto.triggerPriceCheck, resupply: resupplyCheck } } },
       today,
       getModels: async () => { throw new Error('https://secret.test/?serviceKey=x'); },
       getTrades: async () => [],
@@ -128,14 +129,18 @@ test('a data failure keeps an unchecked trigger 로또, and makes a price-checke
     });
     return { result, errors };
   };
-  const resupply = await run('06');
-  assert.equal(resupply.result.status, STATUS.LOTTO);
-  assert.deepEqual(resupply.errors, ['unexpected_error']);
+  // 재공급의 가격 확인을 끈 설정은 시세와 무관하게 로또다.
+  const unchecked = await run('06', false);
+  assert.equal(unchecked.result.status, STATUS.LOTTO);
+  assert.deepEqual(unchecked.errors, ['unexpected_error']);
   // 시세를 보는 조건은 추정이 없어 확인 필요다. 조회 실패로 모르는 것이라 keepPreviousLotto가 저장된 로또를 유지한다.
-  const remainder = await run('04');
-  assert.equal(remainder.result.status, STATUS.CHECK);
-  assert.equal(remainder.result.lookupFailed, true);
-  assert.deepEqual(remainder.errors, ['unexpected_error']);
+  for (const houseSecd of ['04', '06']) {
+    const checked = await run(houseSecd);
+    assert.equal(checked.result.status, STATUS.CHECK, houseSecd);
+    assert.equal(checked.result.lookupFailed, true, houseSecd);
+    assert.deepEqual(checked.errors, ['unexpected_error']);
+    assert.equal(keepPreviousLotto(checked.result, STATUS.LOTTO).status, STATUS.LOTTO, houseSecd);
+  }
 });
 
 test('config switches control each trigger', async () => {
@@ -383,18 +388,40 @@ test('a trigger with a mildly negative 하 estimate is 아님, and with no estim
   assert.equal(none.lookupFailed, undefined);
 });
 
-test('불법행위 재공급 stays 로또 with a confident negative margin unless its price check is turned on', async () => {
+test('불법행위 재공급 follows the same 로또 criteria as every other trigger by default', async () => {
+  // 예전에는 재공급을 늘 로또로 두었지만 실제 사례(15억대 재공급, 마진 +2.4%)가 긴급 알림 대상이 되어 같은 기준으로 바꿨다.
+  assert.equal(config.lotto.triggerPriceCheck.resupply, true);
   const resupply = resupplyNotice('합성단지 재공급(14차)');
-  assert.equal(config.lotto.triggerPriceCheck.resupply, false);
-  const result = await evaluate(resupply, { data: two(5, 1100) });
-  assert.equal(result.confidence, '중');
-  assert.equal(result.margin, -12400);
-  assert.equal(result.status, STATUS.LOTTO);
-  assert.ok(result.reason.startsWith('수도권 불법행위 재공급; '));
+  // 마진이 음수면 아님이다.
+  const loss = await evaluate(resupply, { data: two(5, 1100) });
+  assert.equal(loss.confidence, '중');
+  assert.equal(loss.margin, -12400);
+  assert.equal(loss.status, STATUS.NOT);
+  assert.ok(loss.reason.startsWith('수도권 불법행위 재공급 해당이나 시세 대비 이점 없음; '), loss.reason);
+  // 로또 조건을 모두 넘으면 로또다.
+  const firm = await evaluate(resupply, { data: two(5, 2200) });
+  assert.equal(firm.confidence, '중');
+  assert.equal(firm.margin, 80000);
+  assert.equal(firm.status, STATUS.LOTTO);
+  assert.ok(firm.reason.startsWith('수도권 불법행위 재공급; 안전 마진 8.0억'), firm.reason);
+  // 실제 사례: 분양가 15억대, 마진 +2.4%(3,600만 원)는 로또가 아니라 확인 필요다. 긴급 알림 대상이 아니다.
+  const real = await evaluate(resupply, { models: modelAt(150000), data: confidentFor(150000, 3600) });
+  assert.equal(real.margin, 3600);
+  assert.equal(real.marginRate, 0.024);
+  assert.equal(real.status, STATUS.CHECK);
+  assert.ok(real.checkNote.startsWith('수도권 불법행위 재공급 해당이나 마진이 기준에 못 미침'), real.checkNote);
+  // 신뢰도 하의 양수 마진도 확인 필요다.
+  assert.equal((await evaluate(resupply, { data: weakAt(30000) })).status, STATUS.CHECK);
+  // 추정이 없으면 확인 필요다. 재공급에는 차수가 없어 이름의 (14차)가 반복 공급 규칙을 켜지 않는다.
+  const none = await evaluate(resupply, { data: [] });
+  assert.equal(none.status, STATUS.CHECK);
+  assert.equal(none.reason, '수도권 불법행위 재공급 해당이나 시세 추정 없음(실거래 표본 부족)');
+  assert.equal(none.repeatedRound, undefined);
 
-  const checked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, resupply: true } };
-  assert.equal((await evaluate(resupply, { data: two(5, 1100), overrides: checked })).status, STATUS.NOT);
-  // 반대로 끄면 시세와 무관하게 로또다. 추정이 없어도 마찬가지다.
+  // 설정으로 재공급의 가격 확인을 끄면 시세와 무관하게 로또다. 무순위의 가격 확인을 끄는 것과 같다.
+  const off = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, resupply: false } };
+  assert.equal((await evaluate(resupply, { data: two(5, 1100), overrides: off })).status, STATUS.LOTTO);
+  assert.equal((await evaluate(resupply, { data: [], overrides: off })).status, STATUS.LOTTO);
   const unchecked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, remainder: false } };
   assert.equal((await evaluate(remainder(), { data: two(5, 1100), overrides: unchecked })).status, STATUS.LOTTO);
   assert.equal((await evaluate(remainder(), { data: [], overrides: unchecked })).status, STATUS.LOTTO);
@@ -872,7 +899,7 @@ test('every row of the outcome table, for a trigger candidate and for a plain �
   assert.equal((await evaluate(apt(), { models: modelAt(100000), data: weakFor(100000, 10000) })).confidence, '하');
 });
 
-test('no estimate: a price-checked trigger is 확인 필요, a plain notice is 판별 불가, 불법행위 재공급 is 로또', async () => {
+test('no estimate: a price-checked trigger (including 불법행위 재공급) is 확인 필요, a plain notice is 판별 불가', async () => {
   for (const data of [[], trades(4, 3000)]) {
     for (const notice of [remainder(), capped(), district(), apt({ kind: 'arbitrary', houseSecd: '' })]) {
       const overrides = notice.kind === 'arbitrary' ? { includeArbitrary: true } : {};
@@ -884,7 +911,10 @@ test('no estimate: a price-checked trigger is 확인 필요, a plain notice is �
       assert.ok(!result.reason.includes('로또'), result.reason);
     }
     assert.equal((await evaluate(apt(), { data })).status, STATUS.UNDETERMINED);
-    assert.equal((await evaluate(resupplyNotice(), { data })).status, STATUS.LOTTO);
+    // 불법행위 재공급도 같다. 예전의 늘 로또 예외는 없다.
+    const resupply = await evaluate(resupplyNotice(), { data });
+    assert.equal(resupply.status, STATUS.CHECK);
+    assert.ok(resupply.checkNote.includes('시세 추정 없음(실거래 표본 부족)'), resupply.checkNote);
   }
   // 시군구 코드를 찾지 못한 주소도 추정이 없는 것이다.
   const unmapped = await evaluate(apt({ kind: 'remainder', houseSecd: '04', address: '서울특별시 서구 어딘가' }), { data: trades(5, 3000) });
@@ -957,17 +987,19 @@ test('a 하 estimate from a widened scope says so in the reason (읍·면 exampl
   assert.ok(dong.reason.startsWith('수도권 무순위·잔여세대 해당이나 시세 근거가 약함(신뢰도 하, 비교 범위 확대(시군구)); '), dong.reason);
 });
 
-test('불법행위 재공급 stays 로또 whatever the evidence, because its price check is off', async () => {
+test('불법행위 재공급 is judged like every other trigger, and only the config switch makes it 로또 whatever the evidence', async () => {
   const resupply = resupplyNotice();
-  for (const data of [confidentAt(700), weakAt(27500), weakAt(10000), weakAt(-13000), []]) {
-    const result = await evaluate(resupply, { data });
+  const expected = [[confidentAt(700), STATUS.CHECK], [weakAt(27500), STATUS.CHECK], [weakAt(10000), STATUS.CHECK], [weakAt(-13000), STATUS.NOT], [[], STATUS.CHECK], [confidentAt(15000), STATUS.LOTTO]];
+  for (const [data, status] of expected) assert.equal((await evaluate(resupply, { data })).status, status);
+  // 재공급의 가격 확인을 끄면 늘 로또다(설정으로만 가능하다).
+  const off = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, resupply: false } };
+  for (const [data] of expected) {
+    const result = await evaluate(resupply, { data, overrides: off });
     assert.equal(result.status, STATUS.LOTTO);
     assert.equal(result.checkNote, undefined);
   }
-  // 가격 확인을 켜면 다른 조건형 공고처럼 확인 필요가 된다.
   const checked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, resupply: true } };
   assert.equal((await evaluate(resupply, { data: confidentAt(700), overrides: checked })).status, STATUS.CHECK);
-  assert.equal((await evaluate(resupply, { data: [], overrides: checked })).status, STATUS.CHECK);
   // 무순위의 가격 확인을 끄면 확인 필요 규칙도 꺼져 시세와 무관하게 로또다.
   const unchecked = { triggerPriceCheck: { ...config.lotto.triggerPriceCheck, remainder: false } };
   for (const data of [confidentAt(700), weakAt(27500), []]) assert.equal((await evaluate(remainder(), { data, overrides: unchecked })).status, STATUS.LOTTO);
