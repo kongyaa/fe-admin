@@ -371,6 +371,45 @@ test('restricted types keep prices and competition but skip the 시세 lookups',
   assert.equal(restrictedReason('신혼희망'), '신혼희망타운은 수익공유·전매 조건이 달라 시세 차익을 그대로 갖지 못해 주변 시세와 비교하지 않습니다');
 });
 
+test('blockPerformance reads every 구 code for a 부천 address without a 구 and merges the trades', async () => {
+  const asked = [];
+  const presaleAsked = [];
+  const { deps } = fakeDeps({
+    molit: { getTrades: async (code) => { asked.push(code); return []; } },
+    presale: { getTrades: async (code) => { presaleAsked.push(code); return { rows: [], ok: true }; } },
+  });
+  const perf = await blockPerformance({ id: 'x', district: '부천시', notice: apt({ name: '부천대장 합성', address: '경기도 부천시 대장동 일원' }), history: null }, deps);
+  // 시점(공고일, 지금)마다 구 코드 셋을 6개월씩 보고, 모두 비면 구 없는 시 코드(41190)로 한 번 더 본다. 구 코드와 함께 부르지 않는다.
+  assert.deepEqual([...new Set(asked)], ['41192', '41194', '41196', '41190']);
+  assert.deepEqual(asked.slice(0, 4), ['41192', '41194', '41196', '41190']);
+  // 분양권은 구 코드로만 본다(대체 코드의 거래가 없었다).
+  assert.deepEqual([...new Set(presaleAsked)], ['41192', '41194', '41196']);
+  assert.equal(perf.market.now.estimate, null);
+  assert.notEqual(perf.marketReason, REASONS.unmapped);
+});
+
+test('blockPerformance uses the parent code only when every 구 code is empty, and then reads its presale rows too', async () => {
+  // 구 코드에 거래가 있으면 구 없는 시 코드는 부르지 않는다.
+  const withChildren = [];
+  const rowAt = (code) => ({ amount: 90000, area: 84.98, umd: '대장동', buildYear: 2026, jibun: code, aptName: `단지${code}` });
+  const first = fakeDeps({
+    molit: { getTrades: async (code) => { withChildren.push(code); return code === '41192' ? [rowAt('a'), rowAt('b')] : []; } },
+  });
+  await blockPerformance({ id: 'x', district: '부천시', notice: apt({ address: '경기도 부천시 대장동 일원' }), history: null }, first.deps);
+  assert.ok(!withChildren.includes('41190'), withChildren.join());
+
+  // 구 코드가 모두 비고 구 없는 시 코드에 거래가 있으면 그 코드로 거래와 분양권을 읽는다. 구 코드와 합치지 않는다.
+  const tradeCodes = [];
+  const presaleCodes = [];
+  const second = fakeDeps({
+    molit: { getTrades: async (code) => { tradeCodes.push(code); return code === '41190' ? [rowAt('a')] : []; } },
+    presale: { getTrades: async (code) => { presaleCodes.push(code); return { rows: [], ok: true }; } },
+  });
+  await blockPerformance({ id: 'x', district: '부천시', notice: apt({ address: '경기도 부천시 대장동 일원' }), history: null }, second.deps);
+  assert.ok(tradeCodes.includes('41190'));
+  assert.deepEqual([...new Set(presaleCodes)], ['41190']);
+});
+
 test('blockPerformance hides a market point without enough comparables and reports each reason', async () => {
   const { calls, deps } = fakeDeps();
   const perf = await blockPerformance({ id: 'x', district: '하남시', notice: apt(), history: { competition: reported } }, deps);

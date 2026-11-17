@@ -188,9 +188,9 @@ test('the interest alert shows the LH v2 recommendation and the short reason nev
   assert.equal(item.stage.name, '신청자A 잔여세대');
   assert.ok(buildKakaoText({ notice: item.notice, stage: item.stage, prefix: '[관심 청약]', verb: '오늘 접수' }).includes('신청자A 잔여세대'));
 
-  // 판별 불가로 이전 로또를 유지해도 카카오톡 짧은 근거에는 추천 문구와 이름표가 없다.
+  // 시세 조회 실패(판별 불가)로 이전 로또를 유지해도 카카오톡 짧은 근거에는 추천 문구와 이름표가 없다.
   const sale = lh({ address: '서울특별시 강서구 마곡동', models: [{ houseType: '084A', area: 84, price: 100000, households: 10 }], stages: schedule([['생애최초', today]]) });
-  const undetermined = await evaluateLotto(sale, { config, today, profile, getModels: async () => null, getTrades: async () => [] });
+  const undetermined = await evaluateLotto(sale, { config, today, profile, getModels: async () => null, getTrades: async () => { throw new Error('x'); }, onError: () => {} });
   assert.equal(undetermined.status, '판별 불가');
   assert.ok(undetermined.reason.includes('신청자B'), undetermined.reason);
   const kept = keepPreviousLotto(undetermined, '로또');
@@ -202,12 +202,14 @@ test('the interest alert shows the LH v2 recommendation and the short reason nev
 
 test('out-of-region applicants, failed detail lookups and non-sale LH notices get no recommendation', () => {
   const none = { recommendation: null, text: null };
+  // 단계 자료가 없어서 모르는 경우는 trackUnknown이 붙는다(긴급 알림을 막지 않는다).
+  const unknown = { ...none, trackUnknown: true };
   assert.deepEqual(recommend(lh(), v1(['신혼부부'], '부산')), none);
   assert.deepEqual(recommend(lh({ region: '부산' }), v1(['신혼부부'])), none);
   for (const state of ['failed', 'capped', 'supply_failed', 'no_codes', undefined]) {
-    assert.deepEqual(recommend(lh({ lhDetailState: state }), v1(['신혼부부'])), none, String(state));
+    assert.deepEqual(recommend(lh({ lhDetailState: state }), v1(['신혼부부'])), unknown, String(state));
   }
-  assert.deepEqual(recommend(lh({ stages: [] }), v1(['신혼부부'])), none);
+  assert.deepEqual(recommend(lh({ stages: [] }), v1(['신혼부부'])), unknown);
   assert.deepEqual(recommend(lh({ typeLabel: '임대주택 국민임대' }), v1(['신혼부부'])), none);
   assert.deepEqual(recommend(lh({ typeLabel: '공공주택 기타' }), v1(['신혼부부'])), none);
   // 2순위만 열려 있으면 추천하지 않는다.

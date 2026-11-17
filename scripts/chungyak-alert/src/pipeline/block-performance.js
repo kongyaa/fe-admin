@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import {
-  CONFIDENCE, buildSubject, cleanTrades, estimateBestMargin, restrictedType,
+  CONFIDENCE, buildSubject, cleanTrades, estimateBestMargin, readPresaleByCodes, readTradesFor, restrictedType,
 } from '../market-estimate.js';
 import { resolveAddress } from '../sgg-codes.js';
 import { createModelLookup } from '../sources/applyhome.js';
@@ -369,8 +369,8 @@ export async function blockPerformance(target, {
     result.marketReason = restrictedReason(restricted);
     return result;
   }
-  const { code, umd, village } = resolveAddress(notice.address, notice.region);
-  if (!code) {
+  const { codes, fallbackCode, umd, village } = resolveAddress(notice.address, notice.region);
+  if (codes.length === 0) {
     result.marketReason = REASONS.unmapped;
     return result;
   }
@@ -383,11 +383,14 @@ export async function blockPerformance(target, {
   const at = async (asOf) => {
     const months = completeMonths(asOf, lotto.tradeMonths);
     try {
-      const trades = await molit.getTrades(code, months);
-      const pre = presale ? await presale.getTrades(code, months) : { rows: [], ok: false };
+      // 구가 없는 주소의 시는 구 코드마다 조회하고, 모두 비면 구 없는 시 코드로 한 번 더 조회한다(src/sgg-codes.js, readTradesFor).
+      // 지난 시점의 거래도 보므로 개편 전 코드로만 남은 거래를 놓치지 않게 하는 대체다.
+      const read = await readTradesFor((code, ym) => molit.getTrades(code, ym), { codes, fallbackCode }, months, subject);
+      const trades = read.rows;
+      const pre = presale ? await readPresaleByCodes((code, ym) => presale.getTrades(code, ym), read.codes, months) : { rows: [], ok: false };
       const rows = cleanTrades([...trades, ...pre.rows], { market, lotto, today: asOf });
       const best = estimateBestMargin({
-        models: [model], rows, subject, presaleOk: pre.ok, lotto, market, today: asOf,
+        models: [model], rows, subject, presaleOk: pre.ok, crossWard: read.crossWard, lotto, market, today: asOf,
       });
       return marketPoint(best, {
         asOf, months, price: rep.topPrice, area: rep.area, place,

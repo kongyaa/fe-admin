@@ -6,7 +6,11 @@ import { run } from '../src/main.js';
 // run() 통합 시험. 공고 이름과 번호는 모두 만든 값이다. 설정은 배포하는 config.json을 쓴다.
 const THU_NOW = '2026-11-04T22:30:00Z';
 const THU = '2026-11-05';
-const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+// 이 파일의 run 테스트는 기본 공고가 불법행위 재공급(HOUSE_SECD 06)이다. 배포 설정은 재공급도 시세를 보므로(추정이 없으면 확인 필요)
+// 알림, 기록, 정리 순서를 보려는 이 테스트들은 재공급의 가격 확인만 끈다(triggerPriceCheck.resupply: false). 재공급의 기본 설정 동작은
+// test/lotto.test.js와 test/safety-margin.test.js가 따로 본다.
+const withoutResupplyCheck = (value) => ({ ...value, lotto: { ...value.lotto, triggerPriceCheck: { ...value.lotto.triggerPriceCheck, resupply: false } } });
+const fileConfig = withoutResupplyCheck(JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8')));
 // 작은 표로 시험하므로 옮길 비율 상한은 풀고(1), 상한 시험만 따로 건다.
 const loose = { ...fileConfig, cleanupMaxShare: 1 };
 const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTracks":["생애최초"]}';
@@ -14,13 +18,13 @@ const PROFILE_JSON = '{"residenceSido":"인천","residenceYears":3,"specialTrack
 const DUP_NAME = '가나지구 A-2블록 신혼희망타운(공공분양) 잔여세대 추가입주자모집공고';
 const DUP_NAME_LH = '가나지구 A-2블록 신혼희망타운[공공분양] 잔여세대 추가입주자모집공고';
 
-// 오늘 접수 시작이라 로또 알림이 가는 서울 무순위. 정리 때문에 알림이 막히지 않는지 보려고 둔다.
+// 오늘 접수 시작이라 로또 알림이 가는 서울 불법행위 재공급(06, 시세를 보지 않아 시세 자료 없이도 로또). 정리 때문에 알림이 막히지 않는지 보려고 둔다.
 const alertRow = {
-  HOUSE_MANAGE_NO: '7', PBLANC_NO: '7', HOUSE_NM: '알림단지', HOUSE_SECD: '04', SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
+  HOUSE_MANAGE_NO: '7', PBLANC_NO: '7', HOUSE_NM: '알림단지', HOUSE_SECD: '06', SUBSCRPT_AREA_CODE_NM: '서울', HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
   RCRIT_PBLANC_DE: '2026-11-01', SUBSCRPT_RCEPT_BGNDE: THU, SUBSCRPT_RCEPT_ENDDE: THU, PBLANC_URL: 'https://www.applyhome.co.kr/a',
 };
-const remainder = (no, name, { region = '서울', address, announce = '2026-11-01', start = '2026-11-10', end = '2026-11-12' } = {}) => ({
-  HOUSE_MANAGE_NO: String(no), PBLANC_NO: '1', HOUSE_NM: name, HOUSE_SECD: '04', SUBSCRPT_AREA_CODE_NM: region,
+const resupply = (no, name, { region = '서울', address, announce = '2026-11-01', start = '2026-11-10', end = '2026-11-12' } = {}) => ({
+  HOUSE_MANAGE_NO: String(no), PBLANC_NO: '1', HOUSE_NM: name, HOUSE_SECD: '06', SUBSCRPT_AREA_CODE_NM: region,
   HSSPLY_ADRES: address ?? (region ? `${region} 가나구 가나동 ${no}` : ''), RCRIT_PBLANC_DE: announce, SUBSCRPT_RCEPT_BGNDE: start, SUBSCRPT_RCEPT_ENDDE: end, PBLANC_URL: 'https://www.applyhome.co.kr/x',
 });
 const aptRowOf = (no, name, region) => ({
@@ -100,7 +104,7 @@ const count = (h, name) => Number(new RegExp(` ${name}=(\\d+)`).exec(summary(h))
 // ---------- 소스 사이 중복 ----------
 
 const dupWorld = () => ({
-  remainders: [alertRow, remainder(31, DUP_NAME)],
+  remainders: [alertRow, resupply(31, DUP_NAME)],
   lhRows: [lhRow('d1', DUP_NAME_LH)],
 });
 
@@ -124,7 +128,7 @@ test('the 청약홈 notice wins over the richer-looking LH variant; the stored L
 test('the winner does not flip when the LH row is listed first', async () => {
   const store = fakeStore([]);
   const world = dupWorld();
-  const h = harness({ store, world: { ...world, remainders: [remainder(31, DUP_NAME), alertRow] } });
+  const h = harness({ store, world: { ...world, remainders: [resupply(31, DUP_NAME), alertRow] } });
   assert.equal(await go(h), 0);
   assert.deepEqual(store.state.upserts.filter((key) => key !== '7-7'), ['31-1']);
   assert.equal(count(h, 'duplicate_skipped'), 1);
@@ -165,7 +169,7 @@ test('a 관심 loser whose 청약홈 winner is unapplicable is not frozen: the �
 
 test('an LH notice kept by the LH out-of-scope 관심 exemption enters no merge', async () => {
   // LH 부산 공고는 LH 범위 밖이지만 관심 행이라 남는다. 같은 이름의 청약홈 부산 공고와 합치지 않는다(범위 규칙이 이미 센 공고).
-  const world = { remainders: [remainder(82, DUP_NAME, { region: '부산' })], lhRows: [lhRow('o1', DUP_NAME_LH, '부산광역시')] };
+  const world = { remainders: [resupply(82, DUP_NAME, { region: '부산' })], lhRows: [lhRow('o1', DUP_NAME_LH, '부산광역시')] };
   const store = fakeStore([stored('LH-o1', { source: 'LH', region: '부산', typeLabel: '분양주택 공공분양', interest: true })]);
   const h = harness({ store, world, config: { ...loose, tableRegions: undefined } });
   assert.equal(await go(h), 0);
@@ -177,7 +181,7 @@ test('an LH notice kept by the LH out-of-scope 관심 exemption enters no merge'
 test('a live LH re-announcement is not merged away by an ended 청약홈 round of the same name', async () => {
   // 청약홈 회차는 10-24~10-26에 끝났고(공고 10-23) 같은 이름의 LH 재공고(공고 10-24)는 11-20까지 진행 중이다.
   const world = {
-    remainders: [remainder(83, DUP_NAME, { announce: '2026-10-23', start: '2026-10-24', end: '2026-10-26' })],
+    remainders: [resupply(83, DUP_NAME, { announce: '2026-10-23', start: '2026-10-24', end: '2026-10-26' })],
     lhRows: [lhRow('e1', DUP_NAME_LH, '서울특별시', { start: '2026.10.24', end: '2026.11.20' })],
   };
   const store = fakeStore([stored('LH-e1', { source: 'LH', typeLabel: '분양주택 공공분양' })]);
@@ -221,7 +225,7 @@ test('dry-run archives nothing, logs the candidate counts and still skips the lo
 test('distinct notices of the same complex stay separate in a run', async () => {
   const store = fakeStore();
   const world = {
-    remainders: [remainder(41, '다라지구 단지(A17BL) 공공분양주택')],
+    remainders: [resupply(41, '다라지구 단지(A17BL) 공공분양주택')],
     lhRows: [lhRow('d2', '다라지구 단지[A17BL] 지분적립형 분양주택')],
   };
   const h = harness({ store, world });
@@ -234,7 +238,7 @@ test('a removed duplicate never reaches the alerts, the weekly mail or the urgen
   // 월요일 주간 메일이 나가는 실행에서 진 공고가 메일에 없고 승자는 있다.
   const store = fakeStore();
   store.getWeeklyState = async () => null;
-  const h = harness({ store, world: { remainders: [remainder(31, DUP_NAME, { start: '2026-11-03', end: '2026-11-04' })], lhRows: [lhRow('d1', DUP_NAME_LH)] } });
+  const h = harness({ store, world: { remainders: [resupply(31, DUP_NAME, { start: '2026-11-03', end: '2026-11-04' })], lhRows: [lhRow('d1', DUP_NAME_LH)] } });
   h.deps.now = () => new Date('2026-11-01T22:30:00Z');
   assert.equal(await go(h), 0);
   const weekly = h.mails.find((mail) => mail.subject.includes('주간') || mail.subject.includes('청약'));
@@ -248,10 +252,10 @@ test('a removed duplicate never reaches the alerts, the weekly mail or the urgen
 const regionWorld = () => ({
   remainders: [
     alertRow,
-    remainder(51, '부산 무순위 단지', { region: '부산' }),
-    remainder(52, '세종 무순위 단지', { region: '세종' }),
-    remainder(53, '주소 없는 무순위 단지', { region: '' }),
-    remainder(54, '대전 관심 단지', { region: '대전' }),
+    resupply(51, '부산 재공급 단지', { region: '부산' }),
+    resupply(52, '세종 재공급 단지', { region: '세종' }),
+    resupply(53, '주소 없는 재공급 단지', { region: '' }),
+    resupply(54, '대전 관심 단지', { region: '대전' }),
   ],
   apts: [aptRowOf(55, '제주 토지임대부 단지', '제주')],
 });

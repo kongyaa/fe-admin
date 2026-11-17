@@ -17,7 +17,10 @@ import {
   leaveOneOutError,
   localityConflict,
   marginRateOf,
-  meetsPriceRule,
+  meetsMarginRule,
+  qualifiesAsLotto,
+  readPresaleByCodes,
+  readTradesByCodes,
   lookupCandidates,
   parseLocality,
   normalizeComplexName,
@@ -647,12 +650,45 @@ test('the margin rate is the margin over the price, and missing or zero prices g
   assert.equal(marginRateOf(-27194, 63700), -27194 / 63700);
   for (const price of [0, -1, null, undefined, Number.NaN]) assert.equal(marginRateOf(1000, price), null, String(price));
   assert.equal(marginRateOf(Number.NaN, 63700), null);
-  // 비율이 없으면 3억 원 기준만 본다.
-  assert.equal(meetsPriceRule({ margin: 30000, marginRate: null }, lotto), true);
-  assert.equal(meetsPriceRule({ margin: 29999, marginRate: null }, lotto), false);
-  for (const marginRate of [undefined, Number.NaN]) assert.equal(meetsPriceRule({ margin: 1, marginRate }, lotto), false, String(marginRate));
-  assert.equal(meetsPriceRule({ margin: 1, marginRate: 0.2 }, lotto), true);
-  assert.equal(meetsPriceRule({ margin: 1, marginRate: 0.1999 }, lotto), false);
+});
+
+test('the margin rule needs both 1억 and 10% (AND), and an unknown rate cannot pass', () => {
+  assert.equal(lotto.minMarginManwon, 10000);
+  assert.equal(lotto.minMarginRate, 0.1);
+  assert.equal(meetsMarginRule({ margin: 10000, marginRate: 0.1 }, lotto), true);
+  // 둘 중 하나만 넘으면 기준을 넘지 못한다. 예전에는 3억 또는 20%(OR)였다.
+  assert.equal(meetsMarginRule({ margin: 9999, marginRate: 0.5 }, lotto), false);
+  assert.equal(meetsMarginRule({ margin: 50000, marginRate: 0.0999 }, lotto), false);
+  assert.equal(meetsMarginRule({ margin: 30000, marginRate: 0.05 }, lotto), false);
+  // 마진율을 알 수 없으면 금액이 커도 넘지 못한다.
+  for (const marginRate of [null, undefined, Number.NaN]) assert.equal(meetsMarginRule({ margin: 50000, marginRate }, lotto), false, String(marginRate));
+});
+
+test('a lotto candidate also needs 중 or better confidence, and a lookup-failure drop does not count', () => {
+  const firm = { margin: 20000, marginRate: 0.2 };
+  assert.equal(qualifiesAsLotto({ ...firm, confidence: CONFIDENCE.HIGH }, lotto), true);
+  assert.equal(qualifiesAsLotto({ ...firm, confidence: CONFIDENCE.MID }, lotto), true);
+  assert.equal(qualifiesAsLotto({ ...firm, confidence: CONFIDENCE.LOW }, lotto), false);
+  // 분양권·역 정보 조회 실패로만 하가 되었으면 내려가기 전 신뢰도로 본다.
+  assert.equal(qualifiesAsLotto({ ...firm, confidence: CONFIDENCE.LOW, confidenceBeforeLookupFailure: CONFIDENCE.MID }, lotto), true);
+  assert.equal(qualifiesAsLotto({ margin: 9999, marginRate: 0.2, confidence: CONFIDENCE.MID }, lotto), false);
+});
+
+test('trades and presale rows of several district codes are merged, and one failure is not hidden', async () => {
+  const asked = [];
+  const getTrades = async (code, months) => { asked.push([code, months]); return [{ code }]; };
+  assert.deepEqual(await readTradesByCodes(getTrades, ['41192', '41194', '41196'], ['202611']), [{ code: '41192' }, { code: '41194' }, { code: '41196' }]);
+  assert.deepEqual(asked.map(([code]) => code), ['41192', '41194', '41196']);
+  await assert.rejects(readTradesByCodes(async (code) => { if (code === '41194') throw new Error('x'); return []; }, ['41192', '41194'], ['202611']));
+
+  assert.deepEqual(await readPresaleByCodes(undefined, ['41192'], ['202611']), { rows: [], ok: true });
+  const presale = async (code) => ({ rows: [{ code }], ok: true });
+  assert.deepEqual(await readPresaleByCodes(presale, ['41192', '41194'], ['202611']), { rows: [{ code: '41192' }, { code: '41194' }], ok: true });
+  // 한 코드라도 읽지 못하면 ok가 false이고 읽은 거래는 남긴다.
+  const partial = async (code) => (code === '41194' ? { rows: [], ok: false } : { rows: [{ code }], ok: true });
+  assert.deepEqual(await readPresaleByCodes(partial, ['41192', '41194'], ['202611']), { rows: [{ code: '41192' }], ok: false });
+  const throwing = async (code) => { if (code === '41194') throw new Error('x'); return { rows: [{ code }], ok: true }; };
+  assert.equal((await readPresaleByCodes(throwing, ['41192', '41194'], ['202611'])).ok, false);
 });
 
 test('the safety discount is only the measured error, capped at 10%, and nothing when it cannot be measured', () => {

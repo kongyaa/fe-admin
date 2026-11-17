@@ -512,7 +512,8 @@ test('a timed-out price lookup does not trip the judgment lookup: a later in-reg
   assert.equal(result.code, 0);
   assert.equal(result.mails.length, 0, JSON.stringify(result.mails.map((mail) => mail.text)));
   const judged = result.store.state.upserts.find(({ key }) => key === '52-1').properties;
-  assert.deepEqual(judged['로또 여부'], { select: { name: '로또' } });
+  // 실거래 자료가 없는 가짜라 시세 추정 없음으로 확인 필요다. 판정했다는 것(최고 분양가가 채워짐)이 이 테스트의 요점이다.
+  assert.deepEqual(judged['로또 여부'], { select: { name: '확인 필요' } });
   assert.deepEqual(judged['최고 분양가'], { number: 78000 });
   // 시간 초과 조회는 재시도하지 않는다(부산 1번), 판정 조회는 한 번.
   assert.equal(result.calls.modelUrls.filter((url) => url.includes('HOUSE_MANAGE_NO')).length, 2);

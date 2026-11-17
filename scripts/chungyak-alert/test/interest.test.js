@@ -11,14 +11,20 @@ const THU = '2026-11-05';
 const MON_NOW = '2026-11-01T22:30:00Z';
 const MON = '2026-11-02';
 const SECRET = 'SECRET-DATA-KEY';
+// 이 파일의 run 테스트는 기본 공고가 불법행위 재공급(HOUSE_SECD 06)이다. 배포 설정은 재공급도 시세를 보므로(추정이 없으면 확인 필요)
+// 알림, 기록, 정리 순서를 보려는 이 테스트들은 재공급의 가격 확인만 끈다(triggerPriceCheck.resupply: false). 재공급의 기본 설정 동작은
+// test/lotto.test.js와 test/safety-margin.test.js가 따로 본다.
+const withoutResupplyCheck = (value) => ({ ...value, lotto: { ...value.lotto, triggerPriceCheck: { ...value.lotto.triggerPriceCheck, resupply: false } } });
+const runConfig = withoutResupplyCheck(JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8')));
 const FALLBACK_LINK = 'https://www.applyhome.co.kr';
 const LINK = 'https://www.applyhome.co.kr/interest';
 
+// HOUSE_SECD 06(불법행위 재공급)은 시세를 보지 않는 조건이라 시세 자료 없이도 로또다. 무순위(04)는 추정이 없으면 확인 필요다.
 const collected = (extra = {}) => ({
   HOUSE_MANAGE_NO: '7',
   PBLANC_NO: '7',
-  HOUSE_NM: '무순위 단지',
-  HOUSE_SECD: '04',
+  HOUSE_NM: '재공급 단지',
+  HOUSE_SECD: '06',
   SUBSCRPT_AREA_CODE_NM: '서울',
   HSSPLY_ADRES: '서울특별시 강남구 역삼동 1',
   RCRIT_PBLANC_DE: '2026-11-01',
@@ -97,6 +103,7 @@ function harness({ store = fakeStore(), rows = [], fetch, sendKakao, sendMail, n
       write: () => {},
       sendMail: sendMail ?? (async (mail) => { mails.push(mail); }),
       sendKakao: sendKakao ?? (async (message) => { kakao.push(message); }),
+      config: runConfig,
     },
   };
 }
@@ -709,7 +716,7 @@ test('a row created in this run gets no interest alert', async () => {
   const store = recordingStore(new Map());
   const h = harness({ store, rows: [busan()] });
   // 부산 공고는 표 지역 범위(tableRegions) 밖이라 범위를 끄고 본다. 이 시험의 주제는 관심 알림이다.
-  h.deps.config = { ...JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8')), tableRegions: undefined };
+  h.deps.config = { ...runConfig, tableRegions: undefined };
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   assert.equal(store.written.length, 1);
   assert.equal(h.kakao.length, 0);
