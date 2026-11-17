@@ -2,6 +2,10 @@ name: chungyak-backtest
 
 # 일회성 백테스트(버리는 브랜치). 보내거나 저장하는 것이 없다. 프로필, Notion, 카카오, Gmail 비밀값은 넘기지 않는다.
 on:
+  # 기본 브랜치에 없는 워크플로는 dispatch할 수 없어, 이 브랜치에 push하면 backtest-runs.txt의 줄마다 돌린다.
+  push:
+    branches: [backtest/hanam-gyosan-a2]
+    paths: [scripts/chungyak-alert/backtest-runs.txt]
   workflow_dispatch:
     inputs:
       asOf:
@@ -46,7 +50,19 @@ jobs:
 
       - run: npm ci
 
-      - name: Backtest
+      - name: Backtest (push, backtest-runs.txt)
+        if: github.event_name == 'push'
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: |
+          # 줄 형식: asOf|공고명 일부|수집 기간(일, 비우면 기본)|목록만(1)
+          grep -v '^#' backtest-runs.txt | grep -v '^$' | while IFS='|' read -r asof name lookback listonly; do
+            echo "##### asOf=$asof name=$name lookback=$lookback listOnly=$listonly"
+            BACKTEST_AS_OF="$asof" BACKTEST_NAME="$name" BACKTEST_LOOKBACK="$lookback" BACKTEST_LIST_ONLY="${listonly:-0}" node backtest.js || echo "exit=$?"
+          done
+
+      - name: Backtest (dispatch)
+        if: github.event_name == 'workflow_dispatch'
         run: node backtest.js
         env:
           DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
