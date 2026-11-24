@@ -17,7 +17,7 @@ import { resolveAddress } from './src/sgg-codes.js';
 import { isActive, selectUrgent } from './src/main.js';
 import { isRental } from './src/rental.js';
 import { formatModelPrices } from './src/price-facts.js';
-import { completeMonths, decodeServiceKey, defaultSleep, kstToday, maskServiceKey, median, safeError } from './src/util.js';
+import { completeMonths, decodeServiceKey, defaultSleep, kstToday, maskServiceKey, median, normalizeDate, parseNumber, safeError } from './src/util.js';
 
 const config = JSON.parse(readFileSync(new URL('./config.json', import.meta.url), 'utf8'));
 const env = process.env;
@@ -44,6 +44,7 @@ const sleep = defaultSleep;
 // 매매 응답의 원본 건수와 취소 건수를 센다(파서가 취소 행을 조용히 버리는 양을 보려고). 응답은 그대로 돌려준다.
 const rawTally = new Map();
 const silvTally = new Map();
+const silvRows = new Map(); // 입주권을 빼지 않은 분양권 전매 행(진단용)
 const fetchFn = async (url, init) => {
   const response = await globalThis.fetch(url, init);
   const text = String(url);
@@ -73,6 +74,11 @@ const fetchFn = async (url, init) => {
         cur.items += 1;
         const own = /<ownershipGbn>\s*([^<]*?)\s*<\/ownershipGbn>/.exec(block)?.[1] ?? /<구분>\s*([^<]*?)\s*<\/구분>/.exec(block)?.[1] ?? '?';
         cur.owner.set(own, (cur.owner.get(own) ?? 0) + 1);
+        const tag = (n) => new RegExp(`<${n}>([\\s\\S]*?)</${n}>`).exec(block)?.[1]?.trim() ?? '';
+        const dealDate = normalizeDate(`${tag('dealYear')}-${tag('dealMonth').padStart(2, '0')}-${tag('dealDay').padStart(2, '0')}`);
+        const list = silvRows.get(id) ?? [];
+        list.push({ aptName: tag('aptNm'), umd: tag('umdNm'), buildYear: null, amount: parseNumber(tag('dealAmount')), area: parseNumber(tag('excluUseAr')), floor: parseNumber(tag('floor')), dealingGbn: tag('dealingGbn'), dealDate, jibun: tag('jibun'), aptSeq: tag('aptSeq'), landLease: false, presale: true, ownership: own, cancelled: Boolean(tag('cdealType')) });
+        silvRows.set(id, list);
         if (/신천동|래미안|<jibun>\s*20-4\s*<\/jibun>/.test(block)) cur.raw.push(block.replace(/\s+/g, ' ').replace(/<(\w+)>([^<]*)<\/\1>/g, '$1=$2;').replace(/<[^>]+>/g, '').slice(0, 400));
       }
       silvTally.set(id, cur);
@@ -521,6 +527,36 @@ for (const notice of matches) {
       await diagnose({ notice, models, addr, asOf, getTrades, getPresale, evaluation });
     } catch (error) {
       log(`diagnose threw: ${safeError(error)} ${error?.stack?.split('\n').slice(0, 3).join(' / ')}`);
+    }
+  }
+
+  // WHAT-IF(이 브랜치 전용 가정): parsePresaleXml이 버리는 입주권('입') 분양권 전매 행을 버리지 않았다면.
+  // 운영 evaluateLotto를 그대로 부르고 분양권 조회 결과에 입주권 행만 더한다. 취소 거래는 운영처럼 뺀다.
+  if (models) {
+    const monthsNow = completeMonths(asOf, config.lotto.tradeMonths);
+    const extra = (code, ms) => ms.flatMap((m) => silvRows.get(`${code}-${m}`) ?? []).filter((r) => r.ownership.includes('입') && !r.cancelled && r.amount > 0 && r.area > 0);
+    const code0 = addr.codes[0];
+    const ipjuAll = extra(code0, monthsNow);
+    const ours = ipjuAll.filter((r) => r.umd === addr.umd && /20-4/.test(r.jibun));
+    log('');
+    log(`--- WHAT-IF 입주권 행 포함 (조회 기간 ${monthsNow.join(',')}, 코드 ${code0}) ---`);
+    log(`분양권 전매 API의 입주권('입') 행(취소 제외) 송파구 전체 ${ipjuAll.length}건, 이 단지(신천동 지번 20-4, aptNm=${[...new Set(ours.map((r) => r.aptName))].join('/') || '-'}) ${ours.length}건`);
+    for (const r of [...ours].sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1))) log(`  ${rowText(r)}`);
+    const withIpju = await evaluateLotto(notice, {
+      config, today: asOf, getModels, getFactModels: undefined, interest: false, getTrades,
+      getPresale: async (code, ms) => { const r = await getPresale(code, ms); return { rows: [...r.rows, ...extra(code, ms)], ok: r.ok }; },
+      aptInfo, walkMinutes: null, onError: () => {}, onSoft: () => {}, onSoftOnce: () => {}, profile: null,
+    });
+    log(`WHAT-IF 판별: ${withIpju.status} | 안전 마진 ${withIpju.margin}만(${eokText(withIpju.margin)}) | 마진율 ${Number.isFinite(withIpju.marginRate) ? (withIpju.marginRate * 100).toFixed(1) : '-'}% | 추정 시세 ${withIpju.estimate}만(${eokText(withIpju.estimate)}) | 신뢰도 ${withIpju.confidence} | 판단 주택형 전용 ${withIpju.judgedArea}㎡ 분양가 ${withIpju.topPrice}만`);
+    log(`WHAT-IF 판별 근거: ${withIpju.reason}`);
+    // 주택형마다 단독으로도 본다.
+    for (const model of models.filter((m) => m.area > 0 && m.price > 0)) {
+      const one = await evaluateLotto({ ...notice, name: notice.name }, {
+        config, today: asOf, getModels: async () => [model], getFactModels: undefined, interest: false, getTrades,
+        getPresale: async (code, ms) => { const r = await getPresale(code, ms); return { rows: [...r.rows, ...extra(code, ms)], ok: r.ok }; },
+        aptInfo, walkMinutes: null, onError: () => {}, onSoft: () => {}, onSoftOnce: () => {}, profile: null,
+      });
+      log(`  WHAT-IF 주택형 ${model.houseType} 전용 ${model.area} 분양가 ${model.price}만: 판별 ${one.status} 마진 ${one.margin}만 마진율 ${Number.isFinite(one.marginRate) ? (one.marginRate * 100).toFixed(1) : '-'}% 추정 ${one.estimate}만 신뢰도 ${one.confidence} | ${(one.reason ?? '').match(/같은 단지 거래 [^;]*|하위 25% 시세 [\d.]+억/g)?.join(' / ') ?? '같은 단지 경로 아님'}`);
     }
   }
 
