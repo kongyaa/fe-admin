@@ -118,8 +118,21 @@ const getPresale = async (code, months) => {
 };
 const getModelsRaw = createModelLookup({ fetch: fetchFn, key, sleep });
 const modelCache = new Map();
+// 앞선 실행에서 청약홈 주택형 조회가 연속으로 빈 응답을 돌려준 구간이 있었다(제한으로 보임). 분양가가 하나도 없으면 잠시 뒤 다시 읽는다.
+const hasPrice = (models) => Array.isArray(models) && models.some((m) => m.area > 0 && m.price > 0);
 const getModels = async (notice) => {
-  if (!modelCache.has(notice.key)) modelCache.set(notice.key, getModelsRaw(notice).then((m) => m, (e) => { modelCache.delete(notice.key); throw e; }));
+  if (!modelCache.has(notice.key)) {
+    modelCache.set(notice.key, (async () => {
+      let models = await getModelsRaw(notice);
+      for (let attempt = 1; attempt <= 3 && !hasPrice(models); attempt += 1) {
+        bump('models_retry');
+        await sleep(attempt * 8000);
+        models = await getModelsRaw(notice);
+      }
+      if (!hasPrice(models)) bump('models_empty_final');
+      return models;
+    })().catch((e) => { modelCache.delete(notice.key); throw e; }));
+  }
   return modelCache.get(notice.key);
 };
 
