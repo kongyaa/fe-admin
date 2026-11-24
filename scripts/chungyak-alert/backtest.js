@@ -5,16 +5,19 @@
 // 환경 변수: DATA_GO_KR_KEY(필수), BACKTEST_AS_OF(YYYY-MM-DD), BACKTEST_NAME(공고명 부분 문자열),
 //   BACKTEST_LOOKBACK(선택, 수집 기간 일수. 기본은 config.lookbackDays), BACKTEST_LIST_ONLY=1(목록만 출력)
 import { readFileSync } from 'node:fs';
-import { ENDPOINTS, collectApplyhome, createModelLookup } from './src/sources/applyhome.js';
+import { ENDPOINTS, collectApplyhome, createModelLookup, fetchOdcloudAll } from './src/sources/applyhome.js';
 import { createAptInfoClient } from './src/sources/apt-info.js';
 import { createMolitClient, createPresaleClient } from './src/sources/molit.js';
-import { evaluateLotto } from './src/lotto.js';
-import { readTradesFor } from './src/market-estimate.js';
+import { averagePriceOf, evaluateLotto } from './src/lotto.js';
+import {
+  acquisitionTax, buildSubject, cleanTrades, estimateBestMargin, groupComplexes, localityConflict, monthsBetween,
+  normalizeComplexName, parseLocality, readTradesFor, selectComparables, spreadOf, subjectLocality, weightedQuantile,
+} from './src/market-estimate.js';
 import { resolveAddress } from './src/sgg-codes.js';
 import { isActive, selectUrgent } from './src/main.js';
 import { isRental } from './src/rental.js';
 import { formatModelPrices } from './src/price-facts.js';
-import { completeMonths, decodeServiceKey, defaultSleep, kstToday, maskServiceKey, safeError } from './src/util.js';
+import { completeMonths, decodeServiceKey, defaultSleep, kstToday, maskServiceKey, median, safeError } from './src/util.js';
 
 const config = JSON.parse(readFileSync(new URL('./config.json', import.meta.url), 'utf8'));
 const env = process.env;
@@ -38,7 +41,25 @@ maskServiceKey(env.DATA_GO_KR_KEY, env);
 maskServiceKey(key, env);
 
 const sleep = defaultSleep;
-const fetchFn = globalThis.fetch;
+// 매매 응답의 원본 건수와 취소 건수를 센다(파서가 취소 행을 조용히 버리는 양을 보려고). 응답은 그대로 돌려준다.
+const rawTally = new Map();
+const fetchFn = async (url, init) => {
+  const response = await globalThis.fetch(url, init);
+  const text = String(url);
+  if (text.includes('RTMSDataSvcAptTrade') && response.ok) {
+    try {
+      const body = await response.clone().text();
+      const params = new URL(text).searchParams;
+      const id = `${params.get('LAWD_CD')}-${params.get('DEAL_YMD')}`;
+      const cur = rawTally.get(id) ?? { items: 0, cancelled: 0, total: null };
+      cur.items += [...body.matchAll(/<item>/g)].length;
+      cur.cancelled += [...body.matchAll(/<cdealType>\s*\S/g)].length;
+      cur.total = Number(/<totalCount>(\d+)<\/totalCount>/.exec(body)?.[1] ?? NaN);
+      rawTally.set(id, cur);
+    } catch { /* 진단용이라 실패해도 판정과 무관하다 */ }
+  }
+  return response;
+};
 const norm = (text) => String(text ?? '').replace(/[\s\-_]/g, '').toLowerCase();
 
 log(`backtest asOf=${asOf} realToday(KST)=${kstToday()} nameContains="${nameContains}" lookbackDays=${lookbackDays}`);
@@ -103,6 +124,173 @@ const comparablesOf = (reason) => {
 };
 const grab = (reason, re) => re.exec(reason ?? '')?.[1] ?? null;
 
+// ---- 진단(이 브랜치 전용). 운영 함수의 입력과 중간값을 그대로 찍는다. 공개 자료(공고, 국토부 실거래)만 출력한다. ----
+const BRAND = config.market.adjustment.brand;
+const eokText = (m) => (Number.isFinite(m) ? `${(m / 10000).toFixed(2)}억` : '-');
+const distinctiveLen = (name) => {
+  let rest = name;
+  for (const keyword of [...BRAND.nameKeywords.top, ...BRAND.nameKeywords.mid]) rest = rest.replaceAll(normalizeComplexName(keyword), '');
+  return rest.length;
+};
+const subjectJibunOf = (address, umd, village) => {
+  const place = village ?? umd;
+  if (!place) return null;
+  const tokens = String(address ?? '').replace(/[(),]/g, ' ').trim().split(/\s+/);
+  const next = tokens[tokens.indexOf(place) + 1] ?? '';
+  return /^\d+(-\d+)?$/.test(next) ? next : null;
+};
+const finestOf = (p) => p.village ?? p.dong ?? p.town;
+// sameComplexRows(src/market-estimate.js)의 행마다 판단을 그대로 풀어 쓴 것. 이유 문구를 함께 돌려준다.
+function sameWhy(subject, row) {
+  const place = subjectLocality(subject);
+  const rowPlace = parseLocality(row.umd);
+  if (localityConflict(place, rowPlace)) return { ok: false, why: `위치 충돌(공고 동=${place.dong ?? place.town ?? '-'} vs 행 umd=${row.umd})` };
+  const sameFinest = !localityConflict(place, rowPlace) && Boolean(finestOf(place)) && finestOf(place) === finestOf(rowPlace);
+  if (subject.jibun && row.jibun && subject.jibun === row.jibun && sameFinest) return { ok: true, why: `지번 일치(${row.jibun})` };
+  const sharesPlace = (!rowPlace.town && !rowPlace.village && !rowPlace.dong) || ['town', 'village', 'dong'].some((part) => place[part] && place[part] === rowPlace[part]);
+  const allowSubstring = Boolean(finestOf(place)) && sharesPlace;
+  const left = normalizeComplexName(subject.name);
+  const right = normalizeComplexName(row.aptName);
+  if (!left || !right) return { ok: false, why: '이름 없음' };
+  if (left === right) return { ok: true, why: `정규화 이름 동일(${left})` };
+  if (!allowSubstring) return { ok: false, why: `이름 불일치(${left} vs ${right}), 부분 일치 불허(공고 동 ${place.dong ?? '-'}, 행 umd ${row.umd}, 지번 공고 ${subject.jibun ?? '-'} 행 ${row.jibun || '-'})` };
+  const shorter = left.length < right.length ? left : right;
+  const longer = shorter === left ? right : left;
+  const lenOk = shorter.length >= config.market.sameComplex.minNameLength;
+  const distOk = distinctiveLen(shorter) >= config.market.sameComplex.minDistinctiveLength;
+  const inc = longer.includes(shorter);
+  return { ok: lenOk && distOk && inc, why: `부분 일치 검사: 짧은쪽=${shorter}(길이 ${shorter.length}>=${config.market.sameComplex.minNameLength}:${lenOk}, 고유길이 ${distinctiveLen(shorter)}>=${config.market.sameComplex.minDistinctiveLength}:${distOk}) 포함=${inc}` };
+}
+const recency = (row, today) => 0.5 ** (Math.max(monthsBetween(row.dealDate, today), 0) / config.market.tradeFilter.recencyHalfLifeMonths);
+// unitsOf와 같은 계산(㎡당 단가, 최근 거래 가중, 25% 이상치 제거). 제거된 행도 돌려준다.
+function unitsDiag(rows, today) {
+  const items = rows.map((row) => ({ value: row.amount / row.area, weight: row.dealDate ? recency(row, today) : 1, row }));
+  const f = config.market.tradeFilter;
+  if (items.length < f.outlierMinSamples) return { kept: items, dropped: [] };
+  const mid = median(items.map((i) => i.value));
+  const kept = items.filter((i) => Math.abs(i.value - mid) <= mid * f.outlierBand);
+  return { kept, dropped: items.filter((i) => !kept.includes(i)) };
+}
+const rowText = (r) => `${r.dealDate} ${r.umd} ${r.aptName} jibun=${r.jibun || '-'} seq=${r.aptSeq || '-'} 전용${r.area}㎡ ${r.floor ?? '-'}층 ${r.amount}만 ${r.buildYear ?? '-'}년 ${r.dealingGbn || '-'}${r.presale ? ' [분양권]' : ''}`;
+
+async function diagnose({ notice, models, addr, asOf, getTrades, getPresale, evaluation }) {
+  const realRe = new RegExp(env.BACKTEST_REAL ?? '래미안아이파크');
+  log('');
+  log('--- 진단: 거래 조회와 필터 ---');
+  const months = completeMonths(asOf, config.lotto.tradeMonths);
+  const read = await readTradesFor(getTrades, { codes: addr.codes, fallbackCode: addr.fallbackCode }, months, { umd: addr.umd, village: addr.village });
+  const trades = read.rows;
+  log(`월별 원본(응답 item 수 / 취소(cdealType) / totalCount) 코드 ${read.codes.join(',')}: ${months.map((m) => { const t = rawTally.get(`${read.codes[0]}-${m}`); return `${m}=${t ? `${t.items}/${t.cancelled}/${t.total}` : '-'}`; }).join(' ')}`);
+  log(`MOLIT 매매 파싱 행(취소 제외) = ${trades.length}건 (코드 ${read.codes.join(',')}, 월 ${months.join(',')})`);
+  const presaleRead = await getPresale(read.codes[0], months);
+  log(`분양권 전매 행 = ${presaleRead.rows.length}건 ok=${presaleRead.ok}`);
+  const allRaw = [...trades, ...presaleRead.rows];
+  // 판정과 같은 순서의 cleanTrades 필터를 단계별로 센다.
+  const filter = config.market.tradeFilter;
+  const steps = [];
+  let cur = allRaw;
+  const step = (name, test) => { const next = cur.filter(test); steps.push(`${name}: -${cur.length - next.length} -> ${next.length}`); cur = next; };
+  steps.push(`시작(매매 ${trades.length} + 분양권 ${presaleRead.rows.length}) = ${allRaw.length}`);
+  step('취소·토지임대부 제외', (r) => !(r.cancelled || r.landLease));
+  step('직거래 제외', (r) => !String(r.dealingGbn ?? '').includes('직거래'));
+  step(`저층(<=${filter.lowFloorMax}층) 제외`, (r) => !(Number.isFinite(r.floor) && r.floor <= filter.lowFloorMax));
+  step(`조회 기간 밖(>${config.lotto.tradeMonths + 1}개월) 제외`, (r) => !(r.dealDate && monthsBetween(r.dealDate, asOf) > config.lotto.tradeMonths + 1));
+  step('금액·면적 무효 제외', (r) => r.amount > 0 && r.area > 0);
+  log(`필터 단계: ${steps.join(' | ')}`);
+  const rows = cleanTrades(allRaw, { market: config.market, lotto: config.lotto, today: asOf });
+  log(`cleanTrades 결과 = ${rows.length}건 (단계 재현과 ${rows.length === cur.length ? '일치' : '불일치!'})`);
+
+  const jibun = subjectJibunOf(notice.address, addr.umd, addr.village);
+  const subject = buildSubject({ name: notice.name, builder: notice.builder, umd: addr.umd, village: addr.village, jibun, walkMinutes: null, market: config.market });
+  log(`subject: name="${notice.name}" 정규화="${normalizeComplexName(notice.name)}" (길이 ${normalizeComplexName(notice.name).length}, 고유길이 ${distinctiveLen(normalizeComplexName(notice.name))}) umd=${subject.umd} jibun=${subject.jibun ?? '-'} brandTier=${subject.brandTier} ageYears=${subject.ageYears}`);
+  log(`임계: sameComplex.minNameLength=${config.market.sameComplex.minNameLength} minDistinctiveLength=${config.market.sameComplex.minDistinctiveLength} minSamples=${config.market.sameComplex.minSamples} highSamples=${config.market.sameComplex.highSamples} highSpread=${config.market.sameComplex.highSpread} areaToleranceM2=${config.lotto.areaToleranceM2} outlierBand=${filter.outlierBand}`);
+
+  // 같은 단지로 보이는 후보 묶음(이름에 realRe, 또는 공고 지번과 같은 지번)을 전체 거래(필터 전)에서 센다.
+  const looksReal = (r) => realRe.test(normalizeComplexName(r.aptName)) || (jibun && r.jibun === jibun && r.umd === addr.umd);
+  const groupsRaw = new Map();
+  for (const r of allRaw.filter(looksReal)) {
+    const k = `${r.umd}|${r.aptName}|${r.jibun}|${r.aptSeq}|${r.buildYear}`;
+    const g = groupsRaw.get(k) ?? { n: 0, areas: new Map() };
+    g.n += 1;
+    g.areas.set(r.area, (g.areas.get(r.area) ?? 0) + 1);
+    groupsRaw.set(k, g);
+  }
+  log(`필터 전 전체 ${allRaw.length}건 중 이름에 /${realRe.source}/ 포함 또는 공고 지번(${jibun ?? '-'}) 일치 후보 묶음 ${groupsRaw.size}개:`);
+  for (const [k, g] of groupsRaw) log(`  [umd|aptNm|jibun|aptSeq|건축년도] ${k} 건수=${g.n} 전용별 건수=${[...g.areas].sort((a, b) => a[0] - b[0]).map(([a, n]) => `${a}:${n}`).join(' ')}`);
+  const umdCounts = new Map();
+  for (const r of trades) umdCounts.set(r.umd, (umdCounts.get(r.umd) ?? 0) + 1);
+  log(`송파구 매매 행의 법정동(umdNm) 분포: ${[...umdCounts].sort((a, b) => b[1] - a[1]).map(([u, n]) => `${u}=${n}`).join(' ')}`);
+  const nearDistinctNames = new Set(trades.filter((r) => /잠실|래미안|아이파크/.test(r.aptName)).map((r) => `${r.umd}|${r.aptName}|${r.jibun}`));
+  log(`aptNm에 잠실·래미안·아이파크가 들어간 (umd|aptNm|jibun) 종류 ${nearDistinctNames.size}개: ${[...nearDistinctNames].sort().join(' ; ')}`);
+
+  const ctx = { market: config.market, lotto: config.lotto, today: asOf };
+  const priced = models.filter((m) => m.area > 0 && m.price > 0);
+  for (const model of priced) {
+    log('');
+    log(`#### 주택형 ${model.houseType} 전용 ${model.area}㎡ 최고 분양가 ${model.price}만원(${eokText(model.price)}) 세대 ${model.households ?? '-'}`);
+    const near = rows.filter((r) => Math.abs(r.area - model.area) <= config.lotto.areaToleranceM2);
+    log(`  면적 허용오차 ±${config.lotto.areaToleranceM2}㎡ 안 거래(필터 후) = ${near.length}건 / 필터 후 전체 ${rows.length}건`);
+    // 같은 단지 경로: sameComplexRows와 같은 판단을 행마다 한다. 묶음별로 요약한다.
+    const verdict = new Map();
+    for (const r of near) {
+      const v = sameWhy(subject, r);
+      const k = `${r.umd}|${r.aptName}|${r.jibun || '-'}`;
+      const e = verdict.get(k) ?? { ok: v.ok, why: v.why, n: 0 };
+      e.n += 1;
+      verdict.set(k, e);
+    }
+    const accepted = near.filter((r) => sameWhy(subject, r).ok);
+    log(`  같은 단지로 받은 행 = ${accepted.length}건`);
+    const interesting = [...verdict].filter(([k, v]) => v.ok || realRe.test(normalizeComplexName(k.split('|')[1])) || /잠실/.test(k));
+    for (const [k, v] of interesting) log(`   ${v.ok ? '받음' : '거절'} [${k}] ${v.n}건: ${v.why}`);
+    // 면적 허용오차에 걸려 빠진 같은 단지 후보(필터 후, 허용오차 밖)
+    const lookReal = rows.filter(looksReal);
+    const outOfTol = lookReal.filter((r) => Math.abs(r.area - model.area) > config.lotto.areaToleranceM2);
+    log(`  이름·지번이 같은 단지 후보 중 필터 후 총 ${lookReal.length}건, 이 주택형 면적 허용오차 밖 ${outOfTol.length}건. 허용오차 밖 면적 분포: ${[...outOfTol.reduce((m, r) => m.set(r.area, (m.get(r.area) ?? 0) + 1), new Map())].sort((a, b) => a[0] - b[0]).map(([a, n]) => `${a}:${n}`).join(' ') || '-'}`);
+    const sameUnits = unitsDiag(accepted, asOf);
+    const need = config.market.sameComplex.minSamples;
+    const spread = sameUnits.kept.length > 0 ? spreadOf(sameUnits.kept.map((i) => i.value)) : null;
+    log(`  같은 단지 경로: 받은 ${accepted.length}건 -> 이상치(중위 ±${filter.outlierBand * 100}%) 제거 ${sameUnits.dropped.length}건 -> 사용 ${sameUnits.kept.length}건, 최소 ${need}건 필요 => ${sameUnits.kept.length >= need ? '채택' : '불채택'} spread=${spread === null ? '-' : spread.toFixed(3)}`);
+    if (sameUnits.kept.length >= need) {
+      const est = Math.round(weightedQuantile(sameUnits.kept, 0.5) * model.area);
+      const low = Math.round(weightedQuantile(sameUnits.kept, 0.25) * model.area);
+      log(`  같은 단지 경로 값: 추정 ${est}만 하위25% ${low}만 마진(옵션 ${config.market.optionCostManwon}, 취득세 ${acquisitionTax(model.price, config.market.acquisitionTax)}) = ${low - model.price - config.market.optionCostManwon - acquisitionTax(model.price, config.market.acquisitionTax)}만`);
+    }
+    for (const r of accepted.slice(0, 12)) log(`    받은 거래: ${rowText(r)}`);
+    for (const i of sameUnits.dropped) log(`    이상치로 제거: ${rowText(i.row)} 단가 ${i.value.toFixed(1)}만/㎡`);
+    // 비교 단지 경로
+    const groups = groupComplexes(rows, model.area, ctx);
+    const scoped = selectComparables(groups, subject, ctx);
+    log(`  비교 단지 묶음 ${groups.length}개(면적 허용오차 안, 단지당 표본 >= ${config.market.comparables.minComplexSamples}). selectComparables: ${scoped ? `범위=${scoped.scope} 연식단계=${scoped.ageStep} maxAge=${scoped.maxAge} scopePenalty=${scoped.scopePenalty} townWide=${scoped.townWide} 고른 ${scoped.picked.length}곳` : '없음'}`);
+    const showGroup = (g, mark) => log(`    ${mark} ${g.aptName} | ${g.umd} | 지번 ${g.jibun ?? '-'} | 연식 ${g.ageYears ?? '-'}년 | 브랜드 ${g.brandTier} | 표본 ${g.samples} | 단지 중위 ${g.unit.toFixed(1)}만/㎡ => ${Math.round(g.unit * model.area)}만(${eokText(g.unit * model.area)}) 이 주택형 면적 기준`);
+    for (const g of [...groups].sort((a, b) => b.samples - a.samples).slice(0, 25)) showGroup(g, scoped?.picked.includes(g) ? '[채택]' : '[후보]');
+    // 이 주택형만 단독으로 estimateBestMargin을 돌려 후보를 본다(preferConfident=true, 운영과 같다).
+    const cand = estimateBestMargin({ models: [model], rows, subject, stations: new Map(), stationLookupFailed: false, presaleOk: presaleRead.ok, crossWard: read.crossWard, preferConfident: true, lotto: config.lotto, market: config.market, today: asOf });
+    if (!cand) log('  estimateBestMargin(이 주택형만) = null');
+    else {
+      log(`  estimateBestMargin(이 주택형만): 경로=${cand.basis.kind} 추정 ${cand.estimate}만 보수 ${cand.safeValue}만 분양가 ${cand.price}만 취득세 ${cand.tax}만 옵션 ${cand.optionCost}만 => 안전 마진 ${cand.margin}만 마진율 ${(cand.marginRate * 100).toFixed(1)}% 신뢰도 ${cand.confidence}${cand.confidenceBeforeLookupFailure ? `(조회실패 전 ${cand.confidenceBeforeLookupFailure})` : ''}`);
+      if (cand.basis.kind === 'comparables') {
+        log(`    할인율 ${(cand.discount * 100).toFixed(1)}% 측정=${cand.discountMeasured} 초과=${cand.discountExceeded} 단지 이상치 제외 ${cand.outliers}곳 범위=${cand.basis.scope} 표본 ${cand.basis.samples}건`);
+        for (const c of cand.basis.comparables) log(`    비교 단지 ${c.name} 표본 ${c.samples} 보정 후 ${c.reference}만(${eokText(c.reference)}) 브랜드 ${(c.brandRatio * 100 - 100).toFixed(1)}% 연식 ${(c.ageRatio * 100 - 100).toFixed(1)}%`);
+      }
+    }
+    // 대조: 실제 단지라고 보이는 거래만으로 계산했다면(이름·지번 후보, 같은 면적 허용오차 안)
+    const real = near.filter(looksReal);
+    const realUnits = unitsDiag(real, asOf);
+    if (realUnits.kept.length > 0) {
+      const est = Math.round(weightedQuantile(realUnits.kept, 0.5) * model.area);
+      const low = Math.round(weightedQuantile(realUnits.kept, 0.25) * model.area);
+      const tax = acquisitionTax(model.price, config.market.acquisitionTax);
+      log(`  [대조] 이름·지번 후보(${real.length}건, 이상치 제거 후 ${realUnits.kept.length}건) 기준: 추정 ${est}만(${eokText(est)}) 하위25% ${low}만 취득세 ${tax}만 => 마진 ${low - model.price - config.market.optionCostManwon - tax}만 (마진율 ${(((low - model.price - config.market.optionCostManwon - tax) / model.price) * 100).toFixed(1)}%)`);
+      for (const r of real.sort((a, b) => (b.dealDate > a.dealDate ? 1 : -1)).slice(0, 15)) log(`    ${rowText(r)}`);
+    } else log('  [대조] 이 면적 허용오차 안에 이름·지번 후보 거래가 없다');
+  }
+  // 모든 주택형을 함께 넣은 운영 호출. 평가 결과와 같아야 한다.
+  const all = estimateBestMargin({ models, rows, subject, stations: new Map(), stationLookupFailed: false, presaleOk: presaleRead.ok, crossWard: read.crossWard, preferConfident: true, lotto: config.lotto, market: config.market, today: asOf });
+  log('');
+  log(`전체 주택형으로 estimateBestMargin: ${all ? `${all.houseType} 전용 ${all.area} 분양가 ${all.price} 추정 ${all.estimate} 마진 ${all.margin} 신뢰도 ${all.confidence} 경로 ${all.basis.kind}` : 'null'} | evaluateLotto: 판단 주택형 전용 ${evaluation.judgedArea} 마진 ${evaluation.margin} 추정 ${evaluation.estimate}`);
+}
+
 let exitCode = 0;
 for (const notice of matches) {
   log('');
@@ -124,6 +312,18 @@ for (const notice of matches) {
     log('주택형별 분양가(청약홈 getAPTLttotPblancMdl, 최고분양가):');
     for (const m of models) log(`  ${m.houseType} | 전용 ${m.area}㎡ | ${m.price}만원 | ${m.households ?? '-'}세대`);
     log(`  요약: ${formatModelPrices(models)}`);
+    log(`  averagePrice(세대수 가중, Notion 평균 분양가에 쓰는 값)=${averagePriceOf(models)}만원`);
+    // 청약홈 주택형 원본 행. 면적 필드를 정확히 보려고 모든 필드를 찍는다(공개 공고 자료).
+    try {
+      const rawRows = await fetchOdcloudAll({
+        fetch: fetchFn, key, op: notice.mdlOp, sleep,
+        params: { 'cond[HOUSE_MANAGE_NO::EQ]': notice.houseManageNo, 'cond[PBLANC_NO::EQ]': notice.pblancNo },
+      });
+      log(`  청약홈 주택형 원본 행 ${rawRows.length}건(${notice.mdlOp}):`);
+      for (const row of rawRows) log(`    RAW ${JSON.stringify(row)}`);
+    } catch (error) {
+      log(`  원본 주택형 조회 실패: ${safeError(error)}`);
+    }
   } catch (error) {
     log(`주택형 조회 실패: ${safeError(error)}`);
   }
@@ -194,6 +394,14 @@ for (const notice of matches) {
   log(`실제 조회한 분양권전매 월: ${[...window.presaleMonths].sort().join(',') || '-'} 행 ${window.presaleRows}`);
   log(`조회된 거래일 범위: ${window.minDeal ?? '-'} ~ ${window.maxDeal ?? '-'}`);
   log(`cleanTrades 유지 기준: 거래월과 asOf의 차이 <= tradeMonths+1 (config), 연식은 asOf의 연도 기준`);
+
+  if (models) {
+    try {
+      await diagnose({ notice, models, addr, asOf, getTrades, getPresale, evaluation });
+    } catch (error) {
+      log(`diagnose threw: ${safeError(error)} ${error?.stack?.split('\n').slice(0, 3).join(' / ')}`);
+    }
+  }
 
   // 배치의 긴급 알림 선택 로직. 배치는 접수 단계 시작일 당일(KST)에 로또만 보낸다.
   const record = { notice, status: evaluation.status, shortReason: evaluation.shortReason ?? evaluation.reason, reason: evaluation.reason, urgentDate: null };
