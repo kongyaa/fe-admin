@@ -167,7 +167,7 @@ test('a 대상 외 row with a reference margin is stored with its values but nev
   const notice = apt({ name: '하남교산 나눔형', flags: { priceCap: true, publicDistrict: true } });
   const evaluation = await evaluate(notice, { trades: saleRows(2200) });
   const props = buildProperties(notice, evaluation, today);
-  assert.equal(props['로또 여부'].select.name, '대상 외');
+  assert.equal(props['청약 등급'].select.name, '판정 보류');
   assert.equal(props['안전 마진'].number, evaluation.margin);
   assert.equal(props['마진율'].number, evaluation.marginRate);
   assert.equal(props['시세 신뢰도'].select.name, evaluation.confidence);

@@ -202,7 +202,7 @@ test('an unused kind (임의공급) gets the price facts but stays 대상 외 wi
   assert.equal(evaluation.judgedArea ?? null, null);
   assert.deepEqual(asked, { models: 0, facts: 1 });
   const props = buildProperties(arbitrary, evaluation, today);
-  assert.deepEqual(props['로또 여부'], { select: { name: '대상 외' } });
+  assert.deepEqual(props['청약 등급'], { select: { name: '판정 보류' } });
   for (const name of ['안전 마진', '마진율', '추정 시세', '시세 신뢰도', '판단 주택형(㎡)']) assert.equal(Object.hasOwn(props, name), false, name);
 });
 
@@ -384,7 +384,7 @@ test('a run fills the price facts for 임의공급 and out-of-region notices whi
   assert.equal(mails.length, 0);
   assert.equal(store.state.upserts.length, 2);
   for (const { properties } of store.state.upserts) {
-    assert.deepEqual(properties['로또 여부'], { select: { name: '대상 외' } });
+    assert.deepEqual(properties['청약 등급'], { select: { name: '판정 보류' } });
     assert.deepEqual(properties['최저 분양가'], { number: 52000 });
     assert.deepEqual(properties['최고 분양가'], { number: 78000 });
     assert.deepEqual(properties['평균 분양가'], { number: 62400 });
@@ -405,7 +405,7 @@ test('the extra lookups stop at market.priceLookupBudget and the overrun is coun
   assert.equal(result.store.state.upserts.filter(({ properties }) => properties['최저 분양가']).length, 2);
   // 한도를 넘은 공고도 저장하고 상태는 그대로 대상 외이며, 분양가 열만 비어 있다.
   assert.equal(result.store.state.upserts.length, 4);
-  assert.ok(result.store.state.upserts.every(({ properties }) => properties['로또 여부'].select.name === '대상 외'));
+  assert.ok(result.store.state.upserts.every(({ properties }) => properties['청약 등급'].select.name === '판정 보류'));
   assert.match(marketLine(result), /price_lookup_budget_exceeded:1/);
   assert.ok(!result.logs.join('\n').includes('임의 단지'));
   // 한도 0은 조회하지 않고, 설정이 없으면 기능을 끈다(조회도 건수도 없다).
@@ -448,7 +448,7 @@ test('a failed price lookup is a soft count: no error mail, status unchanged', a
   assert.equal(result.code, 0);
   assert.equal(result.mails.length, 0);
   assert.match(marketLine(result), /price_facts_lookup_failed:1/);
-  assert.deepEqual(result.store.state.upserts[0].properties['로또 여부'], { select: { name: '대상 외' } });
+  assert.deepEqual(result.store.state.upserts[0].properties['청약 등급'], { select: { name: '판정 보류' } });
   assert.equal(Object.hasOwn(result.store.state.upserts[0].properties, '최저 분양가'), false);
 });
 
@@ -512,8 +512,8 @@ test('a timed-out price lookup does not trip the judgment lookup: a later in-reg
   assert.equal(result.code, 0);
   assert.equal(result.mails.length, 0, JSON.stringify(result.mails.map((mail) => mail.text)));
   const judged = result.store.state.upserts.find(({ key }) => key === '52-1').properties;
-  // 실거래 자료가 없는 가짜라 시세 추정 없음으로 확인 필요다. 판정했다는 것(최고 분양가가 채워짐)이 이 테스트의 요점이다.
-  assert.deepEqual(judged['로또 여부'], { select: { name: '확인 필요' } });
+  // 실거래 자료가 없는 가짜라 시세 추정 없음으로 확인 필요, 등급은 판정 보류다. 판정했다는 것(최고 분양가가 채워짐)이 이 테스트의 요점이다.
+  assert.deepEqual(judged['청약 등급'], { select: { name: '판정 보류' } });
   assert.deepEqual(judged['최고 분양가'], { number: 78000 });
   // 시간 초과 조회는 재시도하지 않는다(부산 1번), 판정 조회는 한 번.
   assert.equal(result.calls.modelUrls.filter((url) => url.includes('HOUSE_MANAGE_NO')).length, 2);

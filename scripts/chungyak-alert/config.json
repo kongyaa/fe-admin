@@ -50,6 +50,15 @@
     "triggerPriceCheck": { "remainder": true, "resupply": true, "arbitrary": true, "priceCap": true, "publicDistrict": true },
     "remainderMaxRound": 3
   },
+  "grade": {
+    "note": "청약 등급 기준의 시작값이다. 공식 기준은 없다. 마진율은 분양가 대비다. 로또청약은 lotto 기준을 넘은 공고(내부 상태 로또)다.",
+    "considerMinRate": -0.03,
+    "passMaxRate": -0.1,
+    "considerMinQuality": 2,
+    "stationMaxMinutes": 10,
+    "minUnits": 500,
+    "minTrades": 50
+  },
   "recommendation": {
     "localResidenceYears": 2,
     "privateDeposit": {

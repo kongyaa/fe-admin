@@ -25,6 +25,8 @@ import { buildProperties } from '../src/notion-store.js';
 const config = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
 const today = '2026-11-05';
 const noSleep = async () => {};
+// 판별 근거 끝에는 등급 줄이 붙는다(src/grade.js). 그 앞의 근거만 보는 단언은 등급 줄을 뗀 값으로 본다.
+const noGrade = (text) => text.replace(/\n등급: [^\n]*$/, '');
 
 test('date ranges accept dotted, dashed, compact and Korean dates, with times and range separators', () => {
   const cases = [
@@ -534,7 +536,7 @@ test('a full run gives an LH sale notice stages, models, an address and a priced
   assert.equal(notice.models.length, 1);
   assert.equal(evaluation.status, STATUS.LOTTO);
   assert.equal(evaluation.confidence, '중');
-  assert.equal(properties['로또 여부'].select.name, '로또');
+  assert.equal(properties['청약 등급'].select.name, '로또청약');
   assert.equal(properties['주소'].rich_text[0].text.content, '서울특별시 강서구 마곡동 123-45 일원');
   assert.equal(properties['특별공급 접수일'].date.start, '2026-11-05');
   // 특별공급 접수가 오늘이라 로또 알림이 간다.
@@ -573,7 +575,7 @@ test('나눔형 and 신혼희망 LH notices are 대상 외 with a reference marg
   assert.ok(shared.evaluation.reason.startsWith('참고 마진(차익 공유 유형, 내 몫 ×0.7) 5.6억, 마진율 56%; (조정 전) 안전 마진 8.0억'), shared.evaluation.reason);
   assert.ok(newlywed.evaluation.reason.startsWith('참고 마진(신혼희망타운: 수익공유형 대출 조건 확인); 안전 마진 8.0억'), newlywed.evaluation.reason);
   // Notion 열: 대상 외, 참고 마진, 마진율, 신뢰도, 추정 시세, 분양가가 채워진다.
-  assert.equal(shared.properties['로또 여부'].select.name, '대상 외');
+  assert.equal(shared.properties['청약 등급'].select.name, '판정 보류');
   assert.equal(shared.properties['안전 마진'].number, 56000);
   assert.equal(shared.properties['마진율'].number, 0.56);
   assert.equal(shared.properties['시세 신뢰도'].select.name, '중');
@@ -627,10 +629,10 @@ test('a full run recommends an LH track per applicant, writes the Notion columns
   // 같은 날 특별공급은 신혼부부가 생애최초보다 먼저다.
   assert.equal(sale.properties['추천 전형'].select.name, '을순 특별(신혼부부)');
   assert.deepEqual(sale.properties['추천 접수일'].date, { start: '2026-11-06' });
-  assert.ok(sale.evaluation.reason.endsWith('\n추천: 갑돌 생애최초 특별공급 11/6 (1순위 일반공급 11/9도 가능) / 을순 신혼부부 특별공급 11/6 (1순위 일반공급 11/9도 가능); 소득·자산 기준 확인'), sale.evaluation.reason);
+  assert.ok(noGrade(sale.evaluation.reason).endsWith('\n추천: 갑돌 생애최초 특별공급 11/6 (1순위 일반공급 11/9도 가능) / 을순 신혼부부 특별공급 11/6 (1순위 일반공급 11/9도 가능); 소득·자산 기준 확인'), sale.evaluation.reason);
   assert.equal(sale.evaluation.status, STATUS.LOTTO);
   const town = byKey['LH-s1'];
-  assert.equal(town.properties['로또 여부'].select.name, '대상 외');
+  assert.equal(town.properties['청약 등급'].select.name, '판정 보류');
   assert.equal(town.properties['안전 마진'].number, 80000);
   assert.equal(town.properties['추천 전형'].select.name, '을순 특별(신혼부부)');
   assert.deepEqual(town.properties['추천 접수일'].date, { start: '2026-11-09', end: '2026-11-10' });
@@ -653,7 +655,7 @@ test('detail or supply failures fall back to the old LH behaviour without an err
   assert.equal(notice.address, '서울특별시 강서구');
   assert.equal(notice.models, undefined);
   assert.equal(evaluation.status, STATUS.UNDETERMINED);
-  assert.equal(evaluation.reason, 'LH 상세 조회 실패 (공고중)');
+  assert.equal(noGrade(evaluation.reason), 'LH 상세 조회 실패 (공고중)');
   assert.equal(failed.kakao.length, 0);
   assert.ok(!failed.mails.some((mail) => mail.subject.includes('배치 오류')));
   assert.ok(failed.logs.includes('errors=none'), failed.logs.join('|'));
@@ -707,7 +709,7 @@ test('the call cap applies in key order and capped notices are 판별 불가', a
   for (const key of ['LH-b', 'LH-c']) {
     assert.equal(byKey[key].notice.lhDetailState, 'capped', key);
     assert.equal(byKey[key].evaluation.status, STATUS.UNDETERMINED, key);
-    assert.equal(byKey[key].evaluation.reason, 'LH 상세 조회 한도 초과 (공고중)', key);
+    assert.equal(noGrade(byKey[key].evaluation.reason), 'LH 상세 조회 한도 초과 (공고중)', key);
     // 예전 동작: 목록의 공고일~마감일 단계
     assert.equal(byKey[key].notice.stages[0].name, '공고~마감', key);
   }
@@ -739,7 +741,7 @@ test('malformed values in all four parsers only add lh_parse_failed soft kinds',
   // 읽지 못해 예전 동작이다: 단계는 목록 값이고 주택형이 없다.
   const [{ notice, evaluation }] = h.state.upserts;
   assert.equal(notice.stages[0].name, '공고~마감');
-  assert.equal(evaluation.reason, 'LH 공급 정보 없음 (공고중)');
+  assert.equal(noGrade(evaluation.reason), 'LH 공급 정보 없음 (공고중)');
 });
 
 test('a full run drops a stored 로또 when a 하 estimate has a negative margin, mild or clear', async () => {
@@ -752,7 +754,8 @@ test('a full run drops a stored 로또 when a 하 estimate has a negative margin
   assert.ok(evaluation.marginRate <= -0.05, String(evaluation.marginRate));
   assert.equal(evaluation.status, STATUS.NOT);
   assert.ok(evaluation.reason.startsWith('LH 공공분양(분양가상한제) 해당이나 시세 대비 이점 없음; '), evaluation.reason);
-  assert.equal(properties['로또 여부'].select.name, STATUS.NOT);
+  // 신뢰도 하는 근거가 약해 마진이 음수여도 패스가 아니라 판정 보류다.
+  assert.equal(properties['청약 등급'].select.name, '판정 보류');
   assert.equal(h.kakao.length, 0);
   assert.ok(summaryOf(h).includes(' lotto_demoted=1 '), summaryOf(h));
   assert.ok(lineOf(h, 'market').endsWith(' soft=none'), lineOf(h, 'market'));
@@ -772,7 +775,7 @@ test('an LH notice that evaluates to 확인 필요 is counted in lh_evaluated an
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const [{ evaluation, properties }] = h.state.upserts;
   assert.equal(evaluation.status, STATUS.CHECK);
-  assert.equal(properties['로또 여부'].select.name, STATUS.CHECK);
+  assert.equal(properties['청약 등급'].select.name, '판정 보류');
   assert.equal(h.kakao.length, 0);
   assert.ok(summaryOf(h).includes(' lh_evaluated=1 '), summaryOf(h));
   assert.ok(summaryOf(h).includes(' check_needed=1 '), summaryOf(h));

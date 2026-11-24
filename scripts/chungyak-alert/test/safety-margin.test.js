@@ -938,7 +938,10 @@ const WALK = { '역 도보(분)': { type: 'number', number: {} } };
 const AVERAGE = { '평균 분양가': { type: 'number', number: {} } };
 const RECOMMEND = { '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
 const PRICE_FACTS = { '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} } };
-const OTHERS = { ...WALK, ...AVERAGE, ...PRICE_FACTS, ...RECOMMEND, 관심: { type: 'checkbox', checkbox: {} } };
+// 이미 이름을 바꾼 청약 등급 열. 등급 선택지가 모두 있어 배치가 스키마를 고치지 않는다.
+const GRADE_NAMES = ['로또청약', '고려', '안전마진 없음', '패스', '판정 보류'];
+const GRADE_COLUMN = { '청약 등급': { type: 'select', select: { options: GRADE_NAMES.map((name) => ({ name })) } } };
+const OTHERS = { ...WALK, ...AVERAGE, ...PRICE_FACTS, ...RECOMMEND, ...GRADE_COLUMN, 관심: { type: 'checkbox', checkbox: {} } };
 
 const notice = (extra = {}) => ({ key: '1-1', name: '테스트', region: '서울', typeLabel: 'APT', source: '청약홈', url: 'https://www.applyhome.co.kr/a', stages: [], ...extra });
 
@@ -1020,6 +1023,8 @@ const NOTION_CONFIG = { notion: { databaseTitle: '청약 정보', sourcesPageTit
 const realStore = (fake) => createNotionStore({ key: 'k', parentPageId: 'parent', config: NOTION_CONFIG, sources: [], fetch: fake.fetch, minIntervalMs: 0, sleep: noSleep });
 const schemaPatches = (fake) => fake.calls.filter((call) => call.method === 'PATCH' && call.path === '/databases/db').map((call) => call.body.properties);
 const rowWrite = (fake) => fake.calls.find((call) => call.method === 'POST' && call.path === '/pages');
+// 판별 근거 끝에는 등급 줄이 붙는다. 추천 문구처럼 그 앞의 끝을 보는 단언은 등급 줄을 뗀 값으로 본다.
+const noGrade = (text) => text.replace(/\n등급: [^\n]*$/, '');
 const evaluation = { status: '아님', reason: 'r', estimate: 1, margin: 2, marginRate: 0.1, confidence: '중' };
 
 test('rename: old names only are renamed by name, and the row then writes under the new name', async () => {
@@ -1137,7 +1142,7 @@ test('a new name of another type is left alone, and the old column keeps receivi
 
 test('역 도보(분) is added only if missing, read from the row and never written', async () => {
   const { 관심 } = OTHERS;
-  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, ...PRICE_FACTS, ...RECOMMEND, 관심 };
+  const others = { ...NEW, ...CONFIDENCE_PROP, ...AVERAGE, ...PRICE_FACTS, ...RECOMMEND, ...GRADE_COLUMN, 관심 };
   const missing = schemaFake(others);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '역 도보(분)': { number: { format: 'number' } } }]);
@@ -1175,7 +1180,7 @@ test('역 도보(분) is added only if missing, read from the row and never writ
 
 test('평균 분양가 is added only if missing, created with new databases, and a wrong type is left alone and not written', async () => {
   const { 관심 } = OTHERS;
-  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...PRICE_FACTS, ...RECOMMEND, 관심 };
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...PRICE_FACTS, ...RECOMMEND, ...GRADE_COLUMN, 관심 };
   const missing = schemaFake(base);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '평균 분양가': { number: { format: 'number' } } }]);
@@ -1225,7 +1230,7 @@ test('a full run stores the supply-weighted 평균 분양가 from the model rows
 
 test('추천 전형 and 추천 접수일 are added only if missing, and other types are left alone', async () => {
   const { 관심 } = OTHERS;
-  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...AVERAGE, ...PRICE_FACTS, 관심 };
+  const base = { ...NEW, ...CONFIDENCE_PROP, ...WALK, ...AVERAGE, ...PRICE_FACTS, ...GRADE_COLUMN, 관심 };
   const missing = schemaFake(base);
   await realStore(missing).init();
   assert.deepEqual(schemaPatches(missing), [{ '추천 전형': { select: {} } }, { '추천 접수일': { date: {} } }]);
@@ -1569,7 +1574,8 @@ test('a repeated-round 무순위 notice with no trades is 아님, sends no alert
   assert.equal(await run({ env: plain.env, deps: plain.deps }), 0);
   const unknown = plain.store.state.upserts[0].evaluation;
   assert.equal(unknown.status, '확인 필요');
-  assert.ok(unknown.reason.endsWith('시세 추정 없음(실거래 표본 부족)'), unknown.reason);
+  assert.ok(noGrade(unknown.reason).endsWith('시세 추정 없음(실거래 표본 부족)'), unknown.reason);
+  assert.equal(unknown.grade, '판정 보류');
   assert.equal(plain.kakao.length, 0);
   assert.ok(summaryLine(plain).includes('lotto_demoted=1 check_needed=1'), summaryLine(plain));
   assert.ok(marketLine(plain).includes('trade_lookup_empty:1'), marketLine(plain));
@@ -1704,7 +1710,7 @@ test('a restricted notice clears stored values through the real store and sends 
   h.deps.store = undefined;
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const patch = fake.calls.find((call) => call.method === 'PATCH' && call.path === '/pages/stored');
-  assert.deepEqual(patch.body.properties['로또 여부'], { select: { name: '대상 외' } });
+  assert.deepEqual(patch.body.properties['청약 등급'], { select: { name: '판정 보류' } });
   assert.deepEqual(patch.body.properties['추정 시세'], { number: null });
   assert.deepEqual(patch.body.properties['안전 마진'], { number: null });
   assert.deepEqual(patch.body.properties['마진율'], { number: null });
@@ -2071,7 +2077,7 @@ test('dry-run sends and archives nothing and logs only the candidate count', asy
   assert.ok(h.logs.includes('dry-run unapplicable_archive_candidates=1'), h.logs.join('|'));
   assert.ok(summaryOf(h).includes(' unapplicable_skipped=1 unapplicable_region=0 unapplicable_ended=1 unapplicable_archived=0 unapplicable_kept_interest=1'), summaryOf(h));
   // 뺀 8-8은 로또 후보가 아니고, 관심으로 남긴 9-9는 로또이지만 추천 전형이 없어 긴급 알림 후보가 아니다.
-  assert.ok(h.logs.includes('dry-run lotto=2 check_needed=0 urgent_candidates=1 interest_candidates=0'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run lotto=2 check_needed=0 grade_lotto=2 grade_consider=0 grade_no_margin=0 grade_pass=0 grade_hold=0 urgent_candidates=1 interest_candidates=0'), h.logs.join('|'));
   // 로그에는 공고 이름이 없다.
   assert.ok(!h.logs.join('\n').includes('끝난공고단지'));
 });
@@ -2132,7 +2138,7 @@ test('a 세종 notice is kept for a profile in another region and recommends 1�
   const [{ properties }] = h.store.state.upserts;
   assert.deepEqual(properties['추천 전형'], { select: { name: '1순위' } });
   assert.deepEqual(properties['추천 접수일'], { date: { start: '2026-11-07' } });
-  assert.ok(properties['판별 근거'].rich_text[0].text.content.endsWith('\n추천: 1순위 기타지역 11/7 (세대주·청약통장 요건 확인)'));
+  assert.ok(noGrade(properties['판별 근거'].rich_text[0].text.content).endsWith('\n추천: 1순위 기타지역 11/7 (세대주·청약통장 요건 확인)'));
   assert.ok(summaryOf(h).includes(' unapplicable_skipped=0 '), summaryOf(h));
 });
 
@@ -2183,7 +2189,7 @@ test('once the special supply has ended the next open 1순위 date is recommende
   const [{ properties }] = h.store.state.upserts;
   assert.deepEqual(properties['추천 전형'], { select: { name: '1순위' } });
   assert.deepEqual(properties['추천 접수일'], { date: { start: '2026-11-10' } });
-  assert.ok(properties['판별 근거'].rich_text[0].text.content.endsWith('\n추천: 1순위 기타지역 11/10 (세대주·청약통장 요건 확인)'));
+  assert.ok(noGrade(properties['판별 근거'].rich_text[0].text.content).endsWith('\n추천: 1순위 기타지역 11/10 (세대주·청약통장 요건 확인)'));
   assert.equal(h.kakao.length, 1);
   assert.ok(h.kakao[0].text.includes('1순위 오늘 접수 2026-11-10'), h.kakao[0].text);
   assert.deepEqual(h.store.state.stamps, [{ id: 'p7', date: '2026-11-10' }]);
@@ -2202,7 +2208,7 @@ test('a failed model lookup keeps the stored recommendation between runs instead
   assert.equal(Object.hasOwn(properties, '추천 전형'), false);
   assert.equal(Object.hasOwn(properties, '추천 접수일'), false);
   const reason = properties['판별 근거'].rich_text[0].text.content;
-  assert.ok(reason.endsWith('\n(추천: 조회 실패로 이전 값 유지)'), reason);
+  assert.ok(noGrade(reason).endsWith('\n(추천: 조회 실패로 이전 값 유지)'), reason);
   assert.ok(!reason.includes('추천: 1순위'), reason);
   assert.ok(second.logs.includes('recommend profile=ok recommended=0 none=0'));
   // 관심 알림도 저장된 추천으로 간다.
@@ -2269,7 +2275,9 @@ test('a trigger notice with a thin 중 margin is 확인 필요: no Kakao, writte
   const [{ evaluation, properties }] = h.store.state.upserts;
   assert.equal(evaluation.status, '확인 필요');
   assert.equal(evaluation.confidence, '중');
-  assert.deepEqual(properties['로또 여부'], { select: { name: '확인 필요' } });
+  // 내부 판정은 확인 필요지만 근거가 약하지 않아(신뢰도 중) 마진율과 품질로 등급을 정한다: 마진율 +0.7%, 품질 1점(서울)이라 안전마진 없음.
+  assert.deepEqual(properties['청약 등급'], { select: { name: '안전마진 없음' } });
+  assert.ok(properties['판별 근거'].rich_text[0].text.content.endsWith('\n등급: 안전마진 없음 (마진율 +0.7%, 입지 ✓ 서울, 규모·환금성 ✗ 세대수 자료 없음, 거래 20건, 브랜드 ✗)'), properties['판별 근거'].rich_text[0].text.content);
   assert.ok(properties['판별 근거'].rich_text[0].text.content.startsWith('분양가상한제 적용 해당이나 마진이 기준에 못 미침(안전 마진 700만 원 < 10000만 원, 마진율 0.7% < 10%); '));
   assert.ok(summaryLine(h).includes(' lotto_demoted=1 check_needed=1 '), summaryLine(h));
   // 로그에는 건수만 있고 공고 이름이 없다.
@@ -2304,20 +2312,22 @@ test('dry-run logs the 확인 필요 count with the candidate counts and sends n
   h.deps.store = undefined;
   assert.equal(await run({ argv: h.argv, env: { DATA_GO_KR_KEY: DATA_SECRET }, deps: h.deps }), 0);
   assert.equal(h.kakao.length, 0);
-  assert.ok(h.logs.includes('dry-run lotto=0 check_needed=1 urgent_candidates=0'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run lotto=0 check_needed=1 grade_lotto=0 grade_consider=0 grade_no_margin=1 grade_pass=0 grade_hold=0 urgent_candidates=0'), h.logs.join('|'));
   assert.ok(!h.logs.join('\n').includes('비밀공고단지'));
 });
 
-test('the weekly mail carries the 확인 필요 section for a notice that got no alert', async () => {
+test('the weekly mail lists a 확인 필요 notice under its grade and without a 로또 alert', async () => {
   const h = harness({ fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('105,500') }).fetch, argv: ['--force-weekly'] });
   assert.equal(await run({ argv: h.argv, env: h.env, deps: h.deps }), 0);
   assert.equal(h.kakao.length, 0);
   const weekly = h.mails.find((mail) => mail.subject.includes('금주 일정'));
   assert.ok(weekly, h.mails.map((mail) => mail.subject).join('|'));
-  assert.ok(weekly.html.includes('<h3>확인 필요(시세 근거 약함)</h3>'), weekly.html);
-  assert.ok(weekly.html.includes('비밀공고단지 (서울): 마진율 0.7%, 신뢰도 중, 분양가상한제 적용 해당이나 마진이 기준에 못 미침(안전 마진 1.0억 미만 또는 마진율 10% 미만)'), weekly.html);
-  assert.ok(!weekly.html.includes('<strong>[로또]</strong>'));
-  assert.ok(weekly.text.includes('[확인 필요] 비밀공고단지'));
+  // 신뢰도 중의 확인 필요는 판정 보류가 아니라 마진율로 등급을 정한 안전마진 없음 구역이다.
+  assert.ok(weekly.html.includes('<h3>안전마진 없음 1건</h3>'), weekly.html);
+  assert.ok(weekly.html.includes('<td>마진율 +0.7%, 입지 ✓ 서울, 규모·환금성 ✗ 세대수 자료 없음, 거래 20건, 브랜드 ✗</td>'), weekly.html);
+  assert.ok(!weekly.html.includes('<h3>로또청약') && !weekly.html.includes('<h3>판정 보류'));
+  assert.ok(weekly.text.includes('안전마진 없음 1건\n'));
+  assert.ok(weekly.text.includes('- 비밀공고단지 (서울)'));
 });
 
 test('a lookup failure does not demote a 중 trigger 로또: the alert still goes out, for a new notice and a stored 로또', async () => {
@@ -2351,7 +2361,7 @@ test('dry-run counts a stored 로또 that became 확인 필요 as demoted, from 
   const h = harness({ store: fakeStore(wasLotto), fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('105,500') }).fetch, argv: ['--dry-run'] });
   assert.equal(await run({ argv: h.argv, env: h.env, deps: h.deps }), 0);
   assert.ok(summaryLine(h).includes(' lotto_demoted=1 check_needed=1 '), summaryLine(h));
-  assert.ok(h.logs.includes('dry-run lotto=0 check_needed=1 urgent_candidates=0 interest_candidates=0'), h.logs.join('|'));
+  assert.ok(h.logs.includes('dry-run lotto=0 check_needed=1 grade_lotto=0 grade_consider=0 grade_no_margin=1 grade_pass=0 grade_hold=0 urgent_candidates=0 interest_candidates=0'), h.logs.join('|'));
   assert.equal(h.kakao.length, 0);
   assert.deepEqual(h.store.state.upserts, []);
 });
@@ -2382,7 +2392,7 @@ test('with a profile a 로또 notice without a recommended track stays 로또 bu
   assert.equal(evaluation.status, '로또');
   assert.equal(evaluation.recommendation, null);
   assert.equal(evaluation.trackUnknown, undefined);
-  assert.deepEqual(properties['로또 여부'], { select: { name: '로또' } });
+  assert.deepEqual(properties['청약 등급'], { select: { name: '로또청약' } });
   assert.equal(noTrack.kakao.length, 0);
   assert.deepEqual(noTrack.store.state.stamps, []);
   assert.ok(summaryOf(noTrack).includes(' urgent=0 '), summaryOf(noTrack));
@@ -2398,7 +2408,7 @@ test('with a profile a 로또 notice without a recommended track stays 로또 bu
   // dry-run의 알림 후보 수도 같은 기준이다.
   const dry = harness({ fetch: worldFetch({ rows: [endedGeneral] }).fetch, env: { CHUNGYAK_PROFILE: PROFILE_JSON }, argv: ['--dry-run'] });
   assert.equal(await run({ argv: dry.argv, env: dry.env, deps: dry.deps }), 0);
-  assert.ok(dry.logs.some((line) => line.startsWith('dry-run lotto=1 check_needed=0 urgent_candidates=0')), dry.logs.join('|'));
+  assert.ok(dry.logs.some((line) => line.startsWith('dry-run lotto=1 check_needed=0 grade_lotto=1 grade_consider=0 grade_no_margin=0 grade_pass=0 grade_hold=0 urgent_candidates=0')), dry.logs.join('|'));
   assert.equal(dry.kakao.length, 0);
 });
 
@@ -2576,4 +2586,154 @@ test('a stored 로또 for a 재공급 notice is kept when the trade lookup fails
   assert.equal(empty.store.state.upserts[0].evaluation.status, '확인 필요');
   assert.equal(empty.kakao.length, 0);
   assert.ok(summaryLine(empty).includes(' lotto_demoted=1 '), summaryLine(empty));
+});
+
+// ---- 청약 등급: 알림은 로또청약(내부 판정 로또)만 간다. 나머지 등급은 표와 주간 메일에만 남는다 ----
+
+const gradeNameOf = (h) => h.store.state.upserts[0].properties['청약 등급']?.select?.name;
+const reasonOf = (h) => h.store.state.upserts[0].properties['판별 근거'].rich_text[0].text.content;
+
+test('a run grades by margin and quality: only 로또청약 alerts, and each grade is counted without names', async () => {
+  const run1 = async (rowExtra, amount, { argv = [] } = {}) => {
+    const h = harness({ fetch: worldFetch({ rows: [checkRow(rowExtra)], trades: confidentTrades(amount) }).fetch, argv });
+    assert.equal(await run({ argv, env: h.env, deps: h.deps }), 0);
+    return h;
+  };
+  const counts = (h) => ['grade_lotto', 'grade_consider', 'grade_no_margin', 'grade_pass', 'grade_hold'].map((name) => Number(new RegExp(` ${name}=(\\d+) `).exec(summaryLine(h))[1]));
+
+  // 125,000 - 104,800: 마진 2억, 마진율 20%. 로또 조건을 모두 넘는다.
+  const lotto = await run1({}, '125,000');
+  assert.equal(lotto.store.state.upserts[0].evaluation.status, '로또');
+  assert.equal(gradeNameOf(lotto), '로또청약');
+  assert.equal(lotto.kakao.length, 1);
+  assert.deepEqual(counts(lotto), [1, 0, 0, 0, 0]);
+
+  // 105,500 - 104,800: 마진율 0.7%. 내부 판정은 확인 필요이고, 시세 근거는 약하지 않아(신뢰도 중) 등급은 품질로 정한다.
+  // 서울 하나뿐이라 품질 1점: 안전마진 없음. 거래 20건과 세대수 모름은 자료 부족으로 적는다.
+  const noMargin = await run1({}, '105,500');
+  assert.equal(noMargin.store.state.upserts[0].evaluation.status, '확인 필요');
+  assert.equal(gradeNameOf(noMargin), '안전마진 없음');
+  assert.equal(noMargin.kakao.length, 0);
+  assert.deepEqual(counts(noMargin), [0, 0, 1, 0, 0]);
+
+  // 같은 마진에 시공사가 상위 브랜드면 서울과 브랜드로 품질 2점: 고려. 총 세대수(TOT_SUPLY_HSHLDCO)는 읽어 쓰고, 거래 20건이 모자라 규모·환금성은 0점이다.
+  const consider = await run1({ CNSTRCT_ENTRPS_NM: '삼성물산(주)', TOT_SUPLY_HSHLDCO: '840' }, '105,500');
+  assert.equal(consider.store.state.upserts[0].evaluation.status, '확인 필요');
+  assert.equal(gradeNameOf(consider), '고려');
+  assert.match(reasonOf(consider), /\n등급: 고려 \(마진율 \+\d+\.\d%, 입지 ✓ 서울, 규모·환금성 ✗ 거래 20건, 브랜드 ✓\)$/);
+  assert.equal(consider.kakao.length, 0);
+  assert.deepEqual(counts(consider), [0, 1, 0, 0, 0]);
+  assert.equal(consider.store.state.upserts[0].evaluation.tradeSamples, 20);
+
+  // 마진이 음수로 -10%보다 낮으면 패스. 알림은 없다.
+  const pass = await run1({}, '90,000');
+  assert.equal(pass.store.state.upserts[0].evaluation.status, '아님');
+  assert.equal(gradeNameOf(pass), '패스');
+  assert.equal(pass.kakao.length, 0);
+  assert.deepEqual(counts(pass), [0, 0, 0, 1, 0]);
+
+  // 로그에는 건수만 있고 공고 이름과 근거 문구가 없다.
+  for (const h of [lotto, noMargin, consider, pass]) {
+    const logged = h.logs.join('\n');
+    assert.ok(!logged.includes('비밀공고단지') && !logged.includes('등급:') && !logged.includes('삼성물산'), logged);
+  }
+});
+
+test('a notice with weak evidence is 판정 보류 in the table and the weekly mail, and a 패스 notice is left out of the mail', async () => {
+  // 실거래가 없으면 추정이 없어 확인 필요(내부)이고 등급은 판정 보류다.
+  const hold = harness({ fetch: worldFetch({ rows: [checkRow()], trades: [] }).fetch, argv: ['--force-weekly'] });
+  assert.equal(await run({ argv: hold.argv, env: hold.env, deps: hold.deps }), 0);
+  assert.equal(gradeNameOf(hold), '판정 보류');
+  assert.match(reasonOf(hold), /\n등급: 판정 보류 \(시세 추정 없음\)$/);
+  const holdMail = hold.mails.find((mail) => mail.subject.includes('금주 일정'));
+  assert.ok(holdMail.html.includes('<h3>판정 보류 1건</h3>') && holdMail.html.includes('근거 부족, 공고문과 시세 직접 확인'), holdMail.html);
+  assert.ok(holdMail.html.includes('시세 추정 없음'));
+  assert.equal(hold.kakao.length, 0);
+
+  // 신뢰도 하 추정은 마진이 아무리 나빠도 패스가 아니라 판정 보류다.
+  const weak = harness({ fetch: worldFetch({ rows: [checkRow()], trades: [tradeTags({ name: '합성먼단지', umd: '역삼동', jibun: '9', amount: '60,000' })] }).fetch });
+  assert.equal(await run({ env: weak.env, deps: weak.deps }), 0);
+  assert.equal(weak.store.state.upserts[0].evaluation.confidence, '하');
+  assert.equal(gradeNameOf(weak), '판정 보류');
+
+  // 패스는 메일에 싣지 않고 건수만 적는다.
+  const pass = harness({ fetch: worldFetch({ rows: [checkRow()], trades: confidentTrades('90,000') }).fetch, argv: ['--force-weekly'] });
+  assert.equal(await run({ argv: pass.argv, env: pass.env, deps: pass.deps }), 0);
+  assert.equal(gradeNameOf(pass), '패스');
+  const passMail = pass.mails.find((mail) => mail.subject.includes('금주 일정'));
+  assert.ok(!passMail.html.includes('비밀공고단지') && !passMail.text.includes('비밀공고단지'));
+  assert.ok(passMail.html.includes('패스 1건은 싣지 않았습니다.') && passMail.subject.includes('(0건)'), passMail.html);
+
+  // 제한 유형(토지임대부)은 판정 보류다.
+  const restricted = harness({ fetch: worldFetch({ rows: [checkRow({ HOUSE_NM: '고덕강일 3단지 토지임대부' })] }).fetch });
+  assert.equal(await run({ env: restricted.env, deps: restricted.deps }), 0);
+  assert.equal(gradeNameOf(restricted), '판정 보류');
+});
+
+test('the stored 역 도보(분) counts for 입지 outside 서울, and the grade is the same in a dry-run count', async () => {
+  const gyeonggi = { SUBSCRPT_AREA_CODE_NM: '경기', HSSPLY_ADRES: '경기도 성남시 분당구 정자동 1' };
+  const trades = ['가', '나', '다', '라'].map((name, index) => tradeTags({ name: `${name}단지`, umd: '정자동', jibun: String(100 + index), amount: '105,500' }));
+  const grade = async (walkMinutes, argv = []) => {
+    const h = harness({ store: fakeStore(withWalk(walkMinutes)), fetch: worldFetch({ rows: [checkRow({ ...gyeonggi, CNSTRCT_ENTRPS_NM: '삼성물산(주)' })], trades }).fetch, argv });
+    assert.equal(await run({ argv, env: h.env, deps: h.deps }), 0);
+    return h;
+  };
+  // 경기, 브랜드 ✓ 하나에 도보 10분 이하(포함)가 더해지면 2점이라 고려, 11분이면 1점이라 안전마진 없음
+  const near = await grade(10);
+  assert.equal(gradeNameOf(near), '고려');
+  assert.ok(reasonOf(near).includes('입지 ✓ 역 도보 10분'), reasonOf(near));
+  const far = await grade(11);
+  assert.equal(gradeNameOf(far), '안전마진 없음');
+  assert.ok(reasonOf(far).includes('입지 ✗ 역 도보 11분'), reasonOf(far));
+  const unknown = await grade(null);
+  assert.ok(reasonOf(unknown).includes('입지 ✗ 자료 없음(역 도보 미입력)'), reasonOf(unknown));
+
+  const dry = await grade(10, ['--dry-run']);
+  assert.ok(dry.logs.some((line) => /^dry-run lotto=0 check_needed=1 grade_lotto=0 grade_consider=1 grade_no_margin=0 grade_pass=0 grade_hold=0 /.test(line)), dry.logs.join('|'));
+  assert.deepEqual(dry.store.state.upserts, []);
+  assert.equal(dry.kakao.length, 0);
+});
+
+test('the demotion count and the previous-로또 protection read the renamed column and the legacy one alike', async () => {
+  const through = async (storedName, columnName, amount) => {
+    const fake = schemaFake({ ...NEW, ...CONFIDENCE_PROP, ...OTHERS });
+    const stored = { id: 'stored', properties: { '고유 키': { rich_text: [{ plain_text: '7-7' }] }, [columnName]: { select: { name: storedName } }, '접수 종료일': { date: { start: THU } } } };
+    const base = worldFetch({ rows: [checkRow()], trades: confidentTrades(amount) });
+    const fetch = async (url, init = {}) => {
+      if (!String(url).includes('api.notion.com')) return base.fetch(url);
+      if (String(url).endsWith('/query')) return Response.json({ has_more: false, results: [stored] });
+      return fake.fetch(url, init);
+    };
+    const h = harness({ store: null, fetch });
+    h.deps.store = undefined;
+    assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+    return { h, fake };
+  };
+  const patchOf = ({ fake }) => fake.calls.find((call) => call.method === 'PATCH' && call.path === '/pages/stored').body.properties;
+  // 저장된 로또청약(새 열)과 로또(옛 열) 모두 마진이 내려가면 내려간 것으로 센다. 알림은 없다.
+  for (const [storedName, columnName] of [['로또청약', '청약 등급'], ['로또', '청약 등급'], ['로또', '로또 여부']]) {
+    const result = await through(storedName, columnName, '105,500');
+    assert.ok(summaryLine(result.h).includes(' lotto_demoted=1 check_needed=1 '), `${storedName}/${columnName}: ${summaryLine(result.h)}`);
+    assert.equal(result.h.kakao.length, 0);
+    assert.deepEqual(patchOf(result)['청약 등급'], { select: { name: '안전마진 없음' } });
+  }
+  // 고려로 저장된 행은 로또가 아니라 내려갔다고 세지 않는다. 마진이 로또 기준을 넘으면 알림이 간다.
+  const notLotto = await through('고려', '청약 등급', '105,500');
+  assert.ok(summaryLine(notLotto.h).includes(' lotto_demoted=0 '));
+  const firm = await through('패스', '청약 등급', '125,000');
+  assert.equal(firm.h.kakao.length, 1);
+  assert.deepEqual(patchOf(firm)['청약 등급'], { select: { name: '로또청약' } });
+});
+
+test('a same-complex estimate exposes its own trade count, which is the 환금성 count', async () => {
+  const same = [0, 1, 2, 3, 4, 5].map((index) => tradeTags({ name: '비밀공고단지', umd: '역삼동', jibun: '1', amount: '125,000', floor: String(10 + index) }));
+  const h = harness({ fetch: worldFetch({ rows: [checkRow({ CNSTRCT_ENTRPS_NM: '삼성물산', TOT_SUPLY_HSHLDCO: '1,200' })], trades: same }).fetch });
+  assert.equal(await run({ env: h.env, deps: h.deps }), 0);
+  const [{ evaluation }] = h.store.state.upserts;
+  const counted = Number(/같은 단지 거래 (\d+)건/.exec(evaluation.reason)[1]);
+  assert.ok(counted >= 3, evaluation.reason);
+  assert.equal(evaluation.tradeSamples, counted);
+  // 세대수 1,200은 쉼표를 지워 읽는다. 로또청약은 내부 판정 로또 그대로라 품질 항목과 무관하다.
+  assert.equal(evaluation.status, '로또');
+  assert.equal(gradeNameOf(h), '로또청약');
 });

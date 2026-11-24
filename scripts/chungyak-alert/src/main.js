@@ -6,6 +6,7 @@ import { createLhDetailClient } from './sources/lh-detail.js';
 import { createShapeLog, enrichLhNotices, formatShapeLine } from './lh-detail-map.js';
 import { createAptInfoClient } from './sources/apt-info.js';
 import { createMolitClient, createPresaleClient } from './sources/molit.js';
+import { GRADE, GRADE_COUNT_NAMES, appendGradeLine, gradeFromStatus, gradeNotice } from './grade.js';
 import { STATUS, evaluateLotto, keepPreviousLotto } from './lotto.js';
 import { restrictedType } from './market-estimate.js';
 import { createFactLookup } from './price-facts.js';
@@ -198,8 +199,12 @@ export function selectWeekly(records, monday, sunday, alertRegions) {
       items.push({
         notice: record.notice,
         status: record.status,
+        // 청약 등급과 근거 요약(주간 메일의 구역과 근거 열). 이번 실행에서 판정하지 않은 공고는 저장된 등급이고 근거 요약은 없다.
+        // 패스는 여기서 빼지 않는다. 메일(buildWeeklyMail)이 싣지 않고 건수만 적는다.
+        grade: record.grade ?? gradeFromStatus(record.status),
+        gradeDetail: record.gradeDetail ?? null,
         weekStages,
-        // 확인 필요 항목을 주간 메일에 적는 데 쓴다. 이번 실행에서 판정하지 않은 공고는 값이 없다.
+        // 판정 보류(예전 확인 필요) 항목의 보조 값. 이번 실행에서 판정하지 않은 공고는 값이 없다.
         marginRate: record.marginRate ?? null,
         confidence: record.confidence ?? null,
         checkNote: record.checkNote ?? null,
@@ -207,6 +212,12 @@ export function selectWeekly(records, monday, sunday, alertRegions) {
     }
   }
   return items.sort((a, b) => a.weekStages[0].start.localeCompare(b.weekStages[0].start));
+}
+
+// 이번 실행에서 판정하지 않은 공고의 등급. 제한 유형은 판정 보류다. 옛 `아님`처럼 등급을 알 수 없는 저장 값은 null이다.
+function carriedGrade(notice, previous, config) {
+  if (restrictedType(notice, config.market)) return GRADE.HOLD;
+  return previous?.grade ?? null;
 }
 
 // 이번 실행에서 판정하지 않은 공고의 상태. 제한 유형은 이전 로또 기록을 되살리지 않는다.
@@ -248,7 +259,7 @@ async function runTestSend({ sendMail, sendKakao, today, log }) {
   let failed = false;
   try {
     await sendMail(buildWeeklyMail({
-      items: [{ notice: sample, status: STATUS.LOTTO, weekStages: [stage] }],
+      items: [{ notice: sample, status: STATUS.LOTTO, grade: GRADE.LOTTO, weekStages: [stage] }],
       monday,
       sunday,
       testMark: true,
@@ -544,7 +555,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     lhDetailCounts = enriched.counts;
   }
 
-  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, check_needed: 0, rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0, status_updated: 0, status_deferred: 0, ...emptyScopeCounts(), ...tableScope.counts, ...duplicateScope.counts };
+  const counts = { evaluated: 0, created: 0, updated: 0, skipped: 0, urgent: 0, interest: 0, urgentMailFallback: 0, weekly: 0, archived: 0, lotto_demoted: 0, check_needed: 0, ...Object.fromEntries(Object.values(GRADE_COUNT_NAMES).map((name) => [name, 0])), rental_skipped: rentalSkipped, rental_archived: 0, rental_archived_interest: 0, unapplicable_skipped: 0, unapplicable_region: 0, unapplicable_ended: 0, unapplicable_archived: 0, unapplicable_kept_interest: 0, ...lhScope.counts, ...lhDetailCounts, lh_evaluated: 0, lh_recommended: 0, reference_margin: 0, status_updated: 0, status_deferred: 0, ...emptyScopeCounts(), ...tableScope.counts, ...duplicateScope.counts };
   const records = [];
   // 신청할 수 없는 공고의 저장된 행. 알림 뒤에 휴지통으로 옮긴다. dry-run은 건수만 센다.
   const unapplicableRows = [];
@@ -591,7 +602,7 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     }
     if (previous?.end && previous.end < today) {
       counts.skipped += 1;
-      records.push({ notice, status: carriedStatus(notice, previous, config), urgentDate: previous.urgentDate, pageId: previous.id });
+      records.push({ notice, status: carriedStatus(notice, previous, config), grade: carriedGrade(notice, previous, config), urgentDate: previous.urgentDate, pageId: previous.id });
       continue;
     }
     let evaluation = null;
@@ -625,6 +636,9 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       if (evaluation.referenceMargin) counts.reference_margin += 1;
       // dry-run도 읽어 둔 행의 이전 상태로 같은 보호를 적용해 일반 실행과 건수가 같게 한다.
       evaluation = keepPreviousLotto(evaluation, (previous ?? dryRunRows?.get(notice.key))?.lotto);
+      // 청약 등급은 내부 판정에서 파생한 값이다. 알림과 이전 로또 유지는 위의 판정(status)만 본다. 역 도보(분)은 저장된 행의 값이다.
+      const graded = gradeNotice({ evaluation, notice, walkMinutes: (previous ?? dryRunRows?.get(notice.key))?.walkMinutes ?? null, config });
+      evaluation = { ...evaluation, grade: graded.grade, gradeDetail: graded.detail, reason: appendGradeLine(evaluation.reason, graded.line) };
       counts.evaluated += 1;
       // 확인 필요로 정한 공고 수. 긴급 알림은 가지 않으니 건수로만 남긴다.
       if (evaluation.status === STATUS.CHECK) counts.check_needed += 1;
@@ -656,6 +670,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     const record = {
       notice,
       status: evaluation?.status ?? carriedStatus(notice, previous, config),
+      grade: evaluation?.grade ?? carriedGrade(notice, previous, config),
+      gradeDetail: evaluation?.gradeDetail ?? null,
       reason: evaluation?.reason ?? null,
       // 카카오톡은 200자라 비교 단지 목록이 없는 짧은 근거를 쓴다. 메일 대체 발송도 같은 문구다.
       shortReason: evaluation?.shortReason ?? evaluation?.reason ?? null,
@@ -671,6 +687,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       unapplicable,
     };
     upsertedKeys.add(notice.key);
+    // 등급별 건수. 저장하거나 알림 후보로 남긴 이번 실행의 판정만 센다. 공고 이름은 남기지 않는다.
+    if (evaluation?.grade) counts[GRADE_COUNT_NAMES[evaluation.grade]] += 1;
     if (store) {
       try {
         record.pageId = await store.upsert(notice, evaluation, previous, today);
@@ -842,7 +860,8 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
     const interest = dryRunRows
       ? ` interest_candidates=${selectInterest([...interestRows.values()], today, new Set(urgent.map((record) => record.notice.key))).length}`
       : '';
-    log(`dry-run lotto=${lotto} check_needed=${checkNeeded} urgent_candidates=${urgent.length}${interest}`);
+    const gradeCounts = Object.values(GRADE_COUNT_NAMES).map((name) => `${name}=${counts[name]}`).join(' ');
+    log(`dry-run lotto=${lotto} check_needed=${checkNeeded} ${gradeCounts} urgent_candidates=${urgent.length}${interest}`);
     // 휴지통으로 옮길 저장된 임대 행 수. Notion을 읽지 못했으면 남기지 않는다.
     if (dryRunRows) log(`dry-run rental_archive_candidates=${rentalRows.length}`);
     // 휴지통으로 옮길 신청할 수 없는 공고의 행 수. 마찬가지로 Notion을 읽지 못했으면 남기지 않는다.
