@@ -160,7 +160,7 @@ function harness(fake, { rows = [], lhRows, pblrentRows, nowIso = THU_NOW, env =
       write: () => {},
       sendMail: async (mail) => { mails.push(mail); },
       sendKakao: async (message) => { kakao.push(message); },
-      ...(config ? { config } : {}),
+      config: config ?? fileConfig,
     },
   };
 }
@@ -407,7 +407,6 @@ test('a collected, kept notice is updated in place even when its stored type loo
 });
 
 test('with excludeRental off rental notices are stored as before and nothing is archived', async () => {
-  const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
   const fake = rentalWorld();
   // LH 범위 필터도 임대 LH 공고를 빼므로 함께 끈다. 켜 둔 경우는 아래 LH 범위 테스트가 본다.
   const h = harness(fake, { ...rentalSources, config: { ...fileConfig, excludeRental: false, lh: { ...fileConfig.lh, filterSaleArea: false } } });
@@ -418,7 +417,11 @@ test('with excludeRental off rental notices are stored as before and nothing is 
 });
 
 // ---------- LH 범위(분양, 대상 지역) ----------
-const fileConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+// 이 파일의 run 테스트는 기본 공고가 불법행위 재공급(HOUSE_SECD 06)이다. 배포 설정은 재공급도 시세를 보므로(추정이 없으면 확인 필요)
+// 알림, 기록, 정리 순서를 보려는 이 테스트들은 재공급의 가격 확인만 끈다(triggerPriceCheck.resupply: false). 재공급의 기본 설정 동작은
+// test/lotto.test.js와 test/safety-margin.test.js가 따로 본다.
+const withoutResupplyCheck = (value) => ({ ...value, lotto: { ...value.lotto, triggerPriceCheck: { ...value.lotto.triggerPriceCheck, resupply: false } } });
+const fileConfig = withoutResupplyCheck(JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8')));
 // 이 절의 시험은 LH 범위 규칙을 본다. 표 지역 범위(tableRegions)는 꺼서 부산·광주 행과 공고가 지역 정리에 걸리지 않게 한다. 그 규칙은 test/table-scope.test.js가 본다.
 const lhScopeConfig = { ...fileConfig, tableRegions: undefined };
 const lhSaleRow = (id, name, cnp = '서울특별시', upper = '분양주택', detail = '공공분양') => ({ ...lhRow(id, upper, detail, name), CNP_CD_NM: cnp });
@@ -747,7 +750,7 @@ test('parseExistingPage reads 접수 상태 and ignores a same-named column of a
 });
 
 // ---------- 접수 상태 갱신의 안전장치 ----------
-const baseConfig = JSON.parse(readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+const baseConfig = fileConfig;
 const withMarket = (market) => ({ ...baseConfig, market: { ...baseConfig.market, ...market } });
 const endedPages = (count) => Array.from({ length: count }, (_, index) => statusPage(`e${index}`, '2026-09-01', '2026-10-01', '접수 중'));
 const pagePatchCalls = (fake) => fake.calls.filter((call) => call.method === 'PATCH' && call.path.startsWith('/pages/'));

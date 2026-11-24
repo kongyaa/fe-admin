@@ -637,7 +637,7 @@ test('restricted types are 대상 외 with empty margin before triggers, reading
   assert.equal(remainder.status, STATUS.OUT_OF_SCOPE);
 });
 
-test('lotto triggers are unchanged, and margin at or above thresholds with no trigger is 로또', async () => {
+test('lotto triggers are unchanged, every trigger (including 불법행위 재공급) follows the margin rule, and margin at or above thresholds with no trigger is 로또', async () => {
   assert.deepEqual(
     [config.lotto.includeRemainder, config.lotto.includeResupply, config.lotto.includeArbitrary, config.lotto.includePriceCap, config.lotto.includePublicDistrict],
     [true, true, false, true, true],
@@ -645,10 +645,11 @@ test('lotto triggers are unchanged, and margin at or above thresholds with no tr
   assert.equal(config.lotto.minMarginManwon, 10000);
   assert.equal(config.lotto.minMarginRate, 0.1);
 
-  // 단지 1곳(신뢰도 하), 마진율 -4%. 시세를 보는 조건형 공고는 이제 아님이고, 시세를 보지 않는 불법행위 재공급만 로또다.
+  // 단지 1곳(신뢰도 하), 마진율 -4%. 시세를 보는 조건형 공고는 모두 아님이다. 불법행위 재공급도 같다(예전의 늘 로또 예외는 없다).
   const low = saleRows(5, 1200);
   const checked = [
     [apt({ kind: 'remainder', houseSecd: '04' }), '무순위'],
+    [apt({ kind: 'remainder', houseSecd: '06' }), '불법행위 재공급'],
     [apt({ flags: { priceCap: true, publicDistrict: false } }), '분양가상한제'],
     [apt({ flags: { priceCap: false, publicDistrict: true } }), '공공주택지구'],
   ];
@@ -660,11 +661,6 @@ test('lotto triggers are unchanged, and margin at or above thresholds with no tr
     assert.ok(result.reason.includes('해당이나 시세 대비 이점 없음; 안전 마진 -'), result.reason);
     assert.ok(result.reason.includes('084A'));
   }
-  const resupply = await evaluate(apt({ kind: 'remainder', houseSecd: '06' }), { trades: low });
-  assert.equal(resupply.status, STATUS.LOTTO);
-  assert.ok(resupply.reason.includes('불법행위 재공급'));
-  assert.ok(resupply.margin < 0);
-  assert.ok(resupply.reason.includes('안전 마진 -'), resupply.reason);
   assert.equal((await evaluate(apt(), { trades: low })).status, STATUS.NOT);
   const high = await evaluate(apt(), { trades: ['1', '2', '3', '4'].flatMap((n) => saleRows(5, 2500, { aptName: `비교단지${n}`, jibun: `10${n}` })) });
   assert.equal(high.status, STATUS.LOTTO);
@@ -2523,4 +2519,61 @@ test('a 무순위 notice with a firm estimate alerts as 로또, with a thin one 
   assert.equal(await run({ env: loss.env, deps: loss.deps }), 0);
   assert.equal(loss.store.state.upserts[0].evaluation.status, '아님');
   assert.equal(loss.kakao.length, 0);
+});
+
+// ---- 불법행위 재공급(06): 배포 설정 그대로(재공급도 시세를 본다) run 단위 경로 ----
+
+function resupplyWorld({ name = '합성재공급단지', trades, price = '100,000' }) {
+  const row = aptRow({ HOUSE_SECD: '06', HOUSE_NM: name, SUBSCRPT_RCEPT_BGNDE: THU, SUBSCRPT_RCEPT_ENDDE: THU });
+  const world = worldFetch({ rows: [], trades });
+  return async (url) => {
+    const text = String(url);
+    if (text.includes('getRemndrLttotPblancDetail')) return Response.json({ totalCount: 1, data: [row] });
+    if (text.includes('getRemndrLttotPblancMdl')) return Response.json({ totalCount: 1, data: [{ HOUSE_TY: '084.0000A', LTTOT_TOP_AMOUNT: price }] });
+    return world.fetch(url);
+  };
+}
+
+test('a 재공급 notice follows the default criteria: firm alerts, thin or no estimate is 확인 필요 without an alert, a loss is 아님', async () => {
+  // harness는 config를 주지 않아 배포하는 config.json(resupply: true)을 읽는다.
+  assert.equal(config.lotto.triggerPriceCheck.resupply, true);
+  const firm = harness({ fetch: resupplyWorld({ trades: confidentTrades('125,000') }) });
+  assert.equal(await run({ env: firm.env, deps: firm.deps }), 0);
+  assert.equal(firm.store.state.upserts[0].evaluation.status, '로또');
+  assert.equal(firm.kakao.length, 1);
+
+  // 분양가 10억 기준 +0.7%는 확인 필요다. 알림이 없다.
+  const thin = harness({ fetch: resupplyWorld({ trades: confidentTrades('105,500') }) });
+  assert.equal(await run({ env: thin.env, deps: thin.deps }), 0);
+  assert.equal(thin.store.state.upserts[0].evaluation.status, '확인 필요');
+  assert.equal(thin.kakao.length, 0);
+  assert.deepEqual(thin.store.state.stamps, []);
+  assert.ok(summaryLine(thin).includes(' check_needed=1 '), summaryLine(thin));
+
+  // 추정이 없으면 확인 필요다(예전에는 로또로 알림이 갔다).
+  const none = harness({ fetch: resupplyWorld({ trades: [] }) });
+  assert.equal(await run({ env: none.env, deps: none.deps }), 0);
+  assert.equal(none.store.state.upserts[0].evaluation.status, '확인 필요');
+  assert.equal(none.kakao.length, 0);
+
+  const loss = harness({ fetch: resupplyWorld({ trades: confidentTrades('90,000') }) });
+  assert.equal(await run({ env: loss.env, deps: loss.deps }), 0);
+  assert.equal(loss.store.state.upserts[0].evaluation.status, '아님');
+  assert.equal(loss.kakao.length, 0);
+});
+
+test('a stored 로또 for a 재공급 notice is kept when the trade lookup fails, and demoted when there is simply no estimate', async () => {
+  const wasLotto = () => new Map([['7-7', { id: 'x', key: '7-7', lotto: '로또', urgentDate: null, end: THU }]]);
+  const down = (inner) => async (url, init) => (String(url).includes('RTMSDataSvcAptTrade') ? new Response('down', { status: 500 }) : inner(url, init));
+  const failed = harness({ store: fakeStore(wasLotto()), fetch: down(resupplyWorld({ trades: [] })) });
+  await run({ env: failed.env, deps: failed.deps });
+  assert.equal(failed.store.state.upserts[0].evaluation.status, '로또');
+  assert.equal(failed.kakao.length, 1);
+  assert.ok(summaryLine(failed).includes(' lotto_demoted=0 '), summaryLine(failed));
+
+  const empty = harness({ store: fakeStore(wasLotto()), fetch: resupplyWorld({ trades: [] }) });
+  await run({ env: empty.env, deps: empty.deps });
+  assert.equal(empty.store.state.upserts[0].evaluation.status, '확인 필요');
+  assert.equal(empty.kakao.length, 0);
+  assert.ok(summaryLine(empty).includes(' lotto_demoted=1 '), summaryLine(empty));
 });
