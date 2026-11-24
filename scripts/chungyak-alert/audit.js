@@ -10,7 +10,7 @@ import { createMolitClient, createPresaleClient } from './src/sources/molit.js';
 import { evaluateLotto } from './src/lotto.js';
 import {
   buildSubject, cleanTrades, estimateBestMargin, groupComplexes, monthsBetween, parseLocality, readPresaleByCodes, readTradesFor,
-  restrictedType, sameComplexRows, selectComparables, subjectLocality,
+  qualifiesAsLotto, restrictedType, sameComplexRows, selectComparables, subjectLocality,
 } from './src/market-estimate.js';
 import { resolveAddress } from './src/sgg-codes.js';
 import { gradeNotice } from './src/grade.js';
@@ -213,7 +213,7 @@ for (const notice of targets) {
     const common = { rows, subject, stations: new Map(), stationLookupFailed: false, presaleOk: pre6.ok, crossWard: read.crossWard, preferConfident: true, lotto, market, today: asOf };
     const perModel = priced.map((model) => ({ model, cand: estimateBestMargin({ ...common, models: [model] }) }));
     const best = estimateBestMargin({ ...common, models: priced });
-    rec._data = { notice, addr, read, subject, perModel, best, priced };
+    rec._data = { notice, addr, read, subject, perModel, best, priced, common };
     if (best) {
       rec.own = { path: best.basis.kind, scope: best.basis.scope ?? null, maxAge: best.basis.maxAge ?? null, widened: best.basis.widened ?? null, townWide: best.basis.townWide ?? null, conf: best.confidence, margin: best.margin, rate: best.marginRate, area: best.area, houseType: best.houseType, estimate: best.estimate, price: best.price, samples: best.basis.samples ?? null, complexes: best.basis.comparables?.length ?? null };
       if (best.basis.kind === 'comparables') {
@@ -277,7 +277,18 @@ for (const rec of recs) {
       rec.presaleN = preUnits.length;
       if (preUnits.length >= 3) rec.hRatio = quantile(preUnits, 0.5) / (best.estimate / best.area);
     }
-    delete data.windows;
+    // WHAT-IF: 조회 창을 12·24개월로 넓히고 입주권 행을 넣거나(i) 빼고(n) 운영 estimateBestMargin을 그대로 다시 돌린다.
+    rec.baseLotto = best ? qualifiesAsLotto(best, lotto) : null;
+    rec.wi = {};
+    if (best) {
+      for (const W of WINDOWS.filter((w) => w > 6)) {
+        for (const withIpju of [true, false]) {
+          const rowsW = withIpju ? byWindow[W].cleaned : byWindow[W].cleaned.filter((r) => !isIpju(r));
+          const c = estimateBestMargin({ ...data.common, rows: rowsW, models: data.priced, lotto: { ...lotto, tradeMonths: W } });
+          rec.wi[`${W}${withIpju ? 'i' : 'n'}`] = c ? { path: c.basis.kind, conf: c.confidence, margin: c.margin, rate: c.marginRate, lotto: qualifiesAsLotto(c, lotto), est: c.estimate } : null;
+        }
+      }
+    }
   } catch (error) {
     windowErrors += 1;
     rec.windowError = safeError(error);
@@ -385,6 +396,34 @@ const estimateRows = analyzed.filter((r) => r.own);
 log(`best 신뢰도 분포: ${['상', '중', '하'].map((c) => `${c}=${estimateRows.filter((r) => r.own.conf === c).length}`).join(' ')}`);
 log(`sameDongShare(비교 단지 경로, 고른 단지 중 공고 동/읍면 소속 비율) 분포: ${[0, 0.01, 0.34, 0.67, 1.0001].map((e, i, a) => (i < a.length - 1 ? `${e}~${a[i + 1]}:${estimateRows.filter((r) => r.own.path === 'comparables' && Number.isFinite(r.own.sameDongShare) && r.own.sameDongShare >= e && r.own.sameDongShare < a[i + 1]).length}` : null)).filter(Boolean).join(' ')}`);
 
+log('');
+log('===== WHAT-IF: 조회 창 12·24개월 확대(i=입주권 행 포함, n=제외) =====');
+{
+  const withBest = analyzed.filter((r) => r.own && r.wi);
+  for (const k of ['12i', '12n', '24i', '24n']) {
+    const list = withBest.filter((r) => r.wi[k]);
+    const toSame = list.filter((r) => r.own.path !== 'same' && r.wi[k].path === 'same');
+    const lottoFlip = list.filter((r) => r.baseLotto !== r.wi[k].lotto);
+    const lottoGain = lottoFlip.filter((r) => r.wi[k].lotto);
+    const bigRate = list.filter((r) => Number.isFinite(r.rate) && Math.abs(r.wi[k].rate - r.own.rate) >= 0.1);
+    const signFlip = list.filter((r) => (r.own.margin > 0) !== (r.wi[k].margin > 0));
+    const confUp = list.filter((r) => ({ 하: 0, 중: 1, 상: 2 })[r.wi[k].conf] > ({ 하: 0, 중: 1, 상: 2 })[r.own.conf]);
+    log(`  ${k}: n=${list.length} 같은단지경로로 바뀜=${toSame.length} 로또조건 바뀜=${lottoFlip.length}(새로 충족 ${lottoGain.length}) 마진율 10%p 이상 변함=${bigRate.length} 마진 부호 바뀜=${signFlip.length} 신뢰도 오름=${confUp.length}`);
+  }
+  const changed = withBest.filter((r) => r.wi['24i'] && (r.own.path !== r.wi['24i'].path || Math.abs(r.wi['24i'].rate - r.own.rate) >= 0.1 || r.baseLotto !== r.wi['24i'].lotto));
+  for (const r of changed.slice(0, 40)) {
+    const w = r.wi['24i'];
+    const n = r.wi['24n'];
+    log(`WHATIF ${r.kind} ${r.region} | ${r.name} | ${r.stage} | 현재 ${r.own.path}/${r.own.conf} 마진율 ${pct(r.own.rate)} 로또조건 ${r.baseLotto} → 24i ${w.path}/${w.conf} ${pct(w.rate)} 로또조건 ${w.lotto} 추정 ${eok(r.own.estimate)}→${eok(w.est)} | 24n ${n ? `${n.path}/${n.conf} ${pct(n.rate)}` : '-'} | 12i ${r.wi['12i'] ? `${r.wi['12i'].path}/${r.wi['12i'].conf} ${pct(r.wi['12i'].rate)}` : '-'}`);
+  }
+}
+log('');
+log('===== 접수 전·접수 중 공고(지금 의미 있는 것) =====');
+for (const r of recs.filter((x) => x.stage !== '마감')) {
+  const c = r.judgedIdx >= 0 ? r.counts?.[r.judgedIdx] : null;
+  const f = (x) => (x ? `${x.sale}/${x.presale}/${x.ipju}` : '-');
+  log(`ACTIVE ${r.stage} | ${r.kind} ${r.type} | ${r.region} | ${r.name} | [${r.flags?.join(',') ?? '-'}] | 등급 ${r.grade}${r.gradeDetail ? `(${r.gradeDetail})` : ''} 마진율 ${pct(r.rate)} 신뢰 ${r.conf ?? '-'} 경로 ${r.own?.path ?? '-'}${r.own?.scope ? `/${r.own.scope}` : ''} 동 소속 단지 비율 ${Number.isFinite(r.own?.sameDongShare) ? r.own.sameDongShare.toFixed(2) : '-'} | 같은 단지 6/12/24 ${c ? `${f(c[6])} ${f(c[12])} ${f(c[24])}` : '-'}${r.skip ? ` | skip ${r.skip}` : ''}`);
+}
 log('');
 log('===== 의심 공고(플래그 가중 점수순) =====');
 const weight = { A: 3, B: 4, C: 1, D: 3, D2: 1, E1: 2, E2: 1, F: 2, G: 1, G0: 1, H: 2 };
