@@ -204,10 +204,6 @@ export function selectWeekly(records, monday, sunday, alertRegions) {
         grade: record.grade ?? gradeFromStatus(record.status),
         gradeDetail: record.gradeDetail ?? null,
         weekStages,
-        // 판정 보류(예전 확인 필요) 항목의 보조 값. 이번 실행에서 판정하지 않은 공고는 값이 없다.
-        marginRate: record.marginRate ?? null,
-        confidence: record.confidence ?? null,
-        checkNote: record.checkNote ?? null,
       });
     }
   }
@@ -677,9 +673,6 @@ export async function run({ argv = [], env = process.env, deps = {} } = {}) {
       shortReason: evaluation?.shortReason ?? evaluation?.reason ?? null,
       urgentDate: previous?.urgentDate ?? null,
       pageId: previous?.id ?? null,
-      marginRate: evaluation?.marginRate ?? null,
-      confidence: evaluation?.confidence ?? null,
-      checkNote: evaluation?.checkNote ?? null,
       // 추천 전형. 프로필이 없으면 undefined다. selectUrgent가 신청할 수 있는 전형이 있는지 본다.
       // 추천이 없는 까닭이 확인된 것이 아니라 단계 자료가 없어서면(trackUnknown) 모르는 값(undefined)으로 두어 알림을 막지 않는다.
       recommendation: evaluation?.trackUnknown ? undefined : evaluation?.recommendation,

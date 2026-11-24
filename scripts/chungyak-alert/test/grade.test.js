@@ -28,14 +28,14 @@ const evaluation = (extra = {}) => ({
   estimate: 49500,
   ...extra,
 });
-const notice = (extra = {}) => ({ name: '래미안합성', builder: '', region: '서울', totalUnits: 600, typeLabel: 'APT', ...extra });
+const notice = (extra = {}) => ({ name: '래미안합성', builder: '', region: '서울', kind: 'apt', supplyUnits: 600, typeLabel: 'APT', ...extra });
 const gradeOf = (parts = {}) => gradeNotice({ evaluation: evaluation(parts.evaluation), notice: notice(parts.notice), walkMinutes: parts.walkMinutes ?? null, config }).grade;
 
 // 품질 점수를 정확히 맞춘다: 서울(입지) 하나, 서울이 아니고 역 도보 없음이면 0.
 const withQuality = (score, evalExtra = {}) => {
   const items = [
     { notice: { region: '서울' }, off: { region: '경기' } },
-    { notice: { totalUnits: 600 }, off: { totalUnits: 100 } },
+    { notice: { supplyUnits: 600 }, off: { supplyUnits: 100 } },
     { notice: { name: '래미안합성' }, off: { name: '합성단지' } },
   ];
   const merged = items.reduce((acc, item, index) => ({ ...acc, ...(index < score ? item.notice : item.off) }), {});
@@ -44,7 +44,7 @@ const withQuality = (score, evalExtra = {}) => {
 
 test('config.json carries the starting values of every grade key', () => {
   assert.deepEqual(gradeSettings(config.grade), GRADE_DEFAULTS);
-  assert.deepEqual(GRADE_DEFAULTS, { considerMinRate: -0.03, passMaxRate: -0.1, considerMinQuality: 2, stationMaxMinutes: 10, minUnits: 500, minTrades: 50 });
+  assert.deepEqual(GRADE_DEFAULTS, { positiveMinRate: 0.03, considerMinRate: -0.03, passMaxRate: -0.1, considerMinQuality: 2, stationMaxMinutes: 10, minUnits: 300, minTrades: 50 });
   // 없거나 숫자가 아닌 값은 시작값을 쓴다.
   assert.deepEqual(gradeSettings(undefined), GRADE_DEFAULTS);
   assert.deepEqual(gradeSettings({ minUnits: '많이', stationMaxMinutes: 7 }), { ...GRADE_DEFAULTS, stationMaxMinutes: 7 });
@@ -85,9 +85,18 @@ test('로또청약 follows the lotto margin rule at, just below and just above e
   }
 });
 
-test('고려: margin rate at -3% or better with quality 2 or more; otherwise 안전마진 없음', () => {
-  // 기준선: -3%는 포함, 바로 아래는 제외, 바로 위는 포함
-  for (const [rate, expected] of [[-0.03, GRADE.CONSIDER], [-0.0299, GRADE.CONSIDER], [0, GRADE.CONSIDER], [0.09, GRADE.CONSIDER], [-0.0301, GRADE.NO_MARGIN]]) {
+test('고려: a clearly positive margin rate at +3% or better regardless of quality, then -3% to +3% by quality', () => {
+  // 양수 구간: +3%는 포함, 바로 아래는 제외, 바로 위는 포함. 품질과 무관하다.
+  for (const score of [0, 1, 2, 3]) {
+    assert.equal(gradeOf(withQuality(score, { marginRate: 0.03 })), GRADE.CONSIDER, `+3% ${score}점`);
+    assert.equal(gradeOf(withQuality(score, { marginRate: 0.0301 })), GRADE.CONSIDER, `+3.01% ${score}점`);
+    assert.equal(gradeOf(withQuality(score, { marginRate: 0.09 })), GRADE.CONSIDER, `+9% ${score}점`);
+  }
+  assert.equal(gradeOf(withQuality(0, { marginRate: 0.0299 })), GRADE.NO_MARGIN);
+  assert.equal(gradeOf(withQuality(1, { marginRate: 0.0299 })), GRADE.NO_MARGIN);
+  assert.equal(gradeOf(withQuality(2, { marginRate: 0.0299 })), GRADE.CONSIDER);
+  // 시세 수준 구간(-3% ~ +3%): -3%는 포함, 바로 아래는 제외. 품질 2점 이상이면 고려
+  for (const [rate, expected] of [[-0.03, GRADE.CONSIDER], [-0.0299, GRADE.CONSIDER], [0, GRADE.CONSIDER], [-0.0301, GRADE.NO_MARGIN]]) {
     assert.equal(gradeOf(withQuality(2, { marginRate: rate })), expected, String(rate));
   }
   // 품질 점수 경계: 2점은 고려, 1점과 0점은 안전마진 없음
@@ -95,9 +104,11 @@ test('고려: margin rate at -3% or better with quality 2 or more; otherwise 안
   assert.equal(gradeOf(withQuality(2, { marginRate: -0.01 })), GRADE.CONSIDER);
   assert.equal(gradeOf(withQuality(1, { marginRate: -0.01 })), GRADE.NO_MARGIN);
   assert.equal(gradeOf(withQuality(0, { marginRate: -0.01 })), GRADE.NO_MARGIN);
-  // 마진율 10% 이상이어도 마진이 1억 미만이면 로또가 아니라 이 구간이다(내부 판정은 확인 필요).
-  assert.equal(gradeOf({ ...withQuality(0), evaluation: { status: STATUS.CHECK, margin: 9000, marginRate: 0.2 } }), GRADE.NO_MARGIN);
+  // 마진이 양수로 뚜렷하면 로또 기준(1억)에 못 미쳐도(내부 판정은 확인 필요) 품질과 무관하게 고려다. 예전에는 품질 0점이면 안전마진 없음이었다.
+  assert.equal(gradeOf({ ...withQuality(0), evaluation: { status: STATUS.CHECK, margin: 9000, marginRate: 0.2 } }), GRADE.CONSIDER);
   assert.equal(gradeOf({ ...withQuality(3), evaluation: { status: STATUS.CHECK, margin: 9000, marginRate: 0.2 } }), GRADE.CONSIDER);
+  // 마진율이 +3% 아래이면 마진이 양수여도 시세 수준이라 품질로 가른다.
+  assert.equal(gradeOf({ ...withQuality(0), evaluation: { status: STATUS.CHECK, margin: 700, marginRate: 0.007 } }), GRADE.NO_MARGIN);
 });
 
 test('between -10% and -3%: 안전마진 없음, or 패스 when the quality score is 0; below -10% is always 패스', () => {
@@ -116,15 +127,17 @@ test('between -10% and -3%: 안전마진 없음, or 패스 when the quality scor
 });
 
 test('the thresholds come from config.grade when it overrides them', () => {
-  const custom = { ...config, grade: { considerMinRate: -0.05, passMaxRate: -0.2, considerMinQuality: 3, stationMaxMinutes: 5, minUnits: 1000, minTrades: 10 } };
+  const custom = { ...config, grade: { positiveMinRate: 0.1, considerMinRate: -0.05, passMaxRate: -0.2, considerMinQuality: 3, stationMaxMinutes: 5, minUnits: 1000, minTrades: 10 } };
   const grade = (parts) => gradeNotice({ evaluation: evaluation(parts.evaluation), notice: notice(parts.notice), walkMinutes: parts.walkMinutes ?? null, config: custom }).grade;
-  assert.equal(grade({ evaluation: { marginRate: -0.05 } }), GRADE.NO_MARGIN, '세대수 600은 새 기준 1000에 못 미쳐 2점');
-  assert.equal(grade({ evaluation: { marginRate: -0.05 }, notice: { totalUnits: 1000 } }), GRADE.CONSIDER);
-  assert.equal(grade({ evaluation: { marginRate: -0.0501 }, notice: { totalUnits: 1000 } }), GRADE.NO_MARGIN);
-  assert.equal(grade({ evaluation: { marginRate: -0.15 }, notice: { region: '경기', totalUnits: 1, name: '합성' } }), GRADE.PASS);
-  assert.equal(grade({ evaluation: { marginRate: -0.2 }, notice: { region: '경기', totalUnits: 1, name: '합성' } }), GRADE.PASS, '0점은 -20%까지 패스');
+  assert.equal(grade({ evaluation: { marginRate: -0.05 } }), GRADE.NO_MARGIN, '공급 세대수 600은 새 기준 1000에 못 미쳐 2점');
+  assert.equal(grade({ ...withQuality(0), evaluation: { marginRate: 0.0999 } }), GRADE.NO_MARGIN, '양수 기준도 설정을 따른다');
+  assert.equal(grade({ ...withQuality(0), evaluation: { marginRate: 0.1 } }), GRADE.CONSIDER);
+  assert.equal(grade({ evaluation: { marginRate: -0.05 }, notice: { supplyUnits: 1000 } }), GRADE.CONSIDER);
+  assert.equal(grade({ evaluation: { marginRate: -0.0501 }, notice: { supplyUnits: 1000 } }), GRADE.NO_MARGIN);
+  assert.equal(grade({ evaluation: { marginRate: -0.15 }, notice: { region: '경기', supplyUnits: 1, name: '합성' } }), GRADE.PASS);
+  assert.equal(grade({ evaluation: { marginRate: -0.2 }, notice: { region: '경기', supplyUnits: 1, name: '합성' } }), GRADE.PASS, '0점은 -20%까지 패스');
   assert.equal(grade({ evaluation: { marginRate: -0.19 }, notice: { region: '경기' } }), GRADE.NO_MARGIN);
-  assert.equal(grade({ evaluation: { marginRate: -0.2001 }, notice: { totalUnits: 5000 } }), GRADE.PASS);
+  assert.equal(grade({ evaluation: { marginRate: -0.2001 }, notice: { supplyUnits: 5000 } }), GRADE.PASS);
 });
 
 test('quality item 입지: 서울, or the entered station walk at 10 minutes or less', () => {
@@ -140,23 +153,46 @@ test('quality item 입지: 서울, or the entered station walk at 10 minutes or 
   assert.equal(location('인천', undefined).ok, false);
 });
 
-test('quality item 규모·환금성: both the household count and the trade count must pass', () => {
-  const scale = (totalUnits, tradeSamples) => qualityOf({ evaluation: evaluation({ tradeSamples }), notice: notice({ totalUnits }), walkMinutes: null }, config).items[1];
-  assert.equal(scale(500, 50).ok, true);
-  assert.equal(scale(499, 50).ok, false);
-  assert.equal(scale(500, 49).ok, false);
-  assert.equal(scale(501, 51).ok, true);
-  assert.equal(scale(499, 49).text, '세대수 499, 거래 49건');
-  assert.equal(scale(499, 60).text, '세대수 499');
+test('quality item 규모·환금성: the supply count of this notice and the trade count must both pass, except for 무순위 and 임의공급', () => {
+  const scale = (supplyUnits, tradeSamples, kind = 'apt') => qualityOf({ evaluation: evaluation({ tradeSamples }), notice: notice({ supplyUnits, kind }), walkMinutes: null }, config).items[1];
+  // 기본 기준은 공급 세대수 300, 거래 50건(단지 전체 규모가 아니라 이 공고의 공급 세대수다)
+  assert.equal(scale(300, 50).ok, true);
+  assert.equal(scale(299, 50).ok, false);
+  assert.equal(scale(300, 49).ok, false);
+  assert.equal(scale(301, 51).ok, true);
+  assert.equal(scale(299, 49).text, '공급 세대수 299, 거래 49건');
+  assert.equal(scale(299, 60).text, '공급 세대수 299');
   assert.equal(scale(600, 49).text, '거래 49건');
-  assert.equal(scale(600, 60).text, '세대수 600, 거래 60건');
+  assert.equal(scale(600, 60).text, '공급 세대수 600, 거래 60건');
   // 자료가 없으면 0점이다. 한쪽만 있어도 둘 다 필요하다.
-  assert.deepEqual(scale(null, 60), { label: '규모·환금성', ok: false, text: '세대수 자료 없음' });
+  assert.deepEqual(scale(null, 60), { label: '규모·환금성', ok: false, text: '공급 세대수 자료 없음' });
   assert.deepEqual(scale(undefined, 60).ok, false);
   assert.deepEqual(scale(600, null), { label: '규모·환금성', ok: false, text: '거래 자료 없음' });
   assert.equal(scale(600, undefined).ok, false);
-  assert.equal(scale(null, null).text, '세대수 자료 없음, 거래 자료 없음');
+  assert.equal(scale(null, null).text, '공급 세대수 자료 없음, 거래 자료 없음');
   assert.equal(scale(0, 60).ok, false);
+  // LH는 공급 세대수를 읽지 않아(null) 이 절반이 자료 없음이다.
+  assert.deepEqual(scale(null, 80, 'lh'), { label: '규모·환금성', ok: false, text: '공급 세대수 자료 없음' });
+  // 무순위와 임의공급은 공급 세대수를 보지 않고 거래 건수만 본다. 근거에 제외했다고 적는다.
+  assert.deepEqual(scale(5, 62, 'remainder'), { label: '규모·환금성', ok: true, text: '거래 62건 (공급 세대수는 무순위라 제외)' });
+  assert.deepEqual(scale(null, 62, 'remainder'), { label: '규모·환금성', ok: true, text: '거래 62건 (공급 세대수는 무순위라 제외)' });
+  assert.deepEqual(scale(5, 49, 'remainder'), { label: '규모·환금성', ok: false, text: '거래 49건 (공급 세대수는 무순위라 제외)' });
+  assert.deepEqual(scale(5, 50, 'arbitrary'), { label: '규모·환금성', ok: true, text: '거래 50건 (공급 세대수는 임의공급이라 제외)' });
+  assert.deepEqual(scale(5, null, 'remainder'), { label: '규모·환금성', ok: false, text: '거래 자료 없음 (공급 세대수는 무순위라 제외)' });
+});
+
+test('재건축 단지: 3,000 households in the complex but 224 supplied is judged by the supply count (224 < 300) and the trade count', () => {
+  const row = normalizeDetail(ENDPOINTS.find((endpoint) => endpoint.kind === 'apt'), { HOUSE_MANAGE_NO: '9', PBLANC_NO: '9', HOUSE_NM: '합성재건축', TOT_SUPLY_HSHLDCO: '224' });
+  assert.equal(row.supplyUnits, 224);
+  const scale = (tradeSamples) => qualityOf({ evaluation: evaluation({ tradeSamples }), notice: { ...notice(), ...row, supplyUnits: row.supplyUnits }, walkMinutes: null }, config).items[1];
+  // 단지가 3,000세대라도 공급이 224세대이면 기준(300)에 못 미친다. 거래가 충분해도 이 항목은 0점이다.
+  assert.deepEqual(scale(120), { label: '규모·환금성', ok: false, text: '공급 세대수 224' });
+  assert.deepEqual(scale(30), { label: '규모·환금성', ok: false, text: '공급 세대수 224, 거래 30건' });
+  // 기준을 공급 규모에 맞게 낮추면 통과한다. 기준은 설정이다.
+  const lower = { ...config, grade: { ...config.grade, minUnits: 200 } };
+  assert.equal(qualityOf({ evaluation: evaluation({ tradeSamples: 120 }), notice: { ...notice(), supplyUnits: 224 }, walkMinutes: null }, lower).items[1].ok, true);
+  // 같은 공고가 무순위 종류였다면 공급 세대수는 보지 않는다.
+  assert.equal(qualityOf({ evaluation: evaluation({ tradeSamples: 120 }), notice: notice({ kind: 'remainder', supplyUnits: 224 }), walkMinutes: null }, config).items[1].ok, true);
 });
 
 test('quality item 브랜드: the 단지명 or the 시공사 is a top or mid brand by the existing tiers', () => {
@@ -205,22 +241,37 @@ test('the evidence gate: weak or missing evidence is 판정 보류, never 고려
   assert.equal(gradeNotice({ evaluation: evaluation({ confidence: '하' }), notice: notice(), config }).quality, undefined);
 });
 
+test('the effective confidence decides the gate, like the lotto decision; the displayed confidence does not', () => {
+  const parts = (confidence, effectiveConfidence) => ({ ...withQuality(3), evaluation: { confidence, effectiveConfidence, marginRate: -0.01, margin: -100 } });
+  // 분양권·역 정보 조회 실패로만 하로 내려갔으면(표시 하, 판정에 쓴 값 중) 로또 판정처럼 중으로 본다.
+  assert.equal(gradeOf(parts('하', '중')), GRADE.CONSIDER);
+  assert.equal(gradeOf(parts('하', '상')), GRADE.CONSIDER);
+  // 자료 때문에 하이면 그대로 보류다. 값이 없으면 표시 신뢰도를 쓴다.
+  assert.equal(gradeOf(parts('하', '하')), GRADE.HOLD);
+  assert.equal(gradeOf(parts('하', undefined)), GRADE.HOLD);
+  assert.equal(gradeOf(parts('중', '중')), GRADE.CONSIDER);
+  assert.equal(gradeOf(parts('중', undefined)), GRADE.CONSIDER);
+  assert.equal(gradeNotice({ evaluation: evaluation({ confidence: '하', effectiveConfidence: '하' }), notice: notice(), config }).line, '등급: 판정 보류 (시세 신뢰도 하)');
+});
+
 test('the reason line names the grade, the margin rate and every quality item', () => {
   const consider = gradeNotice({
     evaluation: evaluation({ marginRate: -0.012, tradeSamples: 80 }),
-    notice: notice({ totalUnits: 320, name: '래미안합성' }),
+    notice: notice({ supplyUnits: 280, name: '래미안합성' }),
     walkMinutes: null,
     config,
   });
   assert.equal(consider.grade, GRADE.CONSIDER);
-  assert.equal(consider.line, '등급: 고려 (마진율 -1.2%, 입지 ✓ 서울, 규모·환금성 ✗ 세대수 320, 브랜드 ✓)');
-  assert.equal(consider.detail, '마진율 -1.2%, 입지 ✓ 서울, 규모·환금성 ✗ 세대수 320, 브랜드 ✓');
-  const missing = gradeNotice({ evaluation: evaluation({ marginRate: 0.04, tradeSamples: null }), notice: notice({ region: '경기', totalUnits: null, name: '합성' }), config });
-  assert.equal(missing.line, '등급: 안전마진 없음 (마진율 +4.0%, 입지 ✗ 자료 없음(역 도보 미입력), 규모·환금성 ✗ 세대수 자료 없음, 거래 자료 없음, 브랜드 ✗)');
-  assert.equal(gradeNotice({ evaluation: evaluation({ status: STATUS.LOTTO, marginRate: 0.125 }), notice: notice(), config }).line, '등급: 로또청약 (마진율 +12.5%)');
+  assert.equal(consider.line, '등급: 고려 (마진율 -1.20%, 입지 ✓ 서울, 규모·환금성 ✗ 공급 세대수 280, 브랜드 ✓)');
+  assert.equal(consider.detail, '마진율 -1.20%, 입지 ✓ 서울, 규모·환금성 ✗ 공급 세대수 280, 브랜드 ✓');
+  const missing = gradeNotice({ evaluation: evaluation({ marginRate: 0.01, tradeSamples: null }), notice: notice({ region: '경기', supplyUnits: null, name: '합성' }), config });
+  assert.equal(missing.line, '등급: 안전마진 없음 (마진율 +1.00%, 입지 ✗ 자료 없음(역 도보 미입력), 규모·환금성 ✗ 공급 세대수 자료 없음, 거래 자료 없음, 브랜드 ✗)');
+  assert.equal(gradeNotice({ evaluation: evaluation({ status: STATUS.LOTTO, marginRate: 0.125 }), notice: notice(), config }).line, '등급: 로또청약 (마진율 +12.50%)');
   assert.equal(gradeNotice({ evaluation: evaluation({ confidence: '하' }), notice: notice(), config }).line, '등급: 판정 보류 (시세 신뢰도 하)');
   assert.equal(gradeNotice({ evaluation: evaluation({ status: STATUS.UNDETERMINED, margin: null }), notice: notice(), config }).line, '등급: 판정 보류 (판별 불가)');
   assert.equal(gradeNotice({ evaluation: evaluation({ margin: null }), notice: notice(), config }).line, '등급: 판정 보류 (시세 추정 없음)');
+  // 기준 바로 아래 마진율이 기준으로 읽히지 않게 소수 둘째 자리까지 적는다.
+  assert.ok(gradeNotice({ evaluation: evaluation({ marginRate: -0.0304 }), notice: notice({ region: '경기', name: '합성' }), config }).line.startsWith('등급: 안전마진 없음 (마진율 -3.04%'));
   // 한 줄이고 공고 이름을 담지 않는다.
   assert.ok(!consider.line.includes('\n'));
   assert.ok(!consider.line.includes('래미안합성'));
@@ -265,14 +316,14 @@ test('the grade line is appended and stays inside the Notion text limit', () => 
   assert.equal(appendGradeLine(fits, line), `${fits}\n${line}`);
 });
 
-test('the notice carries the total household count (TOT_SUPLY_HSHLDCO) for every kind, and null when it is absent or not positive', () => {
+test('the notice carries the supply household count (TOT_SUPLY_HSHLDCO) for every kind, and null when it is absent or not positive', () => {
   const base = { HOUSE_MANAGE_NO: '1', PBLANC_NO: '1', HOUSE_NM: '합성단지' };
   for (const endpoint of ENDPOINTS) {
-    assert.equal(normalizeDetail(endpoint, { ...base, TOT_SUPLY_HSHLDCO: '840' }).totalUnits, 840, endpoint.kind);
-    assert.equal(normalizeDetail(endpoint, base).totalUnits, null, endpoint.kind);
+    assert.equal(normalizeDetail(endpoint, { ...base, TOT_SUPLY_HSHLDCO: '840' }).supplyUnits, 840, endpoint.kind);
+    assert.equal(normalizeDetail(endpoint, base).supplyUnits, null, endpoint.kind);
   }
   const apt = ENDPOINTS.find((endpoint) => endpoint.kind === 'apt');
-  assert.equal(normalizeDetail(apt, { ...base, TOT_SUPLY_HSHLDCO: '1,200' }).totalUnits, 1200);
-  assert.equal(normalizeDetail(apt, { ...base, TOT_SUPLY_HSHLDCO: 500 }).totalUnits, 500);
-  for (const bad of ['0', 0, '', null, '알수없음', '-3']) assert.equal(normalizeDetail(apt, { ...base, TOT_SUPLY_HSHLDCO: bad }).totalUnits, null, String(bad));
+  assert.equal(normalizeDetail(apt, { ...base, TOT_SUPLY_HSHLDCO: '1,200' }).supplyUnits, 1200);
+  assert.equal(normalizeDetail(apt, { ...base, TOT_SUPLY_HSHLDCO: 500 }).supplyUnits, 500);
+  for (const bad of ['0', 0, '', null, '알수없음', '-3']) assert.equal(normalizeDetail(apt, { ...base, TOT_SUPLY_HSHLDCO: bad }).supplyUnits, null, String(bad));
 });

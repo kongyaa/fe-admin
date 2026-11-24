@@ -26,8 +26,8 @@ export function createGmailSender({ user, password, to, createTransport = nodema
 // 주간 메일의 등급별 구역. 패스는 싣지 않고 건수만 적는다. 로또청약은 접수 시작일에 긴급 알림이 가고, 나머지는 메일과 Notion 표에만 남는다.
 const SECTIONS = [
   { grade: GRADE.LOTTO, note: null },
-  { grade: GRADE.CONSIDER, note: '가격, 입지, 환금성, 대안을 함께 따져 볼 만한 공고입니다.' },
-  { grade: GRADE.NO_MARGIN, note: '시세 수준의 분양가입니다. 실거주로 접근하세요.' },
+  { grade: GRADE.CONSIDER, note: '시세보다 낮거나, 시세 수준이어도 입지·규모·브랜드가 받쳐 줍니다. 가격, 입지, 환금성, 대안을 함께 따져 보세요.' },
+  { grade: GRADE.NO_MARGIN, note: '분양가가 대체로 시세 수준(마진율 -3% ~ +3%)이거나 약간 비쌉니다. 실거주로 접근하세요.' },
   { grade: GRADE.HOLD, note: '근거 부족, 공고문과 시세 직접 확인. 긴급 알림은 보내지 않았습니다.' },
 ];
 
@@ -39,7 +39,8 @@ const gradeOfItem = (item) => item.grade ?? gradeFromStatus(item.status) ?? GRAD
 
 const detailOf = (item) => item.gradeDetail ?? '';
 
-const sectionHead = ({ grade }, count) => `${grade} ${count}건`;
+// 상한에 걸려 일부만 싣는 구역은 제목에 전체 건수와 싣는 건수를 함께 적는다.
+const sectionHead = (section) => `${section.grade} ${section.all.length}건${section.omitted > 0 ? ` (앞 ${section.shown.length}건만 표시)` : ''}`;
 
 function selectSections(items) {
   const hiddenPass = items.filter((item) => gradeOfItem(item) === GRADE.PASS).length;
@@ -68,14 +69,14 @@ export function buildWeeklyMail({ items, monday, sunday, warning = null, testMar
     });
     const omitted = section.omitted > 0 ? `<p>외 ${section.omitted}건은 Notion 표에서 확인하세요.</p>` : '';
     const note = section.note ? `<p>${escapeHtml(section.note)}</p>` : '';
-    return `<h3>${escapeHtml(sectionHead(section, section.all.length))}</h3>${note}<table border="1" cellpadding="6" cellspacing="0"><thead><tr><th>주택명</th><th>유형</th><th>지역</th><th>금주 일정</th><th>근거</th><th>링크</th></tr></thead><tbody>${rows.join('')}</tbody></table>${omitted}`;
+    return `<h3>${escapeHtml(sectionHead(section))}</h3>${note}<table border="1" cellpadding="6" cellspacing="0"><thead><tr><th>주택명</th><th>유형</th><th>지역</th><th>금주 일정</th><th>근거</th><th>링크</th></tr></thead><tbody>${rows.join('')}</tbody></table>${omitted}`;
   };
   const warningHtml = warning ? `<p><strong>${escapeHtml(warning)}</strong></p>` : '';
   const body = shownCount > 0 ? sections.map(tableOf).join('') : '<p>금주 알릴 접수 일정이 없습니다.</p>';
   const passHtml = passNote ? `<p>${escapeHtml(passNote)}</p>` : '';
   const html = `${testMark ? '<p><strong>테스트 발송입니다.</strong></p>' : ''}${warningHtml}${body}${passHtml}<p>${escapeHtml(DISCLAIMER)}</p>`;
   const textSections = sections.flatMap((section) => [
-    sectionHead(section, section.all.length),
+    sectionHead(section),
     ...(section.note ? [section.note] : []),
     ...section.shown.map((item) => {
       const stages = item.weekStages.map((stage) => `${stage.name} ${stage.start}`).join(', ');

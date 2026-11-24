@@ -1220,22 +1220,22 @@ test('urgent selection never includes 확인 필요', () => {
   assert.equal(selectUrgent([{ ...base, status: '로또' }, { ...base, status: '확인 필요' }], THU, regions).length, 1);
 });
 
-test('weekly selection carries the status, margin rate, confidence and note of a 확인 필요 notice', () => {
+test('weekly selection carries the status, grade and grade detail of a 판정 보류 notice, and no unused margin fields', () => {
   const record = {
     notice: notice({ stages: [{ name: '접수', start: THU, end: THU }] }),
     status: '확인 필요',
-    marginRate: 0.007,
-    confidence: '중',
-    checkNote: '사유',
+    grade: '판정 보류',
+    gradeDetail: '시세 신뢰도 하',
   };
   const [item] = selectWeekly([record], '2026-11-02', '2026-11-08', regions);
   assert.equal(item.status, '확인 필요');
-  assert.equal(item.marginRate, 0.007);
-  assert.equal(item.confidence, '중');
-  assert.equal(item.checkNote, '사유');
-  // 판정하지 않은 공고는 값이 없다.
+  assert.equal(item.grade, '판정 보류');
+  assert.equal(item.gradeDetail, '시세 신뢰도 하');
+  // 메일이 쓰지 않는 마진율, 신뢰도, 사유는 싣지 않는다. 보류의 까닭은 gradeDetail이다.
+  assert.deepEqual(Object.keys(item).sort(), ['grade', 'gradeDetail', 'notice', 'status', 'weekStages']);
+  // 판정하지 않은 공고는 근거 요약이 없다.
   const [bare] = selectWeekly([{ notice: record.notice, status: null }], '2026-11-02', '2026-11-08', regions);
-  assert.deepEqual([bare.marginRate, bare.confidence, bare.checkNote], [null, null, null]);
+  assert.deepEqual([bare.grade, bare.gradeDetail], [null, null]);
 });
 
 test('weekly mail groups items by grade, hides 패스 and keeps the 판정 보류 wording understandable', () => {
@@ -1305,7 +1305,10 @@ test('weekly mail caps long sections with a count note but never cuts 로또청�
   const many = (grade, count) => Array.from({ length: count }, (_, index) => ({ notice: notice({ key: `${grade}-${index}`, name: `합성${grade}${index}` }), grade, weekStages: week }));
   const mail = buildWeeklyMail({ items: [...many('로또청약', 25), ...many('고려', 23)], monday: '2026-11-02', sunday: '2026-11-08' });
   assert.ok(mail.html.includes('<h3>로또청약 25건</h3>') && mail.html.includes('합성로또청약24'));
-  assert.ok(mail.html.includes('<h3>고려 23건</h3>') && mail.html.includes('합성고려19') && !mail.html.includes('합성고려20'));
+  // 상한에 걸린 구역은 제목에 전체 건수와 싣는 건수를 함께 적는다. 제목의 전체 건수와 메일 제목의 건수는 상한과 무관하게 공고 수다.
+  assert.ok(mail.html.includes('<h3>고려 23건 (앞 20건만 표시)</h3>') && mail.html.includes('합성고려19') && !mail.html.includes('합성고려20'));
+  assert.ok(mail.text.includes('고려 23건 (앞 20건만 표시)\n'));
+  assert.ok(mail.html.includes('<h3>로또청약 25건</h3>'));
   assert.ok(mail.html.includes('외 3건은 Notion 표에서 확인하세요.') && mail.text.includes('외 3건은 Notion 표에서 확인하세요.'));
   assert.equal(mail.subject.includes('(48건)'), true);
 });

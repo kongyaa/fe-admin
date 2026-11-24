@@ -34,11 +34,12 @@ export const GRADE_COUNT_NAMES = {
 
 // 기준에 공식 표준은 없다. config.json의 grade가 없거나 숫자가 아니면 이 값을 쓴다.
 export const GRADE_DEFAULTS = {
+  positiveMinRate: 0.03,
   considerMinRate: -0.03,
   passMaxRate: -0.1,
   considerMinQuality: 2,
   stationMaxMinutes: 10,
-  minUnits: 500,
+  minUnits: 300,
   minTrades: 50,
 };
 
@@ -91,7 +92,8 @@ export const gradeFromStatus = (status) => STATUS_GRADE[status] ?? null;
 
 const isNumber = Number.isFinite;
 
-const ratePercent = (rate) => `${rate >= 0 ? '+' : ''}${(Math.round(rate * 1000) / 10).toFixed(1)}%`;
+// 소수 둘째 자리까지 적는다. -3.04%가 기준(-3%) 아래인데 -3.0%로 읽히지 않게 한다.
+const ratePercent = (rate) => `${rate >= 0 ? '+' : ''}${(Math.round(rate * 10000) / 100).toFixed(2)}%`;
 
 // 입지: 서울이거나 입력한 역 도보(분)가 기준 이하. 역 도보는 사용자가 Notion에 입력한 값이다.
 function locationItem({ notice, walkMinutes }, settings) {
@@ -101,16 +103,22 @@ function locationItem({ notice, walkMinutes }, settings) {
   return { label, ok: walkMinutes <= settings.stationMaxMinutes, text: `역 도보 ${walkMinutes}분` };
 }
 
-// 규모·환금성: 총 세대수와 시세 추정에 쓴 거래 건수가 모두 기준 이상이어야 한다.
+// 공급 세대수를 보지 않는 종류. 무순위·잔여세대와 임의공급은 성격상 공급 세대수가 적어 거래 건수만 본다.
+const UNITS_EXEMPT = { remainder: '무순위라', arbitrary: '임의공급이라' };
+
+// 규모·환금성: 이 공고의 공급 세대수(단지 전체 규모가 아님)와 시세 추정에 쓴 거래 건수가 모두 기준 이상이어야 한다.
+// 무순위·잔여세대와 임의공급은 거래 건수만 본다. 근거에 공급 세대수를 제외했다고 적는다.
 function scaleItem({ evaluation, notice }, settings) {
   const label = '규모·환금성';
-  const units = isNumber(notice.totalUnits) ? notice.totalUnits : null;
   const trades = isNumber(evaluation.tradeSamples) ? evaluation.tradeSamples : null;
-  const unitsOk = units !== null && units >= settings.minUnits;
   const tradesOk = trades !== null && trades >= settings.minTrades;
-  const ok = unitsOk && tradesOk;
-  const unitsText = units === null ? '세대수 자료 없음' : `세대수 ${units}`;
   const tradesText = trades === null ? '거래 자료 없음' : `거래 ${trades}건`;
+  const exempt = UNITS_EXEMPT[notice.kind];
+  if (exempt) return { label, ok: tradesOk, text: `${tradesText} (공급 세대수는 ${exempt} 제외)` };
+  const units = isNumber(notice.supplyUnits) ? notice.supplyUnits : null;
+  const unitsOk = units !== null && units >= settings.minUnits;
+  const unitsText = units === null ? '공급 세대수 자료 없음' : `공급 세대수 ${units}`;
+  const ok = unitsOk && tradesOk;
   if (ok) return { label, ok, text: `${unitsText}, ${tradesText}` };
   const failed = [unitsOk ? null : unitsText, tradesOk ? null : tradesText].filter(Boolean);
   return { label, ok, text: failed.join(', ') };
@@ -133,6 +141,9 @@ export function qualityOf(input, config) {
 
 const itemText = (item) => `${item.label} ${item.ok ? '✓' : '✗'}${item.text ? ` ${item.text}` : ''}`;
 
+// 판정에 쓴 신뢰도. 분양권·역 정보 조회 실패로만 내려간 값은 내려가기 전 값이다(로또 판정과 같은 기준, src/lotto.js).
+const confidenceOf = (evaluation) => evaluation.effectiveConfidence ?? evaluation.confidence;
+
 // 증거가 약해 등급을 정하지 않는 까닭. 없으면 null이다. 약한 근거로 패스, 안전마진 없음, 고려를 내지 않는다.
 function holdReason({ evaluation, notice }, config) {
   const restricted = restrictedType(notice, config.market);
@@ -140,14 +151,15 @@ function holdReason({ evaluation, notice }, config) {
   if (evaluation.status === STATUS.UNDETERMINED) return '판별 불가';
   if (evaluation.status === STATUS.OUT_OF_SCOPE) return '대상 외';
   if (!isNumber(evaluation.margin)) return '시세 추정 없음';
-  if (evaluation.confidence !== CONFIDENCE.MID && evaluation.confidence !== CONFIDENCE.HIGH) return `시세 신뢰도 ${evaluation.confidence ?? '없음'}`;
+  const confidence = confidenceOf(evaluation);
+  if (confidence !== CONFIDENCE.MID && confidence !== CONFIDENCE.HIGH) return `시세 신뢰도 ${confidence ?? '없음'}`;
   if (!isNumber(evaluation.marginRate)) return '마진율 없음';
   return null;
 }
 
 // 등급을 정한다. 결과는 { grade, detail, line }이다. detail은 근거 요약(주간 메일에 쓴다), line은 판별 근거 끝에 붙일 한 줄이다.
 // 품질을 쟀으면 quality도 있다.
-// 입력: evaluation(status, margin, marginRate, confidence, tradeSamples), notice(region, totalUnits, builder, name, houseSecd, typeLabel),
+// 입력: evaluation(status, margin, marginRate, confidence, effectiveConfidence, tradeSamples), notice(kind, region, supplyUnits, builder, name, houseSecd, typeLabel),
 // walkMinutes(저장된 역 도보 분), config(grade, market). 로또의 마진 기준은 쓰지 않는다. 로또는 이미 정한 status다.
 // 로또청약은 정확히 STATUS.LOTTO다. 안전 마진과 마진율 기준은 판정(src/lotto.js)이 이미 적용했다.
 export function gradeNotice({ evaluation, notice, walkMinutes = null, config }) {
@@ -160,7 +172,9 @@ export function gradeNotice({ evaluation, notice, walkMinutes = null, config }) 
   const quality = qualityOf({ evaluation, notice, walkMinutes }, config);
   const rate = evaluation.marginRate;
   let grade;
-  if (rate >= settings.considerMinRate) grade = quality.score >= settings.considerMinQuality ? GRADE.CONSIDER : GRADE.NO_MARGIN;
+  // 마진율이 양수로 뚜렷하면(positiveMinRate) 품질과 무관하게 고려다. 시세 수준(-3% ~ +3%)일 때만 품질로 가른다.
+  if (rate >= settings.positiveMinRate) grade = GRADE.CONSIDER;
+  else if (rate >= settings.considerMinRate) grade = quality.score >= settings.considerMinQuality ? GRADE.CONSIDER : GRADE.NO_MARGIN;
   else if (rate >= settings.passMaxRate) grade = quality.score === 0 ? GRADE.PASS : GRADE.NO_MARGIN;
   else grade = GRADE.PASS;
   return result(grade, `마진율 ${ratePercent(rate)}, ${quality.items.map(itemText).join(', ')}`, { quality });

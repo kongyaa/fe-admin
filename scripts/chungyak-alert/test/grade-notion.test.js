@@ -284,3 +284,85 @@ test('reading rows: the new column, the legacy column and legacy values all give
   assert.equal(read({ '청약 등급': select('엉뚱한 값') }).lotto, null);
   assert.equal(read({}).grade, null);
 });
+
+test('rename retry ambiguity: the rename was applied but the request failed, so the column is found under its new name by re-reading the schema', async () => {
+  // 이름 변경이 서버에서 적용된 뒤 응답이나 재시도(이름 겹침 400)가 실패한 경우를 흉내 낸다.
+  let applied = false;
+  const fake = schemaFake({ ...OTHERS, '로또 여부': legacyColumn() }, {
+    intercept: (call) => {
+      if (call.method === 'PATCH' && call.path === '/databases/db' && call.body.properties['로또 여부']?.name && !applied) {
+        applied = true;
+        fake.state.properties['청약 등급'] = fake.state.properties['로또 여부'];
+        delete fake.state.properties['로또 여부'];
+        return new Response('', { status: 400 });
+      }
+      return null;
+    },
+  });
+  const store = storeOf(fake);
+  await store.init();
+  assert.equal(applied, true);
+  // 실패는 알리되, 스키마를 다시 읽어 있는 이름(청약 등급)으로 쓴다.
+  assert.deepEqual(store.schemaIssues(), ['notion_rename_failed']);
+  assert.equal(fake.calls.filter((call) => call.method === 'GET' && call.path === '/databases/db').length, 2);
+  await store.upsert(notice, { status: '아님', grade: '고려', reason: 'r' }, undefined, THU);
+  const written = rowWrite(fake).body.properties;
+  assert.deepEqual(written['청약 등급'], { select: { name: '고려' } });
+  assert.equal(Object.hasOwn(written, '로또 여부'), false);
+});
+
+test('rename retry ambiguity: a failed rename that was not applied is written under the old name after the re-read, and an unreadable re-read writes no grade', async () => {
+  const denied = (call) => (call.method === 'PATCH' && call.path === '/databases/db' ? new Response('', { status: 403 }) : null);
+  const notApplied = schemaFake({ ...OTHERS, '로또 여부': legacyColumn() }, { intercept: denied });
+  const store = storeOf(notApplied);
+  await store.init();
+  await store.upsert(notice, { status: '아님', grade: '고려', reason: 'r' }, undefined, THU);
+  assert.deepEqual(rowWrite(notApplied).body.properties['로또 여부'], { select: { name: '고려' } });
+
+  // 다시 읽기도 실패하면 어느 이름이 맞는지 몰라 어느 쪽에도 쓰지 않는다. 다른 열은 그대로 저장한다.
+  let reads = 0;
+  const unreadable = schemaFake({ ...OTHERS, '로또 여부': legacyColumn() }, {
+    intercept: (call) => {
+      if (call.method === 'GET' && call.path === '/databases/db') {
+        reads += 1;
+        return reads > 1 ? new Response('', { status: 500 }) : null;
+      }
+      return denied(call);
+    },
+  });
+  const blind = storeOf(unreadable);
+  await blind.init();
+  assert.deepEqual(blind.schemaIssues(), ['notion_rename_failed']);
+  await blind.upsert(notice, { status: '아님', grade: '고려', reason: 'r', estimate: 1 }, undefined, THU);
+  const written = rowWrite(unreadable).body.properties;
+  assert.equal(Object.hasOwn(written, '청약 등급'), false);
+  assert.equal(Object.hasOwn(written, '로또 여부'), false);
+  assert.deepEqual(written['추정 시세'], { number: 1 });
+});
+
+test('an existing option without a color is sent without a color key, and the others keep theirs', async () => {
+  const fake = schemaFake({
+    ...OTHERS,
+    '청약 등급': { id: 'p', type: 'select', select: { options: [{ id: 'a', name: '직접 만든 값' }, { id: 'b', name: '고려', color: 'pink' }, { name: '패스' }] } },
+  });
+  await storeOf(fake).init();
+  const [patch] = schemaPatches(fake);
+  assert.deepEqual(patch['청약 등급'].select.options.slice(0, 3), [
+    { id: 'a', name: '직접 만든 값' },
+    { id: 'b', name: '고려', color: 'pink' },
+    { name: '패스' },
+  ]);
+  assert.ok(!Object.hasOwn(patch['청약 등급'].select.options[0], 'color'));
+  // 없는 등급만 색과 함께 더한다.
+  assert.deepEqual(patch['청약 등급'].select.options.slice(3).map((option) => option.name), ['로또청약', '안전마진 없음', '판정 보류']);
+  assert.deepEqual(patch['청약 등급'].select.options.slice(3).map((option) => option.color), ['orange', 'yellow', 'gray']);
+});
+
+test('both columns on one row: the new column wins when it has a value, the legacy one is read only when the new one is empty', () => {
+  const read = (properties) => parseExistingPage({ id: 'p', properties });
+  const select = (name) => ({ select: { name } });
+  assert.equal(read({ '청약 등급': select('패스'), '로또 여부': select('로또') }).lotto, '아님');
+  assert.equal(read({ '청약 등급': select('로또청약'), '로또 여부': select('아님') }).lotto, '로또');
+  assert.equal(read({ '청약 등급': { select: null }, '로또 여부': select('로또') }).lotto, '로또');
+  assert.equal(read({ '청약 등급': { select: null }, '로또 여부': select('로또') }).grade, '로또청약');
+});

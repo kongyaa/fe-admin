@@ -51,12 +51,13 @@
     "remainderMaxRound": 3
   },
   "grade": {
-    "note": "청약 등급 기준의 시작값이다. 공식 기준은 없다. 마진율은 분양가 대비다. 로또청약은 lotto 기준을 넘은 공고(내부 상태 로또)다.",
+    "note": "청약 등급 기준의 시작값이다. 공식 기준은 없다. 마진율은 분양가 대비다. 로또청약은 lotto 기준을 넘은 공고(내부 상태 로또)다. minUnits는 단지 전체가 아니라 이 공고의 공급 세대수 기준이다.",
+    "positiveMinRate": 0.03,
     "considerMinRate": -0.03,
     "passMaxRate": -0.1,
     "considerMinQuality": 2,
     "stationMaxMinutes": 10,
-    "minUnits": 500,
+    "minUnits": 300,
     "minTrades": 50
   },
   "recommendation": {

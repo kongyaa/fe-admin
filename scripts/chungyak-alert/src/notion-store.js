@@ -324,8 +324,19 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     await patchSchema({ [P.grade]: { select: { options: [...kept, ...added] } } }, 'notion_grade_options_failed');
   }
 
+  // 이름 변경 요청이 실패했을 때 스키마를 다시 읽는다. 요청이 실제로는 적용됐는데 응답이나 재시도(이름 겹침 400)가 실패했을 수 있어,
+  // 실패한 응답만 보고 옛 이름으로 쓰면 없는 열에 쓰게 된다. 다시 읽지 못하면 null이다.
+  async function rereadProperties() {
+    try {
+      const database = await request('GET', `/databases/${databaseId}`);
+      return database.properties ?? {};
+    } catch {
+      return null;
+    }
+  }
+
   // 청약 등급 열. 옛 `로또 여부`(선택 속성)만 있으면 그 속성의 이름을 바꿔 값과 id를 유지하고, 둘 다 없으면 새로 만든다.
-  // 새 이름이 이미 있으면 옛 열은 건드리지 않는다. 이름 변경이 실패하면 이번 실행에서는 옛 이름으로 쓴다.
+  // 새 이름이 이미 있으면 옛 열은 건드리지 않는다. 이름 변경이 실패하면 스키마를 다시 읽어 실제로 있는 이름으로 쓴다(다시 읽지 못하면 이번 실행은 쓰지 않는다).
   // 같은 이름의 다른 타입 속성은 건드리지 않고 쓰지도 않는다.
   async function ensureGradeColumn(properties) {
     const current = properties[P.grade];
@@ -337,7 +348,12 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     const legacy = properties[LEGACY.grade];
     if (legacy?.type === 'select') {
       const renamed = await patchSchema({ [LEGACY.grade]: { name: P.grade } }, 'notion_rename_failed');
-      if (!renamed) return LEGACY.grade;
+      if (!renamed) {
+        const fresh = await rereadProperties();
+        if (!fresh) return null;
+        if (fresh[P.grade]?.type === 'select') return P.grade;
+        return fresh[LEGACY.grade]?.type === 'select' ? LEGACY.grade : null;
+      }
       await addGradeOptions(legacy);
       return P.grade;
     }
