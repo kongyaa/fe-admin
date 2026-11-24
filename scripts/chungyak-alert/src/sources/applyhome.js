@@ -114,6 +114,7 @@ export function normalizeDetail(endpoint, row) {
     address: row.HSSPLY_ADRES ?? '',
     // 이 공고의 공급 세대수(단지 전체 규모가 아님). 청약 등급의 규모·환금성에 쓴다.
     supplyUnits: supplyUnitsOf(row),
+    moveInYm: String(row.MVN_PREARNGE_YM ?? ''),
     announceDate: normalizeDate(row.RCRIT_PBLANC_DE),
     winnerDate: normalizeDate(row.PRZWNER_PRESNATN_DE),
     url: row.PBLANC_URL ?? null,

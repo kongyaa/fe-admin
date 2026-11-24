@@ -301,7 +301,7 @@ export function localityFormat(text) {
   return 'other';
 }
 
-function sameComplexRows(rows, subject, area, { market, lotto }) {
+export function sameComplexRows(rows, subject, area, { market, lotto }) {
   const place = subjectLocality(subject);
   const nameRule = {
     minLength: market.sameComplex.minNameLength,

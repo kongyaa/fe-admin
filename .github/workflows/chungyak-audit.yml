@@ -1,0 +1,42 @@
+name: chungyak-audit
+
+# 일회성 시세 감사(버리는 브랜치). 읽기 전용이다. 보내거나 저장하는 것이 없고 DATA_GO_KR_KEY 하나만 쓴다.
+# 기본 브랜치에 없는 워크플로는 dispatch할 수 없어, 이 브랜치에 push하면 audit-runs.txt의 줄마다 돈다.
+on:
+  push:
+    branches: [backtest/valuation-audit]
+    paths: [scripts/chungyak-alert/audit-runs.txt, scripts/chungyak-alert/audit.js]
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    defaults:
+      run:
+        working-directory: scripts/chungyak-alert
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Audit (audit-runs.txt)
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: |
+          # 줄 형식: asOf|수집 기간(일)|공고명 일부(비우면 전체)|대상 상한(비우면 전체)|창 읽기(1/0)
+          grep -v '^#' audit-runs.txt | grep -v '^$' | while IFS='|' read -r asof lookback name max windows; do
+            echo "##### asOf=$asof lookback=$lookback name=$name max=$max windows=$windows"
+            AUDIT_AS_OF="$asof" AUDIT_LOOKBACK="$lookback" AUDIT_NAME="$name" AUDIT_MAX="$max" AUDIT_WINDOWS="${windows:-1}" node audit.js || echo "exit=$?"
+          done
