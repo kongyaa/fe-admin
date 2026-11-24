@@ -53,7 +53,11 @@ const fetchFn = async (url, init) => {
       const id = `${params.get('LAWD_CD')}-${params.get('DEAL_YMD')}`;
       const cur = rawTally.get(id) ?? { items: 0, cancelled: 0, total: null };
       cur.items += [...body.matchAll(/<item>/g)].length;
-      cur.cancelled += [...body.matchAll(/<cdealType>\s*\S/g)].length;
+      cur.cancelled += [...body.matchAll(/<cdealType>\s*[^<\s]/g)].length;
+      // 원본 응답에 래미안·아이파크 또는 지번 20-4 항목이 있는지(파서가 버리는지 보려고) 항목을 그대로 모은다. 공개 실거래 자료다.
+      for (const [, block] of body.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+        if (/래미안|아이파크|<jibun>\s*20-4\s*<\/jibun>/.test(block)) (cur.raw ??= []).push(block.replace(/\s+/g, ' ').replace(/<(\w+)>([^<]*)<\/\1>/g, '$1=$2;').replace(/<[^>]+>/g, '').slice(0, 400));
+      }
       cur.total = Number(/<totalCount>(\d+)<\/totalCount>/.exec(body)?.[1] ?? NaN);
       rawTally.set(id, cur);
     } catch { /* 진단용이라 실패해도 판정과 무관하다 */ }
@@ -184,7 +188,7 @@ async function wideScan({ addr, asOf, notice, realRe }) {
     const ym = `${y}${String(m).padStart(2, '0')}`;
     if (ym >= '202301' && ym <= '202611') months.push(ym);
   }
-  const jibunText = (/d+(?:-d+)?(?=번지)/.exec(notice.address) ?? [null])[0];
+  const jibunText = (/\d+(?:-\d+)?(?=번지)/.exec(notice.address) ?? [null])[0];
   log('');
   log(`--- 진단: 넓은 기간 스캔(코드 ${code}, ${months[0]}~${months.at(-1)} ${months.length}개월) ---`);
   log(`공고 주소 "${notice.address}" 에서 번지 숫자=${jibunText ?? '-'} (운영 subjectJibun은 '번지'가 붙은 토큰을 지번으로 읽지 못해 null)`);
@@ -201,6 +205,10 @@ async function wideScan({ addr, asOf, notice, realRe }) {
     }
   }
   log(`월별 송파구 행수/이름·지번 후보 행수: ${perMonth.join(' ')}`);
+  log(`월별 원본 응답 item/취소(cdealType 값 있음)/totalCount: ${[...rawTally].sort().map(([id, t]) => `${id.slice(6)}=${t.items}/${t.cancelled}/${t.total}`).join(' ')}`);
+  const rawHits = [...rawTally].filter(([, t]) => t.raw?.length);
+  log(`원본 응답에서 '래미안'·'아이파크' 또는 지번 20-4를 담은 item이 있는 월 ${rawHits.length}개:`);
+  for (const [id, t] of rawHits.sort()) for (const line of t.raw.slice(0, 12)) log(`  RAWITEM ${id} ${line}`);
   const groups = new Map();
   for (const r of all.filter((x) => realRe.test(normalizeComplexName(x.aptName)) || (jibunText && x.umd === addr.umd && x.jibun === jibunText))) {
     const k = `${r.umd}|${r.aptName}|${r.jibun}|${r.aptSeq}|${r.buildYear}`;
