@@ -95,7 +95,8 @@ const collected = await collectApplyhome({ fetch: fetchFn, key, today: asOf, loo
 log(`collect errors=${collected.errors.join(',') || 'none'} failedAll=${collected.failedAll} raw=${collected.notices.length}`);
 const announced = collected.notices.filter((notice) => !notice.announceDate || notice.announceDate <= asOf);
 log(`announced on/before asOf=${announced.length} (excluded ${collected.notices.length - announced.length} announced after asOf)`);
-const matches = announced.filter((notice) => norm(notice.name).includes(norm(nameContains)));
+const impact = nameContains === '@impact';
+const matches = impact ? [] : announced.filter((notice) => norm(notice.name).includes(norm(nameContains)));
 log(`name matches=${matches.length}`);
 
 const stageText = (stages) => stages.map((s) => `${s.name} ${s.start}${s.end && s.end !== s.start ? `~${s.end}` : ''}`).join(' | ');
@@ -107,7 +108,7 @@ if (listOnly) {
 
 // 시세 조회 기간을 증명하려고 실거래 조회를 감싼다. 판정 코드는 그대로다.
 const molit = createMolitClient({ fetch: fetchFn, key, sleep });
-const presale = createPresaleClient({ fetch: fetchFn, key, sleep, budgetMs: config.market.presale.budgetMs, onSoft: (kind) => log(`soft: ${kind}`) });
+const presale = createPresaleClient({ fetch: fetchFn, key, sleep, budgetMs: impact ? 900000 : config.market.presale.budgetMs, onSoft: (kind) => log(`soft: ${kind}`) });
 const aptInfo = createAptInfoClient({ fetch: fetchFn, key, sleep, limits: config.market.aptInfo, onSoft: (kind) => log(`soft: ${kind}`) });
 const getModels = createModelLookup({ fetch: fetchFn, key, sleep });
 
@@ -416,6 +417,45 @@ async function diagnose({ notice, models, addr, asOf, getTrades, getPresale, eva
   const all = estimateBestMargin({ models, rows, subject, stations: new Map(), stationLookupFailed: false, presaleOk: presaleRead.ok, crossWard: read.crossWard, preferConfident: true, lotto: config.lotto, market: config.market, today: asOf });
   log('');
   log(`전체 주택형으로 estimateBestMargin: ${all ? `${all.houseType} 전용 ${all.area} 분양가 ${all.price} 추정 ${all.estimate} 마진 ${all.margin} 신뢰도 ${all.confidence} 경로 ${all.basis.kind}` : 'null'} | evaluateLotto: 판단 주택형 전용 ${evaluation.judgedArea} 마진 ${evaluation.margin} 추정 ${evaluation.estimate}`);
+}
+
+// ---- 영향 범위 스캔(BACKTEST_NAME=@impact). 같은 asOf에 접수·공고된 수도권 공고를 지금 로직과 입주권 포함 가정으로 둘 다 평가한다. ----
+if (impact) {
+  const monthsNow = completeMonths(asOf, config.lotto.tradeMonths);
+  const extra = (code, ms) => ms.flatMap((m) => silvRows.get(`${code}-${m}`) ?? []).filter((r) => r.ownership.includes('입') && !r.cancelled && r.amount > 0 && r.area > 0);
+  const targets = announced.filter((n) => ['apt', 'remainder', 'arbitrary'].includes(n.kind) && config.alertRegions.includes(n.region) && !isRental(n, config));
+  log(`impact: asOf=${asOf} 대상(수도권, apt/remainder/arbitrary, 임대 제외) ${targets.length}건`);
+  const baseOpts = (getP) => ({ config, today: asOf, getModels, getFactModels: undefined, interest: false, getTrades, getPresale: getP, aptInfo, walkMinutes: null, onError: bump(errors), onSoft: bump(softs), onSoftOnce: (k) => { if (!softs.has(k)) bump(softs)(k); }, profile: null });
+  const pathOf = (e) => (/같은 단지 거래/.test(e.reason ?? '') ? '같은단지' : /비교 단지/.test(e.reason ?? '') ? '비교단지' : '-');
+  const brief = (e) => `${e.status} 마진 ${e.margin ?? '-'}만 ${Number.isFinite(e.marginRate) ? `${(e.marginRate * 100).toFixed(0)}%` : '-'} 신뢰 ${e.confidence ?? '-'} ${pathOf(e)}`;
+  let changed = 0; let evaluated = 0; let sameBefore = 0; let sameAfter = 0; let withIpju = 0;
+  for (const notice of targets) {
+    const addr2 = resolveAddress(notice.address, notice.region);
+    let base; let what;
+    try {
+      base = await evaluateLotto(notice, baseOpts(getPresale));
+      const code = addr2.codes[0];
+      const extraRows = addr2.codes.flatMap((c) => extra(c, monthsNow));
+      what = await evaluateLotto(notice, baseOpts(async (c, ms) => { const r = await getPresale(c, ms); return { rows: [...r.rows, ...extra(c, ms)], ok: r.ok }; }));
+      evaluated += 1;
+      if (pathOf(base) === '같은단지') sameBefore += 1;
+      if (pathOf(what) === '같은단지') sameAfter += 1;
+      const nameKey = normalizeComplexName(notice.name);
+      const hit = extraRows.some((r) => { const n = normalizeComplexName(r.aptName); return n && (n === nameKey || n.includes(nameKey) || nameKey.includes(n)); });
+      if (hit) withIpju += 1;
+      const diff = base.status !== what.status || base.margin !== what.margin;
+      if (diff) changed += 1;
+      log(`IMPACT ${diff ? 'CHANGED' : 'same   '} | ${notice.kind} ${notice.typeLabel} | ${notice.name} | ${notice.address.slice(0, 40)} | 접수 ${notice.overallStart}~${notice.overallEnd} | 입주권 이름일치 ${hit ? 'Y' : 'n'} | 현재: ${brief(base)} | 입주권포함: ${brief(what)}`);
+    } catch (error) {
+      log(`IMPACT ERROR | ${notice.name} | ${safeError(error)}`);
+    }
+  }
+  log(`impact 요약: 평가 ${evaluated}건, 판정·마진이 달라짐 ${changed}건, 입주권 행에 같은 이름이 있는 공고 ${withIpju}건, 같은 단지 경로 현재 ${sameBefore} → 입주권 포함 ${sameAfter}`);
+  const perCode = new Map();
+  for (const [id, t] of silvTally) { if (!monthsNow.includes(id.slice(6))) continue; const c = id.slice(0, 5); const e = perCode.get(c) ?? { items: 0, ipju: 0 }; e.items += t.items; e.ipju += t.owner.get('입') ?? 0; perCode.set(c, e); }
+  log(`분양권 전매 API 응답(조회 기간 ${monthsNow.join(',')})의 시군구별 item/입주권: ${[...perCode].sort().map(([c, e]) => `${c}=${e.items}/${e.ipju}`).join(' ')}`);
+  log(`errors=${[...errors].map(([k, c]) => `${k}:${c}`).join(',') || 'none'} soft=${[...softs].map(([k, c]) => `${k}:${c}`).join(',') || 'none'}`);
+  process.exit(0);
 }
 
 let exitCode = 0;
