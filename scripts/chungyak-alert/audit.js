@@ -271,6 +271,12 @@ for (const rec of recs) {
     rec.p90Basis = useNew ? `신축${newRows.length}` : `전체${unitRows.length}`;
     if (best && p90) rec.sanity = (best.estimate / best.area) / p90;
     if (best) rec.estOverPrice = best.estimate / best.price;
+    if (best) {
+      // 같은 시군구 12개월 분양권·입주권 거래(면적이 비슷한 것)의 ㎡당 중위가가 추정보다 얼마나 높은가. 3건 이상일 때만 본다.
+      const preUnits = ref.cleaned.filter((r) => r.presale && Math.abs(r.area - best.area) <= lotto.areaToleranceM2).map((r) => r.amount / r.area);
+      rec.presaleN = preUnits.length;
+      if (preUnits.length >= 3) rec.hRatio = quantile(preUnits, 0.5) / (best.estimate / best.area);
+    }
     delete data.windows;
   } catch (error) {
     windowErrors += 1;
@@ -301,6 +307,7 @@ for (const rec of recs) {
       if (rec.own.maxAge !== market.comparables.preferMaxAgeYears) flags.add('E2');
     }
     if (Number.isFinite(rec.sanity) && rec.sanity < F_THRESHOLD) flags.add('F');
+    if (Number.isFinite(rec.hRatio) && rec.hRatio >= 1.3) flags.add('H');
     if (perModel.some((p) => p.cand === null)) flags.add('G');
     if (!rec.own) flags.add('G0');
   }
@@ -349,11 +356,11 @@ table('접수 상태', recs, (r) => r.stage);
 table('같은 단지 경로 사용(best)', analyzed, (r) => r.own?.path ?? 'none');
 table('비교 단지 범위(best)', analyzed.filter((r) => r.own?.path === 'comparables'), (r) => `${r.own.scope}/age${r.own.maxAge ?? 'any'}`);
 
-const FLAGS = ['A', 'B', 'C', 'C2', 'D', 'D2', 'E1', 'E2', 'F', 'G', 'G0'];
+const FLAGS = ['A', 'B', 'C', 'C2', 'D', 'D2', 'E1', 'E2', 'F', 'G', 'G0', 'H'];
 log('');
-log(`플래그별 건수(분석 가능 ${analyzed.length}건 기준, 겹침 포함). A=같은 단지 0건+신축/입주예정(주택형 전부 비교 단지 경로), B=입주권만 있고 매매·분양권 0(6개월), C=번지 지번 파싱 실패, C2=법정동 파싱 실패, D=6개월 0건인데 12/24개월에 있음(모든 유형), D2=6개월 매매+분양권 3건 미만인데 12/24개월에 3건 이상, E1=비교 범위 시군구, E2=연식 단계 15년 초과, F=추정 ㎡당가가 시군구 상위10% ${F_THRESHOLD * 100}% 미만, G=표본 없는 주택형 존재, G0=추정 없음`);
+log(`플래그별 건수(분석 가능 ${analyzed.length}건 기준, 겹침 포함). A=같은 단지 0건+신축/입주예정(주택형 전부 비교 단지 경로), B=입주권만 있고 매매·분양권 0(6개월), C=번지 지번 파싱 실패, C2=법정동 파싱 실패, D=6개월 0건인데 12/24개월에 있음(모든 유형), D2=6개월 매매+분양권 3건 미만인데 12/24개월에 3건 이상, E1=비교 범위 시군구, E2=연식 단계 15년 초과, F=추정 ㎡당가가 시군구 상위10% ${F_THRESHOLD * 100}% 미만, G=표본 없는 주택형 존재, G0=추정 없음, H=같은 시군구 12개월 분양권·입주권 ㎡당 중위가(3건 이상)가 추정의 1.3배 이상`);
 for (const f of FLAGS) log(`  ${f}: ${analyzed.filter((r) => r.flags.includes(f)).length}`);
-log(`  어떤 플래그든(A,B,C,D,E1,E2,F,G): ${analyzed.filter((r) => r.flags.some((f) => ['A', 'B', 'C', 'D', 'E1', 'E2', 'F', 'G'].includes(f))).length}`);
+log(`  어떤 플래그든(A,B,C,D,E1,E2,F,G,H): ${analyzed.filter((r) => r.flags.some((f) => ['A', 'B', 'C', 'D', 'E1', 'E2', 'F', 'G', 'H'].includes(f))).length}`);
 log(`  신축 판단 불가(moveInYm 없음): ${analyzed.filter((r) => r.fresh === null).length} / 신축=${analyzed.filter((r) => r.fresh === true).length} / 구축=${analyzed.filter((r) => r.fresh === false).length}`);
 const combo = new Map();
 for (const r of analyzed) { const k = r.flags.join('+') || '(없음)'; combo.set(k, (combo.get(k) ?? 0) + 1); }
@@ -380,12 +387,12 @@ log(`sameDongShare(비교 단지 경로, 고른 단지 중 공고 동/읍면 소
 
 log('');
 log('===== 의심 공고(플래그 가중 점수순) =====');
-const weight = { A: 3, B: 4, C: 1, D: 3, D2: 1, E1: 2, E2: 1, F: 2, G: 1, G0: 1 };
+const weight = { A: 3, B: 4, C: 1, D: 3, D2: 1, E1: 2, E2: 1, F: 2, G: 1, G0: 1, H: 2 };
 const scored = analyzed.map((r) => ({ r, score: r.flags.reduce((s, f) => s + (weight[f] ?? 0), 0) })).filter((x) => x.score > 0).sort((a, b) => b.score - a.score || a.r.i - b.r.i);
 for (const { r, score } of scored.slice(0, 45)) {
   const c = r.judgedIdx >= 0 ? r.counts?.[r.judgedIdx] : null;
   const f = (x) => (x ? `${x.sale}/${x.presale}/${x.ipju}` : '-');
-  log(`SUSPECT s=${score} [${r.flags.join(',')}] ${r.kind} ${r.type} | ${r.region} | ${r.name} | ${r.stage} | 등급 ${r.grade}${r.gradeDetail ? `(${r.gradeDetail})` : ''} | 마진율 ${pct(r.rate)} 신뢰 ${r.conf ?? '-'} 경로 ${r.own?.path ?? '-'}${r.own?.scope ? `/${r.own.scope}` : ''} | 같은 단지 6/12/24 ${c ? `${f(c[6])}  ${f(c[12])}  ${f(c[24])}` : '-'} | 추정 ${eok(r.estimate)} 분양가 ${eok(r.price)} sanity ${Number.isFinite(r.sanity) ? r.sanity.toFixed(2) : '-'}`);
+  log(`SUSPECT s=${score} [${r.flags.join(',')}] ${r.kind} ${r.type} | ${r.region} | ${r.name} | ${r.stage} | 등급 ${r.grade}${r.gradeDetail ? `(${r.gradeDetail})` : ''} | 마진율 ${pct(r.rate)} 신뢰 ${r.conf ?? '-'} 경로 ${r.own?.path ?? '-'}${r.own?.scope ? `/${r.own.scope}` : ''} | 같은 단지 6/12/24 ${c ? `${f(c[6])}  ${f(c[12])}  ${f(c[24])}` : '-'} | 추정 ${eok(r.estimate)} 분양가 ${eok(r.price)} sanity ${Number.isFinite(r.sanity) ? r.sanity.toFixed(2) : '-'} 분양권·입주권/추정 ${Number.isFinite(r.hRatio) ? r.hRatio.toFixed(2) : '-'}(n=${r.presaleN ?? 0})`);
 }
 log('');
 log('===== 검증: 잠실 래미안아이파크 =====');
