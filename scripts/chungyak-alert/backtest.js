@@ -43,6 +43,7 @@ maskServiceKey(key, env);
 const sleep = defaultSleep;
 // 매매 응답의 원본 건수와 취소 건수를 센다(파서가 취소 행을 조용히 버리는 양을 보려고). 응답은 그대로 돌려준다.
 const rawTally = new Map();
+const silvTally = new Map();
 const fetchFn = async (url, init) => {
   const response = await globalThis.fetch(url, init);
   const text = String(url);
@@ -62,9 +63,24 @@ const fetchFn = async (url, init) => {
       rawTally.set(id, cur);
     } catch { /* 진단용이라 실패해도 판정과 무관하다 */ }
   }
+  if (text.includes('RTMSDataSvcSilvTrade') && response.ok) {
+    try {
+      const body = await response.clone().text();
+      const params = new URL(text).searchParams;
+      const id = `${params.get('LAWD_CD')}-${params.get('DEAL_YMD')}`;
+      const cur = silvTally.get(id) ?? { items: 0, owner: new Map(), raw: [] };
+      for (const [, block] of body.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+        cur.items += 1;
+        const own = /<ownershipGbn>\s*([^<]*?)\s*<\/ownershipGbn>/.exec(block)?.[1] ?? /<구분>\s*([^<]*?)\s*<\/구분>/.exec(block)?.[1] ?? '?';
+        cur.owner.set(own, (cur.owner.get(own) ?? 0) + 1);
+        if (/신천동|래미안|<jibun>\s*20-4\s*<\/jibun>/.test(block)) cur.raw.push(block.replace(/\s+/g, ' ').replace(/<(\w+)>([^<]*)<\/\1>/g, '$1=$2;').replace(/<[^>]+>/g, '').slice(0, 400));
+      }
+      silvTally.set(id, cur);
+    } catch { /* 진단용 */ }
+  }
   return response;
 };
-const norm = (text) => String(text ?? '').replace(/[\s\-_]/g, '').toLowerCase();
+const norm =(text) => String(text ?? '').replace(/[\s\-_]/g, '').toLowerCase();
 
 log(`backtest asOf=${asOf} realToday(KST)=${kstToday()} nameContains="${nameContains}" lookbackDays=${lookbackDays}`);
 
@@ -258,7 +274,23 @@ async function wideScan({ addr, asOf, notice, realRe }) {
     }
     log(`분양권 전매 ${pm[0]}~${pm.at(-1)} 송파구 ok=${pre.ok} 행 ${pre.rows.length}건, 단지 ${pg.size}종:`);
     for (const [k, g] of [...pg].sort((a, b) => b[1].n - a[1].n).slice(0, 30)) log(`  ${k} ${g.n}건 ${g.min}~${g.max}`);
+    log(`분양권 원본 응답(월: item수 / 구분별 건수): ${[...silvTally].sort().map(([id, t]) => `${id.slice(6)}=${t.items}/${[...t.owner].map(([k, n]) => `${k}:${n}`).join(',')}`).join(' ')}`);
+    const silvRaw = [...silvTally].filter(([, t]) => t.raw.length);
+    log(`분양권 원본에서 신천동·래미안·지번 20-4 항목이 있는 월 ${silvRaw.length}개:`);
+    for (const [id, t] of silvRaw.sort()) for (const line of t.raw.slice(0, 6)) log(`  SILVRAW ${id} ${line}`);
   } catch (error) { log(`분양권 스캔 실패: ${safeError(error)}`); }
+  // 아파트 매매 상세 API(RTMSDataSvcAptTradeDev)가 열려 있는지와, 거기에는 이 단지가 있는지. 키는 출력하지 않는다.
+  for (const ym of ['202606', '202607']) {
+    try {
+      const query = new URLSearchParams({ serviceKey: key, LAWD_CD: code, DEAL_YMD: ym, numOfRows: '1000', pageNo: '1' });
+      const response = await globalThis.fetch(`https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?${query}`, { signal: AbortSignal.timeout(20000) });
+      const body = await response.text();
+      const items = [...body.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1]);
+      const hits = items.filter((b) => /래미안아이파크|<jibun>\s*20-4\s*<\/jibun>/.test(b));
+      log(`상세 API(Dev) ${ym}: http=${response.status} resultCode=${/<resultCode>([^<]*)</.exec(body)?.[1] ?? '-'} totalCount=${/<totalCount>(\d+)/.exec(body)?.[1] ?? '-'} item=${items.length} 래미안아이파크·20-4 항목=${hits.length}${items.length === 0 ? ` 응답 앞부분=${body.replace(/serviceKey=[^&<\s]*/g, 'serviceKey=***').replace(/\s+/g, ' ').slice(0, 160)}` : ''}`);
+      for (const b of hits.slice(0, 6)) log(`  DEVRAW ${b.replace(/\s+/g, ' ').replace(/<(\w+)>([^<]*)<\/\1>/g, '$1=$2;').replace(/<[^>]+>/g, '').slice(0, 400)}`);
+    } catch (error) { log(`상세 API 조회 실패 ${ym}: ${safeError(error)}`); }
+  }
 }
 
 async function diagnose({ notice, models, addr, asOf, getTrades, getPresale, evaluation }) {
