@@ -177,7 +177,25 @@ const stageOf = (notice) => {
 
 // ---- 수집 ----
 log(`audit asOf=${asOf} realToday(KST)=${kstToday()} lookbackDays=${lookbackDays} windows=${readWindows}`);
-const collected = await collectApplyhome({ fetch: fetchFn, key, today: asOf, lookbackDays, sleep, endpoints: ENDPOINTS });
+// 청약홈 수집이 오류 없이 일부 종류(APT, 잔여세대)를 통째로 비워 돌려주는 때가 있었다(앞선 실행에서 잔여세대 71건이 0건). 비면 잠시 뒤 다시 읽고, 끝까지 비면 멈춘다.
+let collected;
+for (let attempt = 1; attempt <= 6; attempt += 1) {
+  collected = await collectApplyhome({ fetch: fetchFn, key, today: asOf, lookbackDays, sleep, endpoints: ENDPOINTS });
+  const apt = collected.notices.filter((n) => n.kind === 'apt').length;
+  const remainder = collected.notices.filter((n) => n.kind === 'remainder').length;
+  log(`collect attempt ${attempt}: raw=${collected.notices.length} apt=${apt} remainder=${remainder} errors=${collected.errors.join(',') || 'none'}`);
+  if (nameContains || (apt >= 20 && remainder >= 20)) break;
+  bump('collect_partial_retry');
+  await sleep(180000);
+}
+{
+  const apt = collected.notices.filter((n) => n.kind === 'apt').length;
+  const remainder = collected.notices.filter((n) => n.kind === 'remainder').length;
+  if (!nameContains && (apt < 20 || remainder < 20)) {
+    log('collect still partial after retries; aborting without evaluating');
+    process.exit(3);
+  }
+}
 log(`collect errors=${collected.errors.join(',') || 'none'} failedAll=${collected.failedAll} raw=${collected.notices.length}`);
 const announced = collected.notices.filter((notice) => !notice.announceDate || notice.announceDate <= asOf);
 const inScope = announced.filter((n) => ['apt', 'remainder', 'arbitrary'].includes(n.kind) && config.alertRegions.includes(n.region) && !isRental(n, config));
