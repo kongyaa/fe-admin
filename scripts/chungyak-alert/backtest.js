@@ -173,6 +173,79 @@ function unitsDiag(rows, today) {
 }
 const rowText = (r) => `${r.dealDate} ${r.umd} ${r.aptName} jibun=${r.jibun || '-'} seq=${r.aptSeq || '-'} 전용${r.area}㎡ ${r.floor ?? '-'}층 ${r.amount}만 ${r.buildYear ?? '-'}년 ${r.dealingGbn || '-'}${r.presale ? ' [분양권]' : ''}`;
 
+// 같은 단지 거래가 6개월 창에 없는 까닭을 보려고 더 긴 기간을 읽는다. 실행 한 번에 한 번만 한다.
+let wideDone = false;
+async function wideScan({ addr, asOf, notice, realRe }) {
+  if (wideDone) return;
+  wideDone = true;
+  const code = addr.codes[0];
+  const months = [];
+  for (let y = 2019; y <= 2026; y += 1) for (let m = 1; m <= 12; m += 1) {
+    const ym = `${y}${String(m).padStart(2, '0')}`;
+    if (ym >= '202301' && ym <= '202611') months.push(ym);
+  }
+  const jibunText = (/d+(?:-d+)?(?=번지)/.exec(notice.address) ?? [null])[0];
+  log('');
+  log(`--- 진단: 넓은 기간 스캔(코드 ${code}, ${months[0]}~${months.at(-1)} ${months.length}개월) ---`);
+  log(`공고 주소 "${notice.address}" 에서 번지 숫자=${jibunText ?? '-'} (운영 subjectJibun은 '번지'가 붙은 토큰을 지번으로 읽지 못해 null)`);
+  const all = [];
+  const perMonth = [];
+  for (const ym of months) {
+    try {
+      const rows = await molit.getTrades(code, [ym]);
+      all.push(...rows);
+      const hit = rows.filter((r) => realRe.test(normalizeComplexName(r.aptName)) || (jibunText && r.umd === addr.umd && r.jibun === jibunText));
+      perMonth.push(`${ym}:${rows.length}/${hit.length}`);
+    } catch (error) {
+      perMonth.push(`${ym}:ERR(${safeError(error)})`);
+    }
+  }
+  log(`월별 송파구 행수/이름·지번 후보 행수: ${perMonth.join(' ')}`);
+  const groups = new Map();
+  for (const r of all.filter((x) => realRe.test(normalizeComplexName(x.aptName)) || (jibunText && x.umd === addr.umd && x.jibun === jibunText))) {
+    const k = `${r.umd}|${r.aptName}|${r.jibun}|${r.aptSeq}|${r.buildYear}`;
+    const g = groups.get(k) ?? { n: 0, min: r.dealDate, max: r.dealDate, areas: new Map() };
+    g.n += 1; g.min = r.dealDate < g.min ? r.dealDate : g.min; g.max = r.dealDate > g.max ? r.dealDate : g.max;
+    g.areas.set(r.area, (g.areas.get(r.area) ?? 0) + 1);
+    groups.set(k, g);
+  }
+  log(`넓은 기간 이름(/${realRe.source}/)·지번(${jibunText ?? '-'}) 후보 묶음 ${groups.size}개:`);
+  for (const [k, g] of groups) log(`  ${k} 건수=${g.n} 거래일 ${g.min}~${g.max} 전용별=${[...g.areas].sort((a, b) => a[0] - b[0]).map(([a, n]) => `${a}:${n}`).join(' ')}`);
+  const inUmd = new Map();
+  for (const r of all.filter((x) => x.umd === addr.umd)) {
+    const k = `${r.aptName}|${r.jibun}|${r.buildYear}`;
+    const g = inUmd.get(k) ?? { n: 0, min: r.dealDate, max: r.dealDate };
+    g.n += 1; g.min = r.dealDate < g.min ? r.dealDate : g.min; g.max = r.dealDate > g.max ? r.dealDate : g.max;
+    inUmd.set(k, g);
+  }
+  log(`${addr.umd}의 단지(aptNm|jibun|건축년도) ${inUmd.size}종, 같은 기간 건수·거래일 범위:`);
+  for (const [k, g] of [...inUmd].sort((a, b) => b[1].n - a[1].n)) log(`  ${k} ${g.n}건 ${g.min}~${g.max}`);
+  // 건축년도가 최근인 큰 단지(신축)가 이름이 다르게 등록됐을 가능성: 송파구 건축년도 2024 이상 단지
+  const fresh = new Map();
+  for (const r of all.filter((x) => x.buildYear >= 2023)) {
+    const k = `${r.umd}|${r.aptName}|${r.jibun}|${r.buildYear}`;
+    const g = fresh.get(k) ?? { n: 0, min: r.dealDate, max: r.dealDate };
+    g.n += 1; g.min = r.dealDate < g.min ? r.dealDate : g.min; g.max = r.dealDate > g.max ? r.dealDate : g.max;
+    fresh.set(k, g);
+  }
+  log(`송파구 건축년도 2023 이상 단지 ${fresh.size}종:`);
+  for (const [k, g] of [...fresh].sort((a, b) => b[1].n - a[1].n)) log(`  ${k} ${g.n}건 ${g.min}~${g.max}`);
+  // 분양권 전매(입주 전·직후 거래가 여기에 잡힌다)
+  try {
+    const pm = months.filter((ym) => ym >= '202401');
+    const pre = await presale.getTrades(code, pm);
+    const pg = new Map();
+    for (const r of pre.rows) {
+      const k = `${r.umd}|${r.aptName}|${r.jibun}`;
+      const g = pg.get(k) ?? { n: 0, min: r.dealDate, max: r.dealDate };
+      g.n += 1; g.min = r.dealDate < g.min ? r.dealDate : g.min; g.max = r.dealDate > g.max ? r.dealDate : g.max;
+      pg.set(k, g);
+    }
+    log(`분양권 전매 ${pm[0]}~${pm.at(-1)} 송파구 ok=${pre.ok} 행 ${pre.rows.length}건, 단지 ${pg.size}종:`);
+    for (const [k, g] of [...pg].sort((a, b) => b[1].n - a[1].n).slice(0, 30)) log(`  ${k} ${g.n}건 ${g.min}~${g.max}`);
+  } catch (error) { log(`분양권 스캔 실패: ${safeError(error)}`); }
+}
+
 async function diagnose({ notice, models, addr, asOf, getTrades, getPresale, evaluation }) {
   const realRe = new RegExp(env.BACKTEST_REAL ?? '래미안아이파크');
   log('');
@@ -223,6 +296,7 @@ async function diagnose({ notice, models, addr, asOf, getTrades, getPresale, eva
   const nearDistinctNames = new Set(trades.filter((r) => /잠실|래미안|아이파크/.test(r.aptName)).map((r) => `${r.umd}|${r.aptName}|${r.jibun}`));
   log(`aptNm에 잠실·래미안·아이파크가 들어간 (umd|aptNm|jibun) 종류 ${nearDistinctNames.size}개: ${[...nearDistinctNames].sort().join(' ; ')}`);
 
+  await wideScan({ addr, asOf, notice, realRe });
   const ctx = { market: config.market, lotto: config.lotto, today: asOf };
   const priced = models.filter((m) => m.area > 0 && m.price > 0);
   for (const model of priced) {
