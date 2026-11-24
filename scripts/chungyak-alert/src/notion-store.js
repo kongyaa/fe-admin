@@ -1,3 +1,4 @@
+import { GRADE, GRADE_COLORS, gradeFromStatus, gradeFromStored, statusFromStored } from './grade.js';
 import { statusFor } from './reception.js';
 import { AppError, defaultSleep, fetchWithRetry, firstStageDate, safeHttpUrl } from './util.js';
 
@@ -31,7 +32,7 @@ const P = {
   walkMinutes: '역 도보(분)',
   recommendTrack: '추천 전형',
   recommendDate: '추천 접수일',
-  lotto: '로또 여부',
+  grade: '청약 등급',
   reason: '판별 근거',
   link: '공고 링크',
   source: '소스',
@@ -41,10 +42,10 @@ const P = {
 };
 
 // 이전 실행까지 쓰던 속성 이름. 값이 유지되도록 삭제하지 않고 이름만 바꾼다.
-const LEGACY = { margin: '예상 차익', marginRate: '차익률' };
-const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence, averagePrice: P.averagePrice, recommendTrack: P.recommendTrack, recommendDate: P.recommendDate, minPrice: P.minPrice, modelPrices: P.modelPrices, judgedArea: P.judgedArea, receptionStatus: P.receptionStatus };
+const LEGACY = { margin: '예상 차익', marginRate: '차익률', grade: '로또 여부' };
+const DEFAULT_COLUMNS = { margin: P.margin, marginRate: P.marginRate, confidence: P.confidence, averagePrice: P.averagePrice, recommendTrack: P.recommendTrack, recommendDate: P.recommendDate, minPrice: P.minPrice, modelPrices: P.modelPrices, judgedArea: P.judgedArea, receptionStatus: P.receptionStatus, grade: P.grade };
 // 스키마를 읽지 못해 이번 실행의 이름을 모를 때 쓴다. 이 속성들만 빼서 다른 값의 저장을 막지 않는다.
-const NO_COLUMNS = { margin: null, marginRate: null, confidence: null, averagePrice: null, recommendTrack: null, recommendDate: null, minPrice: null, modelPrices: null, judgedArea: null, receptionStatus: null };
+const NO_COLUMNS = { margin: null, marginRate: null, confidence: null, averagePrice: null, recommendTrack: null, recommendDate: null, minPrice: null, modelPrices: null, judgedArea: null, receptionStatus: null, grade: null };
 
 const DB_SCHEMA = {
   [P.name]: { title: {} },
@@ -71,11 +72,8 @@ const DB_SCHEMA = {
   [P.walkMinutes]: { number: { format: 'number' } },
   [P.recommendTrack]: { select: {} },
   [P.recommendDate]: { date: {} },
-  [P.lotto]: {
-    select: {
-      options: [{ name: '로또' }, { name: '아님' }, { name: '판별 불가' }, { name: '대상 외' }, { name: '확인 필요' }],
-    },
-  },
+  // 선택지 색은 새로 만들 때와 없는 선택지를 더할 때만 정한다(ensureGradeColumn).
+  [P.grade]: { select: { options: Object.values(GRADE).map((name) => ({ name, color: GRADE_COLORS[name] })) } },
   [P.reason]: { rich_text: {} },
   [P.link]: { url: {} },
   [P.source]: { select: {} },
@@ -114,12 +112,14 @@ export function buildProperties(notice, evaluation, today, columns = DEFAULT_COL
     [P.winner]: dateProp(notice.winnerDate),
     [P.topPrice]: keepsJudgment(evaluation, existing) ? undefined : numberProp(evaluation?.topPrice),
     [P.estimate]: evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.estimate),
-    [P.lotto]: selectProp(evaluation?.status),
     [P.reason]: textProp(evaluation?.reason),
     [P.link]: url && url.length <= 2000 ? { url } : undefined,
     [P.source]: selectProp(notice.source),
     [P.collected]: dateProp(today),
   };
+  // 등급은 main이 정해 evaluation.grade에 둔다. 없으면 로또와 판정 보류만 내부 판정에서 옮기고, 아님은 어느 등급인지 몰라 보내지 않는다.
+  // 다시 판정하지 않은 행(evaluation 없음)은 보내지 않아 저장된 옛 값을 그대로 둔다.
+  if (columns.grade) properties[columns.grade] = selectProp(evaluation?.grade ?? gradeFromStatus(evaluation?.status));
   if (columns.margin) properties[columns.margin] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.margin);
   if (columns.marginRate) properties[columns.marginRate] = evaluation?.clearMarket ? { number: null } : numberProp(evaluation?.marginRate);
   if (columns.confidence) properties[columns.confidence] = evaluation?.clearMarket ? { select: null } : selectProp(evaluation?.confidence);
@@ -151,10 +151,14 @@ export function parseExistingPage(page) {
   const props = page.properties ?? {};
   // 같은 이름의 다른 타입 속성은 빈 값으로 본다.
   const walk = props[P.walkMinutes]?.number;
+  const storedGrade = props[P.grade]?.select?.name ?? props[LEGACY.grade]?.select?.name ?? null;
   return {
     id: page.id,
     key: (props[P.key]?.rich_text ?? []).map((part) => part.plain_text).join(''),
-    lotto: props[P.lotto]?.select?.name ?? null,
+    // 내부 판정. 옛 `로또 여부` 값도 읽는다. 이름 변경이 실패한 DB는 옛 이름의 열에 있다.
+    lotto: statusFromStored(storedGrade),
+    // 저장된 등급. 옛 값은 알 수 있는 만큼만 옮긴다(src/grade.js).
+    grade: gradeFromStored(storedGrade),
     urgentDate: props[P.urgent]?.date?.start?.slice(0, 10) ?? null,
     end: props[P.end]?.date?.start?.slice(0, 10) ?? null,
     start: props[P.start]?.date?.start?.slice(0, 10) ?? null,
@@ -308,6 +312,55 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
     return added ? P.averagePrice : null;
   }
 
+  // 없는 등급 선택지를 색과 함께 더한다. 기존 선택지는 id, name, color 그대로 모두 보낸다(빠뜨리면 Notion이 지운다).
+  // 등급 선택지가 모두 있으면 보내지 않아 사용자가 바꾼 색을 되돌리지 않는다. 실패해도 쓰기는 막지 않는다(색이 없을 뿐 Notion이 선택지를 만든다).
+  async function addGradeOptions(property) {
+    const existing = property.select?.options ?? [];
+    const known = new Set(existing.map((option) => option.name));
+    const missing = Object.values(GRADE).filter((name) => !known.has(name));
+    if (missing.length === 0) return;
+    const kept = existing.map(({ id, name, color }) => ({ ...(id ? { id } : {}), name, ...(color ? { color } : {}) }));
+    const added = missing.map((name) => ({ name, color: GRADE_COLORS[name] }));
+    await patchSchema({ [P.grade]: { select: { options: [...kept, ...added] } } }, 'notion_grade_options_failed');
+  }
+
+  // 이름 변경 요청이 실패했을 때 스키마를 다시 읽는다. 요청이 실제로는 적용됐는데 응답이나 재시도(이름 겹침 400)가 실패했을 수 있어,
+  // 실패한 응답만 보고 옛 이름으로 쓰면 없는 열에 쓰게 된다. 다시 읽지 못하면 null이다.
+  async function rereadProperties() {
+    try {
+      const database = await request('GET', `/databases/${databaseId}`);
+      return database.properties ?? {};
+    } catch {
+      return null;
+    }
+  }
+
+  // 청약 등급 열. 옛 `로또 여부`(선택 속성)만 있으면 그 속성의 이름을 바꿔 값과 id를 유지하고, 둘 다 없으면 새로 만든다.
+  // 새 이름이 이미 있으면 옛 열은 건드리지 않는다. 이름 변경이 실패하면 스키마를 다시 읽어 실제로 있는 이름으로 쓴다(다시 읽지 못하면 이번 실행은 쓰지 않는다).
+  // 같은 이름의 다른 타입 속성은 건드리지 않고 쓰지도 않는다.
+  async function ensureGradeColumn(properties) {
+    const current = properties[P.grade];
+    if (current) {
+      if (current.type !== 'select') return null;
+      await addGradeOptions(current);
+      return P.grade;
+    }
+    const legacy = properties[LEGACY.grade];
+    if (legacy?.type === 'select') {
+      const renamed = await patchSchema({ [LEGACY.grade]: { name: P.grade } }, 'notion_rename_failed');
+      if (!renamed) {
+        const fresh = await rereadProperties();
+        if (!fresh) return null;
+        if (fresh[P.grade]?.type === 'select') return P.grade;
+        return fresh[LEGACY.grade]?.type === 'select' ? LEGACY.grade : null;
+      }
+      await addGradeOptions(legacy);
+      return P.grade;
+    }
+    const added = await patchSchema({ [P.grade]: DB_SCHEMA[P.grade] }, 'notion_property_add_failed');
+    return added ? P.grade : null;
+  }
+
   async function ensureWalkProperty(properties) {
     if (properties[P.walkMinutes]) return;
     await patchSchema({ [P.walkMinutes]: DB_SCHEMA[P.walkMinutes] }, 'notion_property_add_failed');
@@ -336,6 +389,7 @@ export function createNotionStore({ key, parentPageId, config, sources, fetch, s
       modelPrices: await ensureTypedColumn(properties, P.modelPrices, 'rich_text'),
       judgedArea: await ensureTypedColumn(properties, P.judgedArea, 'number'),
       receptionStatus: await ensureTypedColumn(properties, P.receptionStatus, 'select'),
+      grade: await ensureGradeColumn(properties),
     };
     await ensureWalkProperty(properties);
     await ensureInterestProperty(properties);

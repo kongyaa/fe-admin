@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
+import { GRADE, gradeFromStatus } from './grade.js';
 import { AppError, escapeHtml, safeHttpUrl } from './util.js';
 
-export const DISCLAIMER = '로또 여부, 시세, 안전 마진은 실거래가 기반 추정치이며, 지원 자격은 판별하지 않습니다. 반드시 공고문을 확인하세요.';
+export const DISCLAIMER = '청약 등급, 시세, 안전 마진은 실거래가 기반 추정치이며, 지원 자격은 판별하지 않습니다. 반드시 공고문을 확인하세요.';
 
 export function createGmailSender({ user, password, to, createTransport = nodemailer.createTransport }) {
   return async ({ subject, text, html }) => {
@@ -22,48 +23,69 @@ export function createGmailSender({ user, password, to, createTransport = nodema
   };
 }
 
-// 확인 필요(조건에는 해당하나 시세 근거가 약함) 공고를 로또와 떨어뜨려 적는 별도 구역이다.
-export const CHECK_SECTION_TITLE = '확인 필요(시세 근거 약함)';
+// 주간 메일의 등급별 구역. 패스는 싣지 않고 건수만 적는다. 로또청약은 접수 시작일에 긴급 알림이 가고, 나머지는 메일과 Notion 표에만 남는다.
+const SECTIONS = [
+  { grade: GRADE.LOTTO, note: null },
+  { grade: GRADE.CONSIDER, note: '시세보다 낮거나, 시세 수준이어도 입지·규모·브랜드가 받쳐 줍니다. 가격, 입지, 환금성, 대안을 함께 따져 보세요.' },
+  { grade: GRADE.NO_MARGIN, note: '분양가가 대체로 시세 수준(마진율 -3% ~ +3%)이거나 약간 비쌉니다. 실거주로 접근하세요.' },
+  { grade: GRADE.HOLD, note: '근거 부족, 공고문과 시세 직접 확인. 긴급 알림은 보내지 않았습니다.' },
+];
 
-const CHECK_SECTION_NOTE = '로또라고 단정하기 어려워 긴급 알림은 보내지 않았습니다. 공고문과 시세를 직접 확인하세요.';
+// 구역마다 싣는 최대 공고 수. 넘으면 앞에서부터 싣고 나머지는 건수로 알린다. 로또청약은 자르지 않는다.
+export const WEEKLY_SECTION_MAX = 20;
 
-const marginRateLabel = (rate) => (Number.isFinite(rate) ? `마진율 ${(rate * 100).toFixed(1)}%` : '마진율 없음');
+// 등급이 없는 항목(예전 저장 값만 있는 행, 판정하지 않은 행)은 근거가 부족한 것으로 보고 판정 보류에 둔다.
+const gradeOfItem = (item) => item.grade ?? gradeFromStatus(item.status) ?? GRADE.HOLD;
 
-// 마진율과 신뢰도는 여기서만 적는다. checkNote(사유)에는 같은 말을 넣지 않는다.
-const checkDetail = ({ marginRate, confidence, checkNote }) => [marginRateLabel(marginRate), confidence ? `신뢰도 ${confidence}` : null, checkNote].filter(Boolean).join(', ');
+const detailOf = (item) => item.gradeDetail ?? '';
 
-const tagOf = (status) => ({ 로또: '[로또] ', '확인 필요': '[확인 필요] ' })[status] ?? '';
+// 상한에 걸려 일부만 싣는 구역은 제목에 전체 건수와 싣는 건수를 함께 적는다.
+const sectionHead = (section) => `${section.grade} ${section.all.length}건${section.omitted > 0 ? ` (앞 ${section.shown.length}건만 표시)` : ''}`;
+
+function selectSections(items) {
+  const hiddenPass = items.filter((item) => gradeOfItem(item) === GRADE.PASS).length;
+  const sections = SECTIONS.map((section) => {
+    const all = items.filter((item) => gradeOfItem(item) === section.grade);
+    const shown = section.grade === GRADE.LOTTO ? all : all.slice(0, WEEKLY_SECTION_MAX);
+    return { ...section, all, shown, omitted: all.length - shown.length };
+  }).filter((section) => section.all.length > 0);
+  return { sections, hiddenPass, shownCount: sections.reduce((sum, section) => sum + section.all.length, 0) };
+}
+
+const stageText = (stage) => `${stage.name}: ${stage.start}${stage.end && stage.end !== stage.start ? ` ~ ${stage.end}` : ''}`;
 
 export function buildWeeklyMail({ items, monday, sunday, warning = null, testMark = false }) {
   const prefix = testMark ? '[테스트] ' : '';
-  const subject = `${prefix}[청약] 금주 일정 ${monday} ~ ${sunday} (${items.length}건)`;
-  const rows = items.map(({ notice, status, weekStages }) => {
-    const lotto = status === '로또' ? '<strong>[로또]</strong> ' : escapeHtml(tagOf(status));
-    const stages = weekStages
-      .map((stage) => `${escapeHtml(stage.name)}: ${escapeHtml(stage.start)}${stage.end && stage.end !== stage.start ? ` ~ ${escapeHtml(stage.end)}` : ''}`)
-      .join('<br>');
-    const url = safeHttpUrl(notice.url);
-    const link = url ? `<a href="${escapeHtml(url)}">공고</a>` : '-';
-    return `<tr><td>${lotto}${escapeHtml(notice.name)}</td><td>${escapeHtml(notice.typeLabel)}</td><td>${escapeHtml(notice.region)}</td><td>${stages}</td><td>${link}</td></tr>`;
-  });
+  const { sections, hiddenPass, shownCount } = selectSections(items);
+  const subject = `${prefix}[청약] 금주 일정 ${monday} ~ ${sunday} (${shownCount}건)`;
+  const passNote = hiddenPass > 0 ? `패스 ${hiddenPass}건은 싣지 않았습니다.` : '';
+  const tableOf = (section) => {
+    const rows = section.shown.map((item) => {
+      const { notice, weekStages } = item;
+      const stages = weekStages.map((stage) => escapeHtml(stageText(stage))).join('<br>');
+      const url = safeHttpUrl(notice.url);
+      const link = url ? `<a href="${escapeHtml(url)}">공고</a>` : '-';
+      return `<tr><td>${escapeHtml(notice.name)}</td><td>${escapeHtml(notice.typeLabel)}</td><td>${escapeHtml(notice.region)}</td><td>${stages}</td><td>${escapeHtml(detailOf(item))}</td><td>${link}</td></tr>`;
+    });
+    const omitted = section.omitted > 0 ? `<p>외 ${section.omitted}건은 Notion 표에서 확인하세요.</p>` : '';
+    const note = section.note ? `<p>${escapeHtml(section.note)}</p>` : '';
+    return `<h3>${escapeHtml(sectionHead(section))}</h3>${note}<table border="1" cellpadding="6" cellspacing="0"><thead><tr><th>주택명</th><th>유형</th><th>지역</th><th>금주 일정</th><th>근거</th><th>링크</th></tr></thead><tbody>${rows.join('')}</tbody></table>${omitted}`;
+  };
   const warningHtml = warning ? `<p><strong>${escapeHtml(warning)}</strong></p>` : '';
-  const table = items.length > 0
-    ? `<table border="1" cellpadding="6" cellspacing="0"><thead><tr><th>주택명</th><th>유형</th><th>지역</th><th>금주 일정</th><th>링크</th></tr></thead><tbody>${rows.join('')}</tbody></table>`
-    : '<p>금주 수도권 접수 일정이 없습니다.</p>';
-  // 확인 필요 구역은 해당 공고가 있을 때만 붙인다.
-  // 이번 실행에서 판정한 항목(checkNote가 있는 것)만 적는다. 판정하지 않고 저장된 상태만 가져온 공고는 마진율과 사유를 몰라 뺀다.
-  const checks = items.filter((item) => item.status === '확인 필요' && item.checkNote);
-  const checkItems = checks.map((item) => `<li>${escapeHtml(item.notice.name)} (${escapeHtml(item.notice.region)}): ${escapeHtml(checkDetail(item))}</li>`).join('');
-  const checkHtml = checks.length > 0 ? `<h3>${escapeHtml(CHECK_SECTION_TITLE)}</h3><p>${escapeHtml(CHECK_SECTION_NOTE)}</p><ul>${checkItems}</ul>` : '';
-  const html = `${testMark ? '<p><strong>테스트 발송입니다.</strong></p>' : ''}${warningHtml}${table}${checkHtml}<p>${escapeHtml(DISCLAIMER)}</p>`;
-  const lines = items.map(({ notice, status, weekStages }) => {
-    const stages = weekStages.map((stage) => `${stage.name} ${stage.start}`).join(', ');
-    return `${tagOf(status)}${notice.name} (${notice.region}) ${stages}`;
-  });
-  const checkLines = checks.length > 0
-    ? [CHECK_SECTION_TITLE, CHECK_SECTION_NOTE, ...checks.map((item) => `- ${item.notice.name} (${item.notice.region}): ${checkDetail(item)}`)]
-    : [];
-  const text = [warning, ...lines, ...checkLines, DISCLAIMER].filter(Boolean).join('\n');
+  const body = shownCount > 0 ? sections.map(tableOf).join('') : '<p>금주 알릴 접수 일정이 없습니다.</p>';
+  const passHtml = passNote ? `<p>${escapeHtml(passNote)}</p>` : '';
+  const html = `${testMark ? '<p><strong>테스트 발송입니다.</strong></p>' : ''}${warningHtml}${body}${passHtml}<p>${escapeHtml(DISCLAIMER)}</p>`;
+  const textSections = sections.flatMap((section) => [
+    sectionHead(section),
+    ...(section.note ? [section.note] : []),
+    ...section.shown.map((item) => {
+      const stages = item.weekStages.map((stage) => `${stage.name} ${stage.start}`).join(', ');
+      const detail = detailOf(item);
+      return `- ${item.notice.name} (${item.notice.region}) ${stages}${detail ? ` / ${detail}` : ''}`;
+    }),
+    ...(section.omitted > 0 ? [`외 ${section.omitted}건은 Notion 표에서 확인하세요.`] : []),
+  ]);
+  const text = [warning, ...(shownCount > 0 ? textSections : ['금주 알릴 접수 일정이 없습니다.']), passNote, DISCLAIMER].filter(Boolean).join('\n');
   return { subject, text, html };
 }
 

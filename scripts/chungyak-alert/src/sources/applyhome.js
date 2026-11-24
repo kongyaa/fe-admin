@@ -83,6 +83,14 @@ export function supplySector(row) {
   return null;
 }
 
+// 이 공고의 공급 세대수(공급규모). 스웨거상 APT·잔여세대·오피스텔/도시형 상세의 TOT_SUPLY_HSHLDCO다(data.go.kr 15098547). 임의공급 상세는 확인하지 못했다.
+// 청약홈은 이 값을 공급규모라 부르며 이 모집공고가 내놓는 일반+특별공급 세대수로 보인다. 단지 전체 규모가 아니다(재건축은 단지 3,000세대에 공급 224세대일 수 있다). 실응답으로 확인하지 않았다.
+// 필드가 없거나 양수가 아니면 null(모름)이다. 청약 등급의 규모·환금성이 자료 없음으로 본다.
+export function supplyUnitsOf(row) {
+  const units = parseNumber(row.TOT_SUPLY_HSHLDCO);
+  return units !== null && units > 0 ? Math.round(units) : null;
+}
+
 export function normalizeDetail(endpoint, row) {
   if (!row.HOUSE_MANAGE_NO || !row.PBLANC_NO) return null;
   const secd = String(row.SEARCH_HOUSE_SECD ?? row.HOUSE_SECD ?? '');
@@ -104,6 +112,8 @@ export function normalizeDetail(endpoint, row) {
     builder: row.CNSTRCT_ENTRPS_NM ?? '',
     region: normalizeRegion(row.SUBSCRPT_AREA_CODE_NM ?? row.HSSPLY_ADRES),
     address: row.HSSPLY_ADRES ?? '',
+    // 이 공고의 공급 세대수(단지 전체 규모가 아님). 청약 등급의 규모·환금성에 쓴다.
+    supplyUnits: supplyUnitsOf(row),
     announceDate: normalizeDate(row.RCRIT_PBLANC_DE),
     winnerDate: normalizeDate(row.PRZWNER_PRESNATN_DE),
     url: row.PBLANC_URL ?? null,

@@ -46,7 +46,9 @@ function apiFetch(rows, { lhRows = [], pblrentRows = [] } = {}) {
   };
 }
 
-const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
+// 이미 이름을 바꾼 청약 등급 열. 등급 선택지가 모두 있어 배치가 스키마를 고치지 않는다.
+const GRADE_PROP = { type: 'select', select: { options: ['로또청약', '고려', '안전마진 없음', '패스', '판정 보류'].map((name) => ({ name })) } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} }, '청약 등급': GRADE_PROP };
 
 // 사용자가 모집공고일과 순번을 지운 뒤의 실제 DB 스키마
 const WITHOUT_INTEREST = {

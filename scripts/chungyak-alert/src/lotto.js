@@ -442,9 +442,13 @@ const priceFields = (best) => ({
   margin: best.margin,
   marginRate: best.marginRate,
   confidence: best.confidence,
+  // 판정에 쓴 신뢰도. 분양권·역 정보 조회 실패로만 내려간 값은 내려가기 전 값이다(effectiveConfidence). 표시하는 confidence는 그대로다.
+  effectiveConfidence: effectiveConfidence(best),
   // 건수만 센다. 같은 단지 거래로 계산하면 역 보정이 필요 없어 비어 있다.
   stationState: best.basis.stationState ?? null,
   complexOutliers: best.outliers ?? 0,
+  // 시세 추정에 쓴 거래 건수(같은 단지 거래 또는 비교 단지 표본). 청약 등급의 환금성에 쓴다(src/grade.js).
+  tradeSamples: best.basis.samples ?? null,
 });
 
 // 참고 마진의 판별 근거 머리말. 신혼희망타운은 수익공유형 대출을 받을 때 차익을 나누므로 대출 조건 확인을 적는다.

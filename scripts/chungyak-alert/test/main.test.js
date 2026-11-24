@@ -10,7 +10,9 @@ import { buildKakaoText, sendKakaoMemo } from '../src/notify-kakao.js';
 import { buildProperties, createNotionStore, parseExistingPage } from '../src/notion-store.js';
 
 const THU = '2026-11-05';
-const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} } };
+// 이미 이름을 바꾼 청약 등급 열. 등급 선택지가 모두 있어 배치가 스키마를 고치지 않는다.
+const GRADE_PROP = { type: 'select', select: { options: ['로또청약', '고려', '안전마진 없음', '패스', '판정 보류'].map((name) => ({ name })) } };
+const MARKET_SCHEMA = { '안전 마진': { type: 'number', number: {} }, 마진율: { type: 'number', number: {} }, '시세 신뢰도': { type: 'select', select: {} }, '역 도보(분)': { type: 'number', number: {} }, '평균 분양가': { type: 'number', number: {} }, '최저 분양가': { type: 'number', number: {} }, '주택형별 분양가': { type: 'rich_text', rich_text: {} }, '판단 주택형(㎡)': { type: 'number', number: {} }, '접수 상태': { type: 'select', select: {} }, '추천 전형': { type: 'select', select: {} }, '추천 접수일': { type: 'date', date: {} }, '청약 등급': GRADE_PROP };
 const notice = (extra = {}) => ({
   key: '1-1',
   name: '테스트',
@@ -93,6 +95,7 @@ test('weekly mail escapes HTML, marks lotto, carries the disclaimer and drops ba
     items: [{
       notice: notice({ name: '<script>x</script>', url: 'javascript:alert(1)' }),
       status: '로또',
+      grade: '로또청약',
       weekStages: [{ name: '접수', start: THU, end: THU }],
     }],
     monday: '2026-11-02',
@@ -100,7 +103,7 @@ test('weekly mail escapes HTML, marks lotto, carries the disclaimer and drops ba
   });
   assert.ok(!mail.html.includes('<script>'));
   assert.ok(mail.html.includes('&lt;script&gt;'));
-  assert.ok(mail.html.includes('[로또]'));
+  assert.ok(mail.html.includes('<h3>로또청약 1건</h3>'));
   assert.ok(!mail.html.includes('javascript:'));
   assert.ok(mail.html.includes('추정치'));
 });
@@ -213,7 +216,7 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
   assert.ok(mail.html.includes('&lt;x&gt; x2'));
 
   const props = buildProperties(notice({ overallStart: THU, overallEnd: THU, url: 'ftp://x' }), null, THU);
-  assert.equal(props['로또 여부'], undefined);
+  assert.equal(props['청약 등급'], undefined);
   assert.equal(props['공고 링크'], undefined);
   assert.equal(props['긴급 알림 발송일'], undefined);
   assert.deepEqual(props['1순위 접수일'], { date: { start: THU } });
@@ -227,12 +230,12 @@ test('error mail escapes kinds and Notion properties skip empty values', () => {
     id: 'p',
     properties: {
       '고유 키': { rich_text: [{ plain_text: '1-1' }] },
-      '로또 여부': { select: { name: '로또' } },
+      '청약 등급': { select: { name: '로또청약' } },
       '긴급 알림 발송일': { date: { start: THU } },
       '접수 종료일': { date: null },
     },
   });
-  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', urgentDate: THU, end: null, start: null, interest: false, name: '', typeLabel: null, region: null, source: null, link: null, walkMinutes: null, receptionStatus: null, modelPrices: null, judgedArea: null, margin: null, special: null, rank1: null, rank2: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
+  assert.deepEqual(parsed, { id: 'p', key: '1-1', lotto: '로또', grade: '로또청약', urgentDate: THU, end: null, start: null, interest: false, name: '', typeLabel: null, region: null, source: null, link: null, walkMinutes: null, receptionStatus: null, modelPrices: null, judgedArea: null, margin: null, special: null, rank1: null, rank2: null, recommendTrack: null, recommendDate: null, recommendEnd: null });
 });
 
 function notionFake(children = []) {
@@ -523,7 +526,7 @@ test('weekly mail is sent on Monday and stamped, then skipped once stamped', asy
   assert.equal(await run({ env: h.env, deps: h.deps }), 0);
   const weekly = h.mails.filter((mail) => mail.subject.includes('금주 일정'));
   assert.equal(weekly.length, 1);
-  assert.ok(weekly[0].html.includes('[로또]'));
+  assert.ok(weekly[0].html.includes('<h3>로또청약 1건</h3>'));
   assert.equal(h.store.state.weekly, '2026-11-02');
 
   const again = harness({ nowIso: monday, fetch: apiFetch({ rows }), store: fakeStore(new Map(), '2026-11-02') });
@@ -1217,89 +1220,147 @@ test('urgent selection never includes 확인 필요', () => {
   assert.equal(selectUrgent([{ ...base, status: '로또' }, { ...base, status: '확인 필요' }], THU, regions).length, 1);
 });
 
-test('weekly selection carries the status, margin rate, confidence and note of a 확인 필요 notice', () => {
+test('weekly selection carries the status, grade and grade detail of a 판정 보류 notice, and no unused margin fields', () => {
   const record = {
     notice: notice({ stages: [{ name: '접수', start: THU, end: THU }] }),
     status: '확인 필요',
-    marginRate: 0.007,
-    confidence: '중',
-    checkNote: '사유',
+    grade: '판정 보류',
+    gradeDetail: '시세 신뢰도 하',
   };
   const [item] = selectWeekly([record], '2026-11-02', '2026-11-08', regions);
   assert.equal(item.status, '확인 필요');
-  assert.equal(item.marginRate, 0.007);
-  assert.equal(item.confidence, '중');
-  assert.equal(item.checkNote, '사유');
-  // 판정하지 않은 공고는 값이 없다.
+  assert.equal(item.grade, '판정 보류');
+  assert.equal(item.gradeDetail, '시세 신뢰도 하');
+  // 메일이 쓰지 않는 마진율, 신뢰도, 사유는 싣지 않는다. 보류의 까닭은 gradeDetail이다.
+  assert.deepEqual(Object.keys(item).sort(), ['grade', 'gradeDetail', 'notice', 'status', 'weekStages']);
+  // 판정하지 않은 공고는 근거 요약이 없다.
   const [bare] = selectWeekly([{ notice: record.notice, status: null }], '2026-11-02', '2026-11-08', regions);
-  assert.deepEqual([bare.marginRate, bare.confidence, bare.checkNote], [null, null, null]);
+  assert.deepEqual([bare.grade, bare.gradeDetail], [null, null]);
 });
 
-test('weekly mail lists 확인 필요 in its own section apart from 로또, and omits the section when none', () => {
+test('weekly mail groups items by grade, hides 패스 and keeps the 판정 보류 wording understandable', () => {
   const week = [{ name: '접수', start: THU, end: THU }];
   const mail = buildWeeklyMail({
     items: [
-      { notice: notice({ key: 'a', name: '합성로또단지' }), status: '로또', weekStages: week },
+      { notice: notice({ key: 'a', name: '합성로또단지' }), status: '로또', grade: '로또청약', gradeDetail: '마진율 +12.0%', weekStages: week },
+      { notice: notice({ key: 'd', name: '합성고려단지' }), status: '아님', grade: '고려', gradeDetail: '마진율 -1.2%, 입지 ✓ 서울', weekStages: week },
+      { notice: notice({ key: 'e', name: '합성안전단지' }), status: '아님', grade: '안전마진 없음', gradeDetail: '마진율 -5.0%', weekStages: week },
       {
-        notice: notice({ key: 'b', name: '합성<확인>단지', region: '경기' }),
+        notice: notice({ key: 'b', name: '합성<보류>단지', region: '경기' }),
         status: '확인 필요',
+        grade: '판정 보류',
+        gradeDetail: '시세 신뢰도 하',
         weekStages: week,
-        marginRate: 0.275,
-        confidence: '하',
-        checkNote: '무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))',
       },
-      { notice: notice({ key: 'c', name: '합성일반단지' }), status: '아님', weekStages: week },
+      { notice: notice({ key: 'c', name: '합성패스단지' }), status: '아님', grade: '패스', gradeDetail: '마진율 -20.0%', weekStages: week },
     ],
     monday: '2026-11-02',
     sunday: '2026-11-08',
   });
-  // 별도 구역에 이름, 마진율, 신뢰도, 사유가 있다. HTML은 이스케이프한다.
-  assert.ok(mail.html.includes('<h3>확인 필요(시세 근거 약함)</h3>'), mail.html);
-  assert.ok(mail.html.includes('<li>합성&lt;확인&gt;단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))</li>'), mail.html);
-  assert.ok(!mail.html.includes('<확인>'));
-  // 구역은 목록 뒤, 면책 문구 앞이다. 로또와 섞이지 않는다.
-  assert.ok(mail.html.indexOf('</table>') < mail.html.indexOf('확인 필요(시세 근거 약함)'));
-  assert.ok(mail.html.indexOf('확인 필요(시세 근거 약함)') < mail.html.indexOf('추정치'));
-  assert.equal(mail.html.match(/<strong>\[로또\]<\/strong>/g).length, 1);
-  assert.ok(mail.html.includes('[확인 필요] 합성'));
-  const section = mail.html.slice(mail.html.indexOf('<h3>'));
-  assert.ok(!section.includes('합성로또단지') && !section.includes('합성일반단지'));
+  // 구역 순서는 로또청약, 고려, 안전마진 없음, 판정 보류다. 패스는 싣지 않고 건수만 적는다. HTML은 이스케이프한다.
+  const order = ['<h3>로또청약 1건</h3>', '<h3>고려 1건</h3>', '<h3>안전마진 없음 1건</h3>', '<h3>판정 보류 1건</h3>'].map((head) => mail.html.indexOf(head));
+  assert.ok(order.every((index) => index >= 0), mail.html);
+  assert.deepEqual([...order].sort((x, y) => x - y), order);
+  assert.ok(mail.html.includes('합성&lt;보류&gt;단지'));
+  assert.ok(!mail.html.includes('<보류>'));
+  assert.ok(mail.html.includes('근거 부족, 공고문과 시세 직접 확인'));
+  assert.ok(mail.html.includes('<td>마진율 -1.2%, 입지 ✓ 서울</td>'));
+  assert.ok(!mail.html.includes('합성패스단지') && !mail.text.includes('합성패스단지'));
+  assert.ok(mail.html.includes('패스 1건은 싣지 않았습니다.') && mail.text.includes('패스 1건은 싣지 않았습니다.'));
+  assert.ok(mail.html.indexOf('판정 보류 1건') < mail.html.indexOf('추정치'));
+  assert.equal(mail.subject, '[청약] 금주 일정 2026-11-02 ~ 2026-11-08 (4건)');
   // 텍스트판
-  assert.ok(mail.text.includes('[로또] 합성로또단지'));
-  assert.ok(mail.text.includes('[확인 필요] 합성<확인>단지'));
-  assert.ok(mail.text.includes('확인 필요(시세 근거 약함)\n'));
-  assert.ok(mail.text.includes('- 합성<확인>단지 (경기): 마진율 27.5%, 신뢰도 하, 무순위 해당이나 시세 근거가 약함(비교 범위 확대(시군구))'));
-  assert.ok(!mail.text.includes('- 합성로또단지'));
-  assert.equal(mail.subject, '[청약] 금주 일정 2026-11-02 ~ 2026-11-08 (3건)');
+  assert.ok(mail.text.includes('로또청약 1건\n- 합성로또단지 (서울) 접수 2026-11-05 / 마진율 +12.0%'), mail.text);
+  assert.ok(mail.text.includes('- 합성<보류>단지 (경기) 접수 2026-11-05 / 시세 신뢰도 하'));
 
-  // 없으면 구역이 없다. 값이 비어도 깨지지 않는다.
+  // 비어 있는 구역은 싣지 않는다. 패스만 있으면 일정이 없다고 적고 패스 건수를 알린다.
   const none = buildWeeklyMail({
-    items: [{ notice: notice(), status: '로또', weekStages: week }, { notice: notice({ key: 'z' }), status: '아님', weekStages: week }],
+    items: [{ notice: notice(), status: '로또', grade: '로또청약', weekStages: week }],
     monday: '2026-11-02',
     sunday: '2026-11-08',
   });
-  assert.ok(!none.html.includes('확인 필요') && !none.text.includes('확인 필요'));
-  // 이번 실행에서 판정하지 않고 저장된 상태만 가져온 행(checkNote 없음)은 구역에 넣지 않는다. 목록의 표시는 그대로다.
-  const carried = buildWeeklyMail({ items: [{ notice: notice({ name: '합성이월' }), status: '확인 필요', weekStages: week, marginRate: null, confidence: null, checkNote: null }], monday: '2026-11-02', sunday: '2026-11-08' });
-  assert.ok(!carried.html.includes('<h3>') && !carried.html.includes('마진율 없음'), carried.html);
-  assert.ok(!carried.text.includes('마진율 없음') && !carried.text.includes('확인 필요(시세 근거 약함)'), carried.text);
-  assert.ok(carried.html.includes('[확인 필요] 합성이월'));
-  // 마진율과 신뢰도는 한 번만 적는다.
-  const once = buildWeeklyMail({ items: [{ notice: notice({ name: '합성일회' }), status: '확인 필요', weekStages: week, marginRate: 0.007, confidence: '중', checkNote: '사유' }], monday: '2026-11-02', sunday: '2026-11-08' });
-  assert.ok(once.html.includes('<li>합성일회 (서울): 마진율 0.7%, 신뢰도 중, 사유</li>'), once.html);
+  assert.ok(none.html.includes('<h3>로또청약 1건</h3>'));
+  for (const title of ['고려', '안전마진 없음', '판정 보류']) assert.ok(!none.html.includes(`<h3>${title}`) && !none.text.includes(`${title} 1건`), title);
+  assert.ok(!none.html.includes('싣지 않았습니다'));
+  const onlyPass = buildWeeklyMail({ items: [{ notice: notice(), status: '아님', grade: '패스', weekStages: week }], monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(!onlyPass.html.includes('<h3>') && onlyPass.html.includes('금주 알릴 접수 일정이 없습니다.') && onlyPass.html.includes('패스 1건은 싣지 않았습니다.'));
+  assert.ok(onlyPass.subject.includes('(0건)'));
   const empty = buildWeeklyMail({ items: [], monday: '2026-11-02', sunday: '2026-11-08' });
-  assert.ok(!empty.html.includes('확인 필요') && empty.html.includes('금주 수도권 접수 일정이 없습니다.'));
+  assert.ok(!empty.html.includes('<h3>') && empty.html.includes('금주 알릴 접수 일정이 없습니다.'));
+  // 등급이 없는 행(판정하지 않았고 옛 아님만 저장된 행)은 근거가 없다는 뜻으로 판정 보류에 둔다. 내부 판정만 있는 행은 거기서 옮긴다.
+  const carried = buildWeeklyMail({
+    items: [
+      { notice: notice({ name: '합성이월' }), status: null, weekStages: week },
+      { notice: notice({ key: 'k', name: '합성판별불가' }), status: '판별 불가', weekStages: week },
+      { notice: notice({ key: 'l', name: '합성옛로또' }), status: '로또', weekStages: week },
+    ],
+    monday: '2026-11-02',
+    sunday: '2026-11-08',
+  });
+  assert.ok(carried.html.includes('<h3>판정 보류 2건</h3>') && carried.html.includes('<h3>로또청약 1건</h3>'), carried.html);
 });
 
-test('Notion writes the 확인 필요 status as a select option and reads it back, and a new database offers it', async () => {
+test('weekly mail caps long sections with a count note but never cuts 로또청약', () => {
+  const week = [{ name: '접수', start: THU, end: THU }];
+  const many = (grade, count) => Array.from({ length: count }, (_, index) => ({ notice: notice({ key: `${grade}-${index}`, name: `합성${grade}${index}` }), grade, weekStages: week }));
+  const mail = buildWeeklyMail({ items: [...many('로또청약', 25), ...many('고려', 23)], monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(mail.html.includes('<h3>로또청약 25건</h3>') && mail.html.includes('합성로또청약24'));
+  // 상한에 걸린 구역은 제목에 전체 건수와 싣는 건수를 함께 적는다. 제목의 전체 건수와 메일 제목의 건수는 상한과 무관하게 공고 수다.
+  assert.ok(mail.html.includes('<h3>고려 23건 (앞 20건만 표시)</h3>') && mail.html.includes('합성고려19') && !mail.html.includes('합성고려20'));
+  assert.ok(mail.text.includes('고려 23건 (앞 20건만 표시)\n'));
+  assert.ok(mail.html.includes('<h3>로또청약 25건</h3>'));
+  assert.ok(mail.html.includes('외 3건은 Notion 표에서 확인하세요.') && mail.text.includes('외 3건은 Notion 표에서 확인하세요.'));
+  assert.equal(mail.subject.includes('(48건)'), true);
+});
+
+test('Notion writes 판정 보류 for 확인 필요 and reads old and new column values back as internal statuses', async () => {
   const props = buildProperties(notice(), { status: '확인 필요', reason: '사유' }, THU);
-  assert.deepEqual(props['로또 여부'], { select: { name: '확인 필요' } });
-  const parsed = parseExistingPage({ id: 'p', properties: { '로또 여부': { select: { name: '확인 필요' } } } });
-  assert.equal(parsed.lotto, '확인 필요');
+  assert.deepEqual(props['청약 등급'], { select: { name: '판정 보류' } });
+  assert.equal(props['로또 여부'], undefined);
+  // main이 정한 등급이 있으면 그 값을 쓴다.
+  assert.deepEqual(buildProperties(notice(), { status: '아님', grade: '고려' }, THU)['청약 등급'], { select: { name: '고려' } });
+  const parsed = parseExistingPage({ id: 'p', properties: { '청약 등급': { select: { name: '판정 보류' } } } });
+  assert.equal(parsed.grade, '판정 보류');
+  // 옛 열의 값도 읽는다. 확인 필요는 내부 판정으로 남고, 등급은 판정 보류다.
+  const legacy = parseExistingPage({ id: 'p', properties: { '로또 여부': { select: { name: '확인 필요' } } } });
+  assert.deepEqual([legacy.lotto, legacy.grade], ['확인 필요', '판정 보류']);
 
   const fresh = notionFake();
   const store = createNotionStore({ key: 'k', parentPageId: 'parent', config: notionConfig, sources: ['a'], fetch: fresh.fetch, minIntervalMs: 0 });
   await store.init();
   const created = fresh.calls.find((call) => call.path === '/databases');
-  assert.deepEqual(created.body.properties['로또 여부'].select.options.map((option) => option.name), ['로또', '아님', '판별 불가', '대상 외', '확인 필요']);
+  assert.deepEqual(created.body.properties['청약 등급'].select.options, [
+    { name: '로또청약', color: 'orange' },
+    { name: '고려', color: 'green' },
+    { name: '안전마진 없음', color: 'yellow' },
+    { name: '패스', color: 'red' },
+    { name: '판정 보류', color: 'gray' },
+  ]);
+  assert.equal(created.body.properties['로또 여부'], undefined);
+});
+
+test('urgent selection alerts only the internal 로또 status, never 고려, 안전마진 없음, 패스 or 판정 보류', () => {
+  const base = { notice: notice(), urgentDate: null, pageId: 'p' };
+  for (const grade of ['고려', '안전마진 없음', '패스', '판정 보류']) {
+    assert.equal(selectUrgent([{ ...base, status: '아님', grade }, { ...base, status: '확인 필요', grade }], THU, regions).length, 0, grade);
+  }
+  assert.equal(selectUrgent([{ ...base, status: '로또', grade: '로또청약' }], THU, regions).length, 1);
+});
+
+test('weekly selection carries the grade and its detail, derives a grade from a bare status, and keeps 패스 for the mail to count', () => {
+  const stages = [{ name: '접수', start: THU, end: THU }];
+  const records = [
+    { notice: notice({ key: 'a', stages }), status: '아님', grade: '고려', gradeDetail: '마진율 -1.2%' },
+    { notice: notice({ key: 'b', stages }), status: '로또' },
+    { notice: notice({ key: 'c', stages }), status: '확인 필요' },
+    { notice: notice({ key: 'd', stages }), status: '아님' },
+    { notice: notice({ key: 'e', stages }), status: '아님', grade: '패스' },
+  ];
+  const items = selectWeekly(records, '2026-11-02', '2026-11-08', regions);
+  assert.deepEqual(items.map((item) => item.grade), ['고려', '로또청약', '판정 보류', null, '패스']);
+  assert.equal(items[0].gradeDetail, '마진율 -1.2%');
+  assert.equal(items[1].gradeDetail, null);
+  // 패스는 메일(buildWeeklyMail)이 싣지 않고 건수만 적는다. 등급을 모르는 항목은 거기서 판정 보류에 둔다.
+  const mail = buildWeeklyMail({ items, monday: '2026-11-02', sunday: '2026-11-08' });
+  assert.ok(mail.html.includes('<h3>판정 보류 2건</h3>') && mail.html.includes('패스 1건은 싣지 않았습니다.'));
 });
