@@ -219,6 +219,13 @@ async function wideScan({ addr, asOf, notice, realRe }) {
   }
   log(`넓은 기간 이름(/${realRe.source}/)·지번(${jibunText ?? '-'}) 후보 묶음 ${groups.size}개:`);
   for (const [k, g] of groups) log(`  ${k} 건수=${g.n} 거래일 ${g.min}~${g.max} 전용별=${[...g.areas].sort((a, b) => a[0] - b[0]).map(([a, n]) => `${a}:${n}`).join(' ')}`);
+  // 같은 단지가 다른 이름·지번으로 올라와 있는지: 외부 사이트에 보이는 고가 거래(84㎡ 38억 이상, 59㎡ 25억 이상)와 같은 값이 API에 있는지 본다.
+  const bigRows = all.filter((r) => r.dealDate >= '2025-10-01' && ((r.area >= 84.5 && r.area <= 85.1 && r.amount >= 380000) || (r.area >= 59.3 && r.area <= 59.6 && r.amount >= 250000)));
+  log(`API(${code}) 2025-10 이후 전용 84.5~85.1 38억↑ 또는 59.3~59.6 25억↑ 행 ${bigRows.length}건:`);
+  for (const r of bigRows.sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1)).slice(0, 40)) log(`  ${rowText(r)}`);
+  const noName = all.filter((r) => !r.aptName || !r.umd || (r.umd === addr.umd && r.dealDate >= '2025-10-01'));
+  log(`API(${code}) 이름·법정동이 비었거나 ${addr.umd}의 2025-10 이후 행 ${noName.length}건:`);
+  for (const r of noName.sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1)).slice(0, 25)) log(`  ${rowText(r)}`);
   const inUmd = new Map();
   for (const r of all.filter((x) => x.umd === addr.umd)) {
     const k = `${r.aptName}|${r.jibun}|${r.buildYear}`;
